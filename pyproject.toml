@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nodriver-kit"
+version = "0.1.0"
+description = "Browser automation toolkit built on nodriver - AI-first design"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "elfenlieds7"}
+]
+keywords = ["browser", "automation", "nodriver", "pool", "cloudflare", "ai"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: Browsers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "nodriver>=0.38,<1.0",
+    "websocket-client>=1.0",  # For CDP in-use detection
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+]
+cv = [
+    "opencv-python>=4.8",  # For nodriver's verify_cf() template matching
+]
+
+[project.urls]
+Homepage = "https://github.com/elfenlieds7/nodriver-kit"
+Repository = "https://github.com/elfenlieds7/nodriver-kit"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nodriver_kit*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
