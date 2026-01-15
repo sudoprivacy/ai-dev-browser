@@ -2,16 +2,18 @@
 """Start a Chrome browser with remote debugging.
 
 Usage:
-    python tools/browser_start.py [--port 9222] [--headless]
-    python tools/browser_start.py --profile gemini  # Use persistent profile
+    python tools/browser_start.py                    # Default: persistent profile
+    python tools/browser_start.py --profile gemini   # Named persistent profile
+    python tools/browser_start.py --temp             # Temp profile (deleted on close)
 
 Profile modes:
-    - Default (no --profile): Temp profile, deleted on close
-    - --profile <name>: Persistent profile in ~/.nodriver-kit/profiles/<name>/
-      Better for anti-detection (looks like returning user)
+    - Default: Persistent profile (~/.nodriver-kit/profiles/default/)
+      Better for anti-detection (looks like returning user with history)
+    - --profile <name>: Named persistent profile
+    - --temp: Temp profile, deleted on close (for testing/scraping)
 
 Output:
-    {"port": 9222, "message": "Browser started"}
+    {"port": 9222, "profile": "default", "message": "Browser started"}
 """
 
 import argparse
@@ -43,8 +45,15 @@ def main():
     )
     parser.add_argument(
         "--profile",
-        help="Persistent profile name (stored in ~/.nodriver-kit/profiles/). "
-        "Better for anti-detection. If not specified, uses temp profile.",
+        default="default",
+        help="Persistent profile name (default: 'default'). "
+        "Stored in ~/.nodriver-kit/profiles/<name>/",
+    )
+    parser.add_argument(
+        "--temp",
+        action="store_true",
+        help="Use temp profile instead (deleted on close). "
+        "Use for testing or when you need fresh browser.",
     )
     args = parser.parse_args()
 
@@ -54,11 +63,14 @@ def main():
         port = get_available_port(start=port + 1)
 
     # Determine profile directory
-    user_data_dir = None
-    if args.profile:
-        user_data_dir = DEFAULT_PROFILE_DIR / args.profile
-        user_data_dir.mkdir(parents=True, exist_ok=True)
-        user_data_dir = str(user_data_dir)
+    if args.temp:
+        user_data_dir = None
+        profile_name = "temp"
+    else:
+        profile_dir = DEFAULT_PROFILE_DIR / args.profile
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        user_data_dir = str(profile_dir)
+        profile_name = args.profile
 
     try:
         process = launch_chrome(
@@ -68,10 +80,10 @@ def main():
             "port": port,
             "pid": process.pid,
             "headless": args.headless,
-            "profile": args.profile or "temp",
+            "profile": profile_name,
             "message": f"Browser started on port {port}",
         }
-        if args.profile:
+        if not args.temp:
             result["profile_dir"] = user_data_dir
         output(result)
     except FileNotFoundError as e:
