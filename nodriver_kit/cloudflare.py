@@ -23,7 +23,7 @@ async def verify_cloudflare(tab, max_retries: int = 5, **kwargs) -> bool:
 
     Args:
         tab: nodriver Tab object
-        max_retries: Max retry attempts (passed to verify_cf)
+        max_retries: Max retry attempts (we retry the verify_cf call)
         **kwargs: Additional arguments (ignored for compatibility)
 
     Returns:
@@ -32,17 +32,26 @@ async def verify_cloudflare(tab, max_retries: int = 5, **kwargs) -> bool:
     Requires:
         pip install opencv-python
     """
-    try:
-        await tab.verify_cf(max_attempts=max_retries)
-        return True
-    except Exception as e:
-        error_msg = str(e)
-        # "no cf was found" means no challenge present - that's success
-        if "no cf" in error_msg.lower() or "not found" in error_msg.lower():
-            logger.debug("No Cloudflare challenge detected")
+    import asyncio
+
+    for attempt in range(max_retries):
+        try:
+            await tab.verify_cf()
             return True
-        logger.warning(f"Cloudflare verification failed: {e}")
-        return False
+        except Exception as e:
+            error_msg = str(e).lower()
+            # "no cf was found" means no challenge present - that's success
+            if "no cf" in error_msg or "not found" in error_msg:
+                logger.debug("No Cloudflare challenge detected")
+                return True
+            if attempt < max_retries - 1:
+                logger.debug(f"CF attempt {attempt + 1} failed, retrying...")
+                await asyncio.sleep(1)
+            else:
+                logger.warning(
+                    f"Cloudflare verification failed after {max_retries} attempts: {e}"
+                )
+    return False
 
 
 # Backward compatibility alias
