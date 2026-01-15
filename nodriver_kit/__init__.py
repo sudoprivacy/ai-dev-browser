@@ -71,8 +71,8 @@ from .pool import (
 # Profile management
 from .profile import ProfileManager, ProfileMode
 
-# Cloudflare verification
-from .cloudflare import verify_cloudflare, CFVerify
+# Cloudflare verification (wraps nodriver's native verify_cf)
+from .cloudflare import verify_cloudflare
 
 __version__ = "0.1.0"
 
@@ -109,5 +109,4 @@ __all__ = [
     "ProfileMode",
     # Cloudflare verification
     "verify_cloudflare",
-    "CFVerify",
 ]
