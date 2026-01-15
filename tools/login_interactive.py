@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Interactive login helper - opens browser for manual login, saves cookies when done.
+"""Interactive login helper - opens browser for manual login, saves session when done.
 
 Usage:
-    python tools/login_interactive.py --url "https://example.com/login" [--pattern "example"]
+    python tools/login_interactive.py --url "https://example.com/login"
+    python tools/login_interactive.py --url "https://gemini.google.com" --profile gemini
 
 Behavior:
-    1. Opens browser to the login URL
-    2. Prints instructions - DOES NOT interact with the page
+    1. Opens browser with persistent profile (cookies auto-saved)
+    2. Navigates to the login URL
     3. Waits for you to login manually and close the browser
-    4. Saves cookies automatically when browser closes
+    4. Session is automatically persisted to profile directory
 
 Output:
-    {"success": true, "cookies_path": "~/.nodriver-kit/cookies.dat"}
+    {"success": true, "profile_dir": "~/.nodriver-kit/profiles/default"}
 
 For AI agents: when you detect no valid session, call this tool and wait.
 The human will complete login and close the browser.
@@ -26,77 +27,67 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tools._common import output, error
 
-DEFAULT_COOKIES_FILE = Path("~/.nodriver-kit/cookies.dat").expanduser()
+DEFAULT_PROFILE_DIR = Path("~/.nodriver-kit/profiles").expanduser()
 
 
 async def main_async(args):
     import nodriver
 
-    cookies_path = Path(args.output).expanduser()
-    cookies_path.parent.mkdir(parents=True, exist_ok=True)
+    # Use persistent profile directory (like Playwright's launch_persistent_context)
+    profile_dir = DEFAULT_PROFILE_DIR / args.profile
+    profile_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"\n{'='*60}", file=sys.stderr)
+    print(f"\n{'=' * 60}", file=sys.stderr)
     print("MANUAL LOGIN REQUIRED", file=sys.stderr)
-    print(f"{'='*60}", file=sys.stderr)
-    print(f"", file=sys.stderr)
+    print(f"{'=' * 60}", file=sys.stderr)
+    print("", file=sys.stderr)
     print("This script will:", file=sys.stderr)
-    print("  1. Open a browser window", file=sys.stderr)
+    print("  1. Open a browser window with persistent profile", file=sys.stderr)
     print("  2. Navigate to the login URL", file=sys.stderr)
     print("  3. Wait for you to log in manually", file=sys.stderr)
-    print("  4. Save cookies when you CLOSE THE BROWSER", file=sys.stderr)
-    print(f"", file=sys.stderr)
+    print("  4. Auto-save session when you CLOSE THE BROWSER", file=sys.stderr)
+    print("", file=sys.stderr)
     print("The script will NOT interact with the page.", file=sys.stderr)
     print("Take your time to log in.", file=sys.stderr)
-    print(f"{'='*60}\n", file=sys.stderr)
+    print(f"{'=' * 60}\n", file=sys.stderr)
 
     browser = None
     try:
-        # Start browser (headful)
+        # Start browser with persistent profile (cookies auto-saved to disk)
         print("Opening browser...", file=sys.stderr)
-        browser = await nodriver.start(headless=False)
+        browser = await nodriver.start(
+            headless=False,
+            user_data_dir=str(profile_dir),
+        )
 
         # Navigate to login page
         tab = await browser.get(args.url)
 
-        print(f"", file=sys.stderr)
+        print("", file=sys.stderr)
         print(f"URL: {args.url}", file=sys.stderr)
-        print(f"Cookies will be saved to: {cookies_path}", file=sys.stderr)
-        print(f"", file=sys.stderr)
+        print(f"Profile: {profile_dir}", file=sys.stderr)
+        print("", file=sys.stderr)
         print("Please log in, then CLOSE THE BROWSER when done.", file=sys.stderr)
-        print(f"{'='*60}\n", file=sys.stderr)
+        print("(Session will be auto-saved to profile)", file=sys.stderr)
+        print(f"{'=' * 60}\n", file=sys.stderr)
 
-        # Wait for browser to close
-        # Poll until no more targets (browser closed)
+        # Wait for browser to close by polling tab connection
         while True:
             try:
-                targets = await browser.targets
-                if not targets:
-                    break
-                await asyncio.sleep(1)
+                await asyncio.sleep(2)
+                # This will fail when browser is closed
+                _ = await tab.evaluate("1")
             except Exception:
-                # Connection lost = browser closed
                 break
 
-        # Save cookies
-        print("Browser closed. Saving cookies...", file=sys.stderr)
-        try:
-            if args.pattern:
-                await browser.cookies.save(str(cookies_path), pattern=args.pattern)
-            else:
-                await browser.cookies.save(str(cookies_path))
-
-            output({
+        print("Browser closed. Session saved to profile.", file=sys.stderr)
+        output(
+            {
                 "success": True,
-                "cookies_path": str(cookies_path),
-                "message": "Login complete, cookies saved"
-            })
-        except Exception as e:
-            # Browser already closed, cookies might not be saveable
-            output({
-                "success": True,
-                "cookies_path": str(cookies_path),
-                "message": "Browser closed (cookies may have been saved by browser)"
-            })
+                "profile_dir": str(profile_dir),
+                "message": f"Login complete, session saved to {profile_dir}",
+            }
+        )
 
     except KeyboardInterrupt:
         print("\nInterrupted.", file=sys.stderr)
@@ -114,8 +105,12 @@ async def main_async(args):
 def main():
     parser = argparse.ArgumentParser(description="Interactive login helper")
     parser.add_argument("--url", "-u", required=True, help="Login page URL")
-    parser.add_argument("--output", "-o", default=str(DEFAULT_COOKIES_FILE), help="Cookies output path")
-    parser.add_argument("--pattern", "-p", help="Cookie domain pattern to save (e.g., 'grok')")
+    parser.add_argument(
+        "--profile",
+        "-p",
+        default="default",
+        help="Profile name (stored in ~/.nodriver-kit/profiles/)",
+    )
     args = parser.parse_args()
 
     try:
