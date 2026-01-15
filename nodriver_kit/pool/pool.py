@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, Generic, Literal, Protocol, TypeVar
 
 from ..browser import get_available_port, get_pid_on_port, kill_process_tree
-from ..cookies import CookieStrategy
+from ..profile import ProfileManager, ProfileMode
 from .job import Job, JobResult, JobStatus
 from .persistence import PoolState, load_state, save_state
 from .worker import Worker, WorkerStats, WorkerStatus
@@ -76,6 +76,7 @@ class BrowserPool(Generic[ClientT]):
         - Job queue for task distribution
         - Progress persistence for resume after restart
         - Graceful shutdown: complete current tasks before exit
+        - Profile management: shared, per_worker, or temp modes
 
     Example:
         async with BrowserPool(MyClient, workers=3) as pool:
@@ -88,6 +89,19 @@ class BrowserPool(Generic[ClientT]):
             # Wait for all jobs
             results = await pool.wait()
 
+    Profile modes:
+        - "shared" (default): All workers share cookies from a master cookies file.
+          First run: login in browser, cookies saved to ~/.nodriver-kit/cookies.dat
+          Subsequent runs: cookies loaded into each worker.
+        - "per_worker": Each worker has independent persistent cookies file.
+          Worker 0 uses ~/.nodriver-kit/cookies/cookies_worker_0.dat, etc.
+          Useful for multi-account scenarios.
+        - "temp": No cookie persistence. Fresh state each run.
+
+    Cookie persistence:
+        Uses nodriver's browser.cookies.save()/load() API for reliable persistence.
+        Client classes must accept 'cookies_file' parameter and handle loading/saving.
+
     Args:
         client_class: Browser client class (must support async context manager)
         workers: Number of workers to start (default: 3)
@@ -97,9 +111,10 @@ class BrowserPool(Generic[ClientT]):
         close_browsers: Terminate Chrome on pool exit (default: True)
         fail_condition: Callable that returns True if job should be retried
         requeue_position: Where to put failed jobs: "front" or "back"
-        cookies: Cookie management strategy. Use Cookies.shared() or Cookies.per_worker().
-                None = no cookie persistence (temp profiles, cookies lost on exit).
-        profile_prefix: Prefix for temp Chrome profiles (only used when cookies=None)
+        profile: Profile mode - "shared", "per_worker", or "temp" (default: "shared")
+        cookies_file: Path to shared cookies file (default: ~/.nodriver-kit/cookies.dat)
+        cookies_dir: Base directory for per-worker cookies (default: ~/.nodriver-kit/cookies)
+        profile_prefix: Prefix for temp Chrome profiles (only used in temp mode)
         **client_kwargs: Additional keyword arguments passed to client constructor
     """
 
@@ -113,7 +128,9 @@ class BrowserPool(Generic[ClientT]):
         close_browsers: bool = True,
         fail_condition: Callable[[dict], bool] | None = None,
         requeue_position: Literal["front", "back"] = "back",
-        cookies: CookieStrategy | None = None,
+        profile: ProfileMode = "shared",
+        cookies_file: str | Path | None = None,
+        cookies_dir: str | Path | None = None,
         profile_prefix: str = "nodriver_chrome_",
         **client_kwargs,
     ):
@@ -126,8 +143,14 @@ class BrowserPool(Generic[ClientT]):
         self._close_browsers = close_browsers
         self._fail_condition = fail_condition
         self._requeue_position = requeue_position
-        self._cookies = cookies
         self._profile_prefix = profile_prefix
+
+        # Profile management (uses cookies files for reliable persistence)
+        self._profile_manager = ProfileManager(
+            mode=profile,
+            cookies_file=cookies_file,
+            cookies_dir=cookies_dir,
+        )
 
         # Worker management
         self._workers: dict[int, Worker] = {}
@@ -200,10 +223,6 @@ class BrowserPool(Generic[ClientT]):
         for worker in self._workers.values():
             if worker.client:
                 try:
-                    # Save cookies before browser stops
-                    if self._cookies is not None:
-                        await self._cookies.on_browser_stop(worker.client, worker.worker_id)
-
                     await worker.client.__aexit__(None, None, None)
 
                     if self._close_browsers and hasattr(worker.client, "_chrome_process"):
@@ -250,11 +269,10 @@ class BrowserPool(Generic[ClientT]):
         client_kwargs["port"] = port
         client_kwargs["headless"] = self._headless
 
-        # Add user_data_dir if cookie strategy provides it
-        if self._cookies is not None:
-            user_data_dir = self._cookies.get_user_data_dir(worker_id)
-            if user_data_dir is not None:
-                client_kwargs["user_data_dir"] = user_data_dir
+        # Add cookies_file from profile manager
+        cookies_file = self._profile_manager.get_cookies_file(worker_id)
+        if cookies_file is not None:
+            client_kwargs["cookies_file"] = cookies_file
 
         # Initialize browser client
         client = self._client_class(**client_kwargs)
@@ -262,10 +280,6 @@ class BrowserPool(Generic[ClientT]):
         try:
             await client.__aenter__()
             worker.client = client
-
-            # Load cookies after browser starts
-            if self._cookies is not None:
-                await self._cookies.on_browser_start(client, worker_id)
 
             logger.info(f"Worker {worker_id} started on port {port}")
         except Exception as e:
@@ -309,10 +323,6 @@ class BrowserPool(Generic[ClientT]):
         # Close browser client
         if worker.client:
             try:
-                # Save cookies before browser stops
-                if self._cookies is not None:
-                    await self._cookies.on_browser_stop(worker.client, worker.worker_id)
-
                 await worker.client.__aexit__(None, None, None)
 
                 if self._close_browsers and hasattr(worker.client, "_chrome_process"):

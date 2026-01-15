@@ -5,20 +5,26 @@ AI-first design for intuitive browser automation.
 Modules:
     browser: Chrome detection, launching, and port management
     pool: Parallel task execution with multiple browser workers
+    profile: Cookie file management for reliable persistence
 
 Quick Start:
-    # Simple browser launch
-    from nodriver_kit import find_chrome, launch_chrome, get_available_port
-
-    port = get_available_port()
-    process = launch_chrome(port=port)
-
-    # Worker pool for parallel tasks
+    # Worker pool with shared cookies (default)
     from nodriver_kit import BrowserPool
 
     async with BrowserPool(MyClient, workers=3) as pool:
+        # First run: login in browser, cookies saved to ~/.nodriver-kit/cookies.dat
+        # Subsequent runs: cookies auto-loaded into each worker
         await pool.run("fetch", "https://example.com")
         results = await pool.wait()
+
+Profile modes:
+    - "shared" (default): All workers share cookies from ~/.nodriver-kit/cookies.dat
+    - "per_worker": Each worker has own cookies file in ~/.nodriver-kit/cookies/
+    - "temp": No cookie persistence
+
+Cookie persistence:
+    Uses nodriver's browser.cookies.save()/load() API for reliable persistence.
+    Client classes must accept 'cookies_file' parameter and handle loading/saving.
 
 For Cloudflare bypass, use nodriver's built-in tab.verify_cf():
     import nodriver as uc
@@ -62,8 +68,11 @@ from .pool import (
     save_state,
 )
 
-# Cookie management
-from .cookies import Cookies, SharedCookies, PerWorkerCookies, CookieStrategy
+# Profile management
+from .profile import ProfileManager, ProfileMode
+
+# Cloudflare verification
+from .cloudflare import verify_cloudflare, CFVerify
 
 __version__ = "0.1.0"
 
@@ -95,9 +104,10 @@ __all__ = [
     "PoolState",
     "load_state",
     "save_state",
-    # Cookie management
-    "Cookies",
-    "SharedCookies",
-    "PerWorkerCookies",
-    "CookieStrategy",
+    # Profile management
+    "ProfileManager",
+    "ProfileMode",
+    # Cloudflare verification
+    "verify_cloudflare",
+    "CFVerify",
 ]
