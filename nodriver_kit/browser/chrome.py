@@ -46,7 +46,10 @@ def find_chrome() -> str | None:
         candidates = [
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
             "/Applications/Chromium.app/Contents/MacOS/Chromium",
-            str(Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            str(
+                Path.home()
+                / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            ),
         ]
     elif system == "Windows":
         candidates = [
@@ -70,7 +73,12 @@ def find_chrome() -> str | None:
 
     # Try to find via 'which' on Unix-like systems
     if system != "Windows":
-        for cmd in ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"]:
+        for cmd in [
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium",
+            "chromium-browser",
+        ]:
             result = shutil.which(cmd)
             if result:
                 return result
@@ -117,8 +125,11 @@ def launch_chrome(
         )
 
     # Create isolated user data directory if not provided
+    # Use port number in name so browser_stop can find and clean it up
     if user_data_dir is None:
-        user_data_dir = tempfile.mkdtemp(prefix=profile_prefix)
+        temp_dir = Path(tempfile.gettempdir()) / f"{profile_prefix}{port}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        user_data_dir = str(temp_dir)
 
     # Build Chrome arguments (cross-platform)
     args = [

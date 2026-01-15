@@ -10,12 +10,15 @@ Output:
 """
 
 import argparse
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from nodriver_kit import kill_process_tree, get_pid_on_port, is_port_in_use
+from nodriver_kit.browser import DEFAULT_PROFILE_PREFIX
 from tools._common import output, error
 
 
@@ -28,6 +31,18 @@ def find_debug_chromes(port_range: tuple = (9222, 9300)) -> list:
             if pid:
                 ports.append((port, pid))
     return ports
+
+
+def cleanup_temp_profile(port: int) -> bool:
+    """Clean up temp profile directory for a port if it exists."""
+    temp_dir = Path(tempfile.gettempdir()) / f"{DEFAULT_PROFILE_PREFIX}{port}"
+    if temp_dir.exists():
+        try:
+            shutil.rmtree(temp_dir)
+            return True
+        except Exception:
+            pass
+    return False
 
 
 def main():
@@ -56,13 +71,20 @@ def main():
             return
 
         stopped = []
+        cleaned = 0
         for port, pid in chromes:
             try:
                 kill_process_tree(pid)
                 stopped.append({"port": port, "pid": pid})
+                # Clean up temp profile if exists
+                if cleanup_temp_profile(port):
+                    cleaned += 1
             except Exception:
                 pass
-        output({"stopped": True, "count": len(stopped), "browsers": stopped})
+        result = {"stopped": True, "count": len(stopped), "browsers": stopped}
+        if cleaned > 0:
+            result["temp_profiles_cleaned"] = cleaned
+        output(result)
 
     elif args.port:
         # Stop specific port directly (works for both temp and persistent profiles)
@@ -70,7 +92,12 @@ def main():
         if pid:
             try:
                 kill_process_tree(pid)
-                output({"stopped": True, "port": args.port, "pid": pid})
+                # Clean up temp profile if exists
+                cleaned = cleanup_temp_profile(args.port)
+                result = {"stopped": True, "port": args.port, "pid": pid}
+                if cleaned:
+                    result["temp_profile_cleaned"] = True
+                output(result)
             except Exception as e:
                 error(f"Failed to stop browser on port {args.port}: {e}")
         else:
