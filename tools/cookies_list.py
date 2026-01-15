@@ -26,24 +26,26 @@ async def main_async(args):
 
         # Filter by domain if specified
         if args.domain:
-            cookies = [c for c in cookies if args.domain in (c.get("domain", "") or "")]
+            cookies = [
+                c for c in cookies if args.domain in (getattr(c, "domain", "") or "")
+            ]
 
-        # Simplify output
+        # Simplify output - cookies are Cookie objects, not dicts
         simple_cookies = []
         for c in cookies:
-            simple_cookies.append({
-                "name": c.get("name"),
-                "domain": c.get("domain"),
-                "path": c.get("path", "/"),
-                "secure": c.get("secure", False),
-                "httpOnly": c.get("httpOnly", False),
-                "value": c.get("value", "")[:50] + "..." if len(c.get("value", "")) > 50 else c.get("value", "")
-            })
+            value = getattr(c, "value", "") or ""
+            simple_cookies.append(
+                {
+                    "name": getattr(c, "name", ""),
+                    "domain": getattr(c, "domain", ""),
+                    "path": getattr(c, "path", "/"),
+                    "secure": getattr(c, "secure", False),
+                    "httpOnly": getattr(c, "http_only", False),
+                    "value": value[:50] + "..." if len(value) > 50 else value,
+                }
+            )
 
-        output({
-            "cookies": simple_cookies,
-            "count": len(simple_cookies)
-        })
+        output({"cookies": simple_cookies, "count": len(simple_cookies)})
 
     except Exception as e:
         error(f"Failed to get cookies: {e}")
