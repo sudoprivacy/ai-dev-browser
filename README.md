@@ -1,13 +1,28 @@
 # nodriver-kit
 
-Browser automation toolkit built on [nodriver](https://github.com/ultrafunkamsterdam/nodriver) - AI-first design.
+Browser automation toolkit built on [nodriver](https://github.com/ultrafunkamsterdam/nodriver) - AI-first design for browser automation.
+
+## Why nodriver?
+
+**nodriver mimics human behavior** - making it ideal for:
+
+- **AI Agents**: Best choice for AI-driven browser automation. nodriver's human-like interactions avoid detection and work with sites that block traditional automation tools.
+- **UI Testing**: Tests that behave like real users, catching issues that robotic automation misses.
+- **Web Scraping**: Access sites that detect and block Selenium/Puppeteer/Playwright.
+
+Unlike Selenium (sends "I'm a robot" signals) or Playwright (fast but detectable), nodriver:
+- Uses actual Chrome via CDP (Chrome DevTools Protocol)
+- Implements human-like delays and movements
+- Passes Cloudflare, bot detection, and CAPTCHAs
+- Works where other tools fail
 
 ## Features
 
+- **Human-like Automation**: Built on nodriver's anti-detection technology
 - **Browser Management**: Cross-platform Chrome detection, launching, and port management
 - **Worker Pool**: Parallel task execution with multiple browser instances
+- **CLI Tools**: 37 standalone tools for AI agents and scripting (see [tools/](tools/README.md))
 - **AI-Friendly API**: Intuitive `run()` method, sensible defaults, clear error messages
-- **Built on nodriver**: Leverages nodriver's anti-detection and CDP capabilities
 
 ## Installation
 
@@ -86,6 +101,29 @@ browser = await uc.start()
 tab = await browser.get("https://protected-site.com")
 await tab.verify_cf()  # Built-in CF bypass (requires opencv-python)
 ```
+
+## CLI Tools
+
+37 standalone tools for AI agents and scripting. Key tools:
+
+```bash
+# AI-friendly page snapshot (accessibility tree - best for AI)
+python tools/page_snapshot.py --port 9222
+
+# Browser management
+python tools/browser_start.py
+python tools/browser_stop.py --all
+
+# Navigation
+python tools/page_goto.py --url "https://example.com"
+python tools/element_click.py --selector "button.submit"
+
+# Tab management
+python tools/tab_new.py --url "https://google.com"
+python tools/tab_list.py
+```
+
+See [tools/README.md](tools/README.md) for all 37 tools.
 
 ## API Reference
 
