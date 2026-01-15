@@ -74,6 +74,9 @@ from .profile import ProfileManager, ProfileMode
 # Cloudflare verification (wraps nodriver's native verify_cf)
 from .cloudflare import verify_cloudflare
 
+# Core browser operations (shared by tools/ and Python code)
+from . import core
+
 __version__ = "0.1.0"
 
 __all__ = [
@@ -109,4 +112,6 @@ __all__ = [
     "ProfileMode",
     # Cloudflare verification
     "verify_cloudflare",
+    # Core operations module
+    "core",
 ]

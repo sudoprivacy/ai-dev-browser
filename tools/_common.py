@@ -4,6 +4,8 @@ All tools share this module for consistent behavior:
 - JSON output for AI parsing
 - Unified --port argument
 - Error handling
+
+Uses nodriver_kit.core for browser operations.
 """
 
 import argparse
@@ -12,7 +14,10 @@ import json
 import sys
 from pathlib import Path
 
-import nodriver
+# Use core module for browser operations
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from nodriver_kit.core import connect_browser as _connect_browser
+from nodriver_kit.core import get_active_tab as _get_active_tab
 
 
 def output(data: dict) -> None:
@@ -29,41 +34,25 @@ def error(message: str, code: int = 1) -> None:
 def add_port_arg(parser: argparse.ArgumentParser) -> None:
     """Add common --port argument."""
     parser.add_argument(
-        "--port", "-p",
+        "--port",
+        "-p",
         type=int,
         default=9222,
-        help="Chrome debugging port (default: 9222)"
+        help="Chrome debugging port (default: 9222)",
     )
 
 
-async def connect_browser(port: int) -> nodriver.Browser:
+async def connect_browser(port: int):
     """Connect to existing Chrome instance."""
     try:
-        browser = await nodriver.start(
-            host="127.0.0.1",
-            port=port,
-        )
-        return browser
+        return await _connect_browser(port=port)
     except Exception as e:
         error(f"Failed to connect to Chrome on port {port}: {e}")
 
 
-async def get_active_tab(browser: nodriver.Browser):
+async def get_active_tab(browser):
     """Get the active/main tab from browser."""
-    # Try to find existing tab
-    targets = getattr(browser, "targets", None) or []
-    page_targets = [t for t in targets if getattr(t, "type_", "") == "page"]
-
-    for target in page_targets:
-        url = getattr(target, "url", "") or ""
-        if url and not url.startswith("about:"):
-            return target
-
-    if page_targets:
-        return page_targets[0]
-
-    # No tabs, create one
-    return await browser.get("about:blank")
+    return await _get_active_tab(browser)
 
 
 def run_async(coro):
