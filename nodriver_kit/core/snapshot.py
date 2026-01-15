@@ -166,14 +166,19 @@ async def get_snapshot(
     # Get full tree
     result = await tab.send(accessibility.get_full_ax_tree())
 
-    if not result or not result.nodes:
+    # Handle both list and object with .nodes attribute
+    if not result:
+        return []
+
+    ax_nodes = result.nodes if hasattr(result, "nodes") else result
+    if not ax_nodes:
         return []
 
     # Format nodes
     ref_counter = [0]
     nodes = []
 
-    for node in result.nodes:
+    for node in ax_nodes:
         if hasattr(node, "role") and node.role:
             formatted = _format_ax_node(
                 node,

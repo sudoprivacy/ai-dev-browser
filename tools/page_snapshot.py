@@ -188,7 +188,9 @@ async def main_async(args):
         # Get the full accessibility tree
         result = await tab.send(accessibility.get_full_ax_tree())
 
-        if not result or not result.nodes:
+        # Handle both list and object with .nodes attribute
+        ax_nodes = result.nodes if hasattr(result, "nodes") else result
+        if not ax_nodes:
             output(
                 {
                     "snapshot": [],
@@ -203,7 +205,7 @@ async def main_async(args):
         nodes = []
 
         # The first node is usually the root
-        for node in result.nodes:
+        for node in ax_nodes:
             if hasattr(node, "role") and node.role:
                 formatted = format_ax_node(
                     node,

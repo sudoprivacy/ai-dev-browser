@@ -55,7 +55,7 @@ def main():
         "--width", "-w", type=int, default=1280, help="Window width (default: 1280)"
     )
     parser.add_argument(
-        "--height", "-h", type=int, default=720, help="Window height (default: 720)"
+        "--height", type=int, default=720, help="Window height (default: 720)"
     )
     parser.add_argument(
         "--left", "-l", type=int, default=0, help="Window left position (default: 0)"
