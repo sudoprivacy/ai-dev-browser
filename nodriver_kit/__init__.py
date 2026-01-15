@@ -62,6 +62,9 @@ from .pool import (
     save_state,
 )
 
+# Cookie management
+from .cookies import Cookies, SharedCookies, PerWorkerCookies, CookieStrategy
+
 __version__ = "0.1.0"
 
 __all__ = [
@@ -92,4 +95,9 @@ __all__ = [
     "PoolState",
     "load_state",
     "save_state",
+    # Cookie management
+    "Cookies",
+    "SharedCookies",
+    "PerWorkerCookies",
+    "CookieStrategy",
 ]
