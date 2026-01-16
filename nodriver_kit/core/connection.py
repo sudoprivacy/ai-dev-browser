@@ -20,7 +20,12 @@ async def connect_browser(
         ConnectionError: If unable to connect
     """
     try:
-        browser = await nodriver.start(host=host, port=port)
+        # Use Config with host/port to CONNECT to existing browser
+        # See: https://github.com/ultrafunkamsterdam/undetected-chromedriver/issues/1895
+        config = nodriver.Config()
+        config.host = host
+        config.port = port
+        browser = await nodriver.start(config=config)
         return browser
     except Exception as e:
         raise ConnectionError(f"Failed to connect to Chrome on {host}:{port}: {e}")
