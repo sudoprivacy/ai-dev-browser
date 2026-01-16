@@ -3,10 +3,11 @@
 This module provides port scanning and availability detection:
 - is_port_in_use: Check if a port is occupied
 - get_available_port: Find an available debugging port
-- find_temp_chromes: Find Chrome instances launched by this library
+- is_our_chrome_on_port: Check if Chrome was started by this session
+- find_our_chromes: Find Chrome instances started by this session
 
-The port management strategy prioritizes reusing existing Chrome instances
-over launching new ones, which preserves login sessions and reduces startup time.
+The port management uses session ID tagging to identify which Chrome instances
+were started by this nodriver-kit process.
 
 Example:
     port = get_available_port()
@@ -68,37 +69,6 @@ def is_port_in_use(host: str = DEFAULT_DEBUG_HOST, port: int = DEFAULT_DEBUG_POR
         pass
 
     return False
-
-
-def is_temp_chrome_on_port(port: int, profile_prefix: str = DEFAULT_PROFILE_PREFIX) -> tuple[bool, int | None]:
-    """
-    Check if the Chrome on a port is a temp profile launched by this library.
-
-    Args:
-        port: Port to check
-        profile_prefix: Profile directory prefix to match (default: "nodriver_chrome_")
-
-    Returns:
-        Tuple of (is_temp_chrome, pid). If not a temp Chrome or no Chrome, returns (False, None).
-
-    Example:
-        is_ours, pid = is_temp_chrome_on_port(9222)
-        if is_ours:
-            print(f"Our Chrome on port 9222, PID: {pid}")
-    """
-    pid = get_pid_on_port(port)
-    if pid is None:
-        return False, None
-
-    cmdline = get_process_cmdline(pid)
-    if cmdline is None:
-        return False, pid
-
-    # Check if it's Chrome with our temp profile prefix
-    if "chrome" in cmdline.lower() and profile_prefix in cmdline:
-        return True, pid
-
-    return False, pid
 
 
 def is_our_chrome_on_port(port: int) -> tuple[bool, int | None]:
@@ -229,54 +199,16 @@ def is_chrome_in_use(port: int, timeout: float = 0.5) -> bool:
         return False
 
 
-def find_temp_chromes(
-    port_range: tuple[int, int] = (9222, 9300),
-    profile_prefix: str = DEFAULT_PROFILE_PREFIX,
-    exclude_in_use: bool = True,
-) -> list[int]:
-    """
-    Find all ports with temp Chrome instances launched by this library.
-
-    Scans the given port range for Chrome instances with matching profile prefix.
-
-    Args:
-        port_range: Tuple of (start_port, end_port) to scan
-        profile_prefix: Profile directory prefix to match (default: "nodriver_chrome_")
-        exclude_in_use: If True (default), skip ports where Chrome has attached
-                       debugger sessions (detected via CDP).
-
-    Returns:
-        List of ports with matching Chrome instances.
-
-    Example:
-        ports = find_temp_chromes()
-        print(f"Found {len(ports)} reusable Chrome instances")
-    """
-    temp_ports = []
-    for port in range(port_range[0], port_range[1]):
-        is_temp, _ = is_temp_chrome_on_port(port, profile_prefix)
-        if is_temp:
-            # Check CDP-based in-use detection
-            if exclude_in_use:
-                if is_chrome_in_use(port):
-                    logger.debug(f"Skipping in-use Chrome on port {port} (has attached debugger)")
-                    continue
-
-            temp_ports.append(port)
-    return temp_ports
-
-
 def get_available_port(
     start: int = 9222,
     end: int = 9300,
     exclude: set[int] | None = None,
-    profile_prefix: str = DEFAULT_PROFILE_PREFIX,
 ) -> int:
     """
     Find an available port for Chrome, preferring to reuse existing instances.
 
     Port selection strategy:
-    1. First, look for existing temp Chrome (matching prefix) not in use
+    1. First, look for existing Chrome from THIS session not in use
     2. If none found, find an unused port for launching new Chrome
 
     This strategy preserves login sessions and reduces startup time.
@@ -285,7 +217,6 @@ def get_available_port(
         start: Start of port range to search (default: 9222)
         end: End of port range to search (default: 9300)
         exclude: Set of ports to skip (e.g., already assigned to workers)
-        profile_prefix: Profile directory prefix to match (default: "nodriver_chrome_")
 
     Returns:
         An available port number
@@ -299,14 +230,14 @@ def get_available_port(
     """
     exclude = exclude or set()
 
-    # Strategy 1: Try to reuse existing temp Chrome not in use
+    # Strategy 1: Try to reuse existing Chrome from our session not in use
     for port in range(start, end):
         if port in exclude:
             continue
         if is_port_in_use(DEFAULT_DEBUG_HOST, port):
-            is_temp, _ = is_temp_chrome_on_port(port, profile_prefix)
-            if is_temp and not is_chrome_in_use(port):
-                logger.debug(f"Found reusable temp Chrome on port {port}")
+            is_ours, _ = is_our_chrome_on_port(port)
+            if is_ours and not is_chrome_in_use(port):
+                logger.debug(f"Found reusable Chrome from our session on port {port}")
                 return port
 
     # Strategy 2: Find unused port for new Chrome
@@ -325,7 +256,7 @@ def find_debug_chromes(
     """
     Find all Chrome instances listening on debug ports.
 
-    Unlike find_temp_chromes(), this finds ALL Chromes regardless of profile prefix.
+    This finds ALL Chromes regardless of session ID.
     Useful for browser_stop --all to clean up any debug Chrome.
 
     Args:

@@ -32,12 +32,10 @@ from .port import (
     cleanup_temp_profile,
     find_debug_chromes,
     find_our_chromes,
-    find_temp_chromes,
     get_available_port,
     is_chrome_in_use,
     is_our_chrome_on_port,
     is_port_in_use,
-    is_temp_chrome_on_port,
 )
 
 # Session management
@@ -99,10 +97,8 @@ __all__ = [
     "launch_chrome",
     # Port
     "is_port_in_use",
-    "is_temp_chrome_on_port",
     "is_our_chrome_on_port",
     "is_chrome_in_use",
-    "find_temp_chromes",
     "find_our_chromes",
     "find_debug_chromes",
     "get_available_port",

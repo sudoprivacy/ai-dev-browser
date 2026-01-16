@@ -50,10 +50,8 @@ from .core import (
     launch_chrome,
     # Port management
     is_port_in_use,
-    is_temp_chrome_on_port,
     is_our_chrome_on_port,
     is_chrome_in_use,
-    find_temp_chromes,
     find_our_chromes,
     find_debug_chromes,
     get_available_port,
@@ -110,10 +108,8 @@ __all__ = [
     "launch_chrome",
     # Port
     "is_port_in_use",
-    "is_temp_chrome_on_port",
     "is_our_chrome_on_port",
     "is_chrome_in_use",
-    "find_temp_chromes",
     "find_our_chromes",
     "find_debug_chromes",
     "get_available_port",
