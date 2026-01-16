@@ -18,6 +18,7 @@ import tempfile
 from pathlib import Path
 
 from .config import DEFAULT_PROFILE_PREFIX
+from .session import make_session_arg
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +136,7 @@ def launch_chrome(
         chrome_path,
         f"--remote-debugging-port={port}",
         f"--user-data-dir={user_data_dir}",
+        make_session_arg(),  # Tag this Chrome with our session ID
         "--remote-allow-origins=*",  # Allow CDP connections for in-use detection
         "--no-first-run",
         "--no-default-browser-check",

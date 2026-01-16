@@ -24,6 +24,7 @@ from pathlib import Path
 
 from .config import DEFAULT_DEBUG_HOST, DEFAULT_DEBUG_PORT, DEFAULT_PORT_RANGE, DEFAULT_PROFILE_PREFIX
 from .process import get_pid_on_port, get_process_cmdline
+from .session import is_our_session, get_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,75 @@ def is_temp_chrome_on_port(port: int, profile_prefix: str = DEFAULT_PROFILE_PREF
         return True, pid
 
     return False, pid
+
+
+def is_our_chrome_on_port(port: int) -> tuple[bool, int | None]:
+    """
+    Check if the Chrome on a port was started by THIS nodriver-kit session.
+
+    Uses session ID tagging (more reliable than profile prefix matching).
+    Each nodriver-kit process gets a unique session ID injected into Chrome's
+    command line as --nodriver-kit-session=<id>.
+
+    Args:
+        port: Port to check
+
+    Returns:
+        Tuple of (is_our_chrome, pid). If not our Chrome or no Chrome, returns (False, None).
+
+    Example:
+        is_ours, pid = is_our_chrome_on_port(9222)
+        if is_ours:
+            print(f"This Chrome was started by us, PID: {pid}")
+    """
+    pid = get_pid_on_port(port)
+    if pid is None:
+        return False, None
+
+    cmdline = get_process_cmdline(pid)
+    if cmdline is None:
+        return False, pid
+
+    # Check if it's Chrome with our session ID
+    if "chrome" in cmdline.lower() and is_our_session(cmdline):
+        return True, pid
+
+    return False, pid
+
+
+def find_our_chromes(
+    port_range: tuple[int, int] = DEFAULT_PORT_RANGE,
+    exclude_in_use: bool = True,
+) -> list[int]:
+    """
+    Find all Chrome instances started by THIS nodriver-kit session.
+
+    Uses session ID tagging to identify our Chromes. More reliable than
+    profile prefix matching because it distinguishes between different
+    nodriver-kit processes running simultaneously.
+
+    Args:
+        port_range: Tuple of (start_port, end_port) to scan
+        exclude_in_use: If True (default), skip ports where Chrome has attached
+                       debugger sessions (detected via CDP).
+
+    Returns:
+        List of ports with our Chrome instances.
+
+    Example:
+        ports = find_our_chromes()
+        print(f"Found {len(ports)} Chrome instances from this session")
+    """
+    our_ports = []
+    for port in range(port_range[0], port_range[1]):
+        is_ours, _ = is_our_chrome_on_port(port)
+        if is_ours:
+            if exclude_in_use:
+                if is_chrome_in_use(port):
+                    logger.debug(f"Skipping in-use Chrome on port {port}")
+                    continue
+            our_ports.append(port)
+    return our_ports
 
 
 def is_chrome_in_use(port: int, timeout: float = 0.5) -> bool:

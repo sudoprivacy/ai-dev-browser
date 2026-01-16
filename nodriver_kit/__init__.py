@@ -51,11 +51,17 @@ from .core import (
     # Port management
     is_port_in_use,
     is_temp_chrome_on_port,
+    is_our_chrome_on_port,
     is_chrome_in_use,
     find_temp_chromes,
+    find_our_chromes,
     find_debug_chromes,
     get_available_port,
     cleanup_temp_profile,
+    # Session management
+    get_session_id,
+    is_our_session,
+    extract_session_id,
     # Process management
     get_pid_on_port,
     get_process_cmdline,
@@ -105,11 +111,17 @@ __all__ = [
     # Port
     "is_port_in_use",
     "is_temp_chrome_on_port",
+    "is_our_chrome_on_port",
     "is_chrome_in_use",
     "find_temp_chromes",
+    "find_our_chromes",
     "find_debug_chromes",
     "get_available_port",
     "cleanup_temp_profile",
+    # Session
+    "get_session_id",
+    "is_our_session",
+    "extract_session_id",
     # Process
     "get_pid_on_port",
     "get_process_cmdline",

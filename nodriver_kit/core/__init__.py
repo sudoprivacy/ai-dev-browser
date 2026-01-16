@@ -31,12 +31,17 @@ from .chrome import find_chrome, launch_chrome
 from .port import (
     cleanup_temp_profile,
     find_debug_chromes,
+    find_our_chromes,
     find_temp_chromes,
     get_available_port,
     is_chrome_in_use,
+    is_our_chrome_on_port,
     is_port_in_use,
     is_temp_chrome_on_port,
 )
+
+# Session management
+from .session import get_session_id, is_our_session, extract_session_id
 
 # Process management
 from .process import get_pid_on_port, get_process_cmdline, kill_process_tree
@@ -95,11 +100,17 @@ __all__ = [
     # Port
     "is_port_in_use",
     "is_temp_chrome_on_port",
+    "is_our_chrome_on_port",
     "is_chrome_in_use",
     "find_temp_chromes",
+    "find_our_chromes",
     "find_debug_chromes",
     "get_available_port",
     "cleanup_temp_profile",
+    # Session
+    "get_session_id",
+    "is_our_session",
+    "extract_session_id",
     # Process
     "get_pid_on_port",
     "get_process_cmdline",
