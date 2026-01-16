@@ -88,9 +88,7 @@ async def main_async(args):
 def main():
     parser = argparse.ArgumentParser(description="Wait for URL pattern")
     add_port_arg(parser)
-    parser.add_argument(
-        "--pattern", "-p", help="URL pattern to match (substring or regex)"
-    )
+    parser.add_argument("--pattern", help="URL pattern to match (substring or regex)")
     parser.add_argument("--exact", "-e", help="Exact URL to match")
     parser.add_argument(
         "--timeout",

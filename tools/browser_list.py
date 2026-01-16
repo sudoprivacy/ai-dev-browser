@@ -13,25 +13,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from nodriver_kit import find_temp_chromes, is_chrome_in_use
+from nodriver_kit import find_temp_chromes, is_chrome_in_use, get_pid_on_port
 from tools._common import output
 
 
 def main():
-    chromes = find_temp_chromes()
+    ports = find_temp_chromes()
 
     browsers = []
-    for port, pid in chromes:
-        browsers.append({
-            "port": port,
-            "pid": pid,
-            "in_use": is_chrome_in_use(port)
-        })
+    for port in ports:
+        pid = get_pid_on_port(port)
+        browsers.append({"port": port, "pid": pid, "in_use": is_chrome_in_use(port)})
 
-    output({
-        "browsers": browsers,
-        "count": len(browsers)
-    })
+    output({"browsers": browsers, "count": len(browsers)})
 
 
 if __name__ == "__main__":
