@@ -34,20 +34,28 @@ For Cloudflare bypass, use nodriver's built-in tab.verify_cf():
     await tab.verify_cf()  # Built-in CF bypass
 """
 
-# Browser management
-from .browser import (
+# Core operations (all shared code lives here)
+from .core import (
+    # Config
+    DEFAULT_BASE_DIR,
+    DEFAULT_PROFILE_DIR,
+    DEFAULT_COOKIES_FILE,
+    DEFAULT_COOKIES_DIR,
+    DEFAULT_PROFILE_PREFIX,
+    DEFAULT_DEBUG_HOST,
+    DEFAULT_DEBUG_PORT,
+    DEFAULT_PORT_RANGE,
     # Chrome detection and launching
     find_chrome,
     launch_chrome,
-    DEFAULT_PROFILE_PREFIX,
     # Port management
     is_port_in_use,
     is_temp_chrome_on_port,
     is_chrome_in_use,
     find_temp_chromes,
+    find_debug_chromes,
     get_available_port,
-    DEFAULT_DEBUG_PORT,
-    DEFAULT_DEBUG_HOST,
+    cleanup_temp_profile,
     # Process management
     get_pid_on_port,
     get_process_cmdline,
@@ -72,7 +80,7 @@ from .pool import (
 from .profile import ProfileManager, ProfileMode
 
 # Cloudflare verification (wraps nodriver's native verify_cf)
-from .cloudflare import verify_cloudflare
+from .core.cloudflare import verify_cloudflare
 
 # Core browser operations (shared by tools/ and Python code)
 from . import core
@@ -82,17 +90,27 @@ __version__ = "0.1.0"
 __all__ = [
     # Version
     "__version__",
-    # Browser management
+    # Config
+    "DEFAULT_BASE_DIR",
+    "DEFAULT_PROFILE_DIR",
+    "DEFAULT_COOKIES_FILE",
+    "DEFAULT_COOKIES_DIR",
+    "DEFAULT_PROFILE_PREFIX",
+    "DEFAULT_DEBUG_HOST",
+    "DEFAULT_DEBUG_PORT",
+    "DEFAULT_PORT_RANGE",
+    # Chrome
     "find_chrome",
     "launch_chrome",
-    "DEFAULT_PROFILE_PREFIX",
+    # Port
     "is_port_in_use",
     "is_temp_chrome_on_port",
     "is_chrome_in_use",
     "find_temp_chromes",
+    "find_debug_chromes",
     "get_available_port",
-    "DEFAULT_DEBUG_PORT",
-    "DEFAULT_DEBUG_HOST",
+    "cleanup_temp_profile",
+    # Process
     "get_pid_on_port",
     "get_process_cmdline",
     "kill_process_tree",

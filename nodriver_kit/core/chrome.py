@@ -17,10 +17,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from .config import DEFAULT_PROFILE_PREFIX
 
-# Default prefix for temp Chrome profiles
-DEFAULT_PROFILE_PREFIX = "nodriver_chrome_"
+logger = logging.getLogger(__name__)
 
 
 def find_chrome() -> str | None:

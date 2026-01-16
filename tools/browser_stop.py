@@ -10,39 +10,18 @@ Output:
 """
 
 import argparse
-import shutil
 import sys
-import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from nodriver_kit import kill_process_tree, get_pid_on_port, is_port_in_use
-from nodriver_kit.browser import DEFAULT_PROFILE_PREFIX
+from nodriver_kit import (
+    kill_process_tree,
+    get_pid_on_port,
+    find_debug_chromes,
+    cleanup_temp_profile,
+)
 from tools._common import output, error
-
-
-def find_debug_chromes(port_range: tuple = (9222, 9300)) -> list:
-    """Find all Chrome instances listening on debug ports."""
-    ports = []
-    for port in range(port_range[0], port_range[1]):
-        if is_port_in_use("127.0.0.1", port):
-            pid = get_pid_on_port(port)
-            if pid:
-                ports.append((port, pid))
-    return ports
-
-
-def cleanup_temp_profile(port: int) -> bool:
-    """Clean up temp profile directory for a port if it exists."""
-    temp_dir = Path(tempfile.gettempdir()) / f"{DEFAULT_PROFILE_PREFIX}{port}"
-    if temp_dir.exists():
-        try:
-            shutil.rmtree(temp_dir)
-            return True
-        except Exception:
-            pass
-    return False
 
 
 def main():

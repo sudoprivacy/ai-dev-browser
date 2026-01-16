@@ -23,10 +23,8 @@ from pathlib import Path
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from nodriver_kit import launch_chrome, get_available_port, is_port_in_use
+from nodriver_kit import launch_chrome, get_available_port, is_port_in_use, DEFAULT_PROFILE_DIR
 from tools._common import output, error
-
-DEFAULT_PROFILE_DIR = Path("~/.nodriver-kit/profiles").expanduser()
 
 
 def main():

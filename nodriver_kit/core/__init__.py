@@ -12,6 +12,35 @@ Usage:
     snapshot = await get_snapshot(tab, interactable_only=True)
 """
 
+# Config (shared constants)
+from .config import (
+    DEFAULT_BASE_DIR,
+    DEFAULT_COOKIES_DIR,
+    DEFAULT_COOKIES_FILE,
+    DEFAULT_DEBUG_HOST,
+    DEFAULT_DEBUG_PORT,
+    DEFAULT_PORT_RANGE,
+    DEFAULT_PROFILE_DIR,
+    DEFAULT_PROFILE_PREFIX,
+)
+
+# Chrome detection and launching
+from .chrome import find_chrome, launch_chrome
+
+# Port management
+from .port import (
+    cleanup_temp_profile,
+    find_debug_chromes,
+    find_temp_chromes,
+    get_available_port,
+    is_chrome_in_use,
+    is_port_in_use,
+    is_temp_chrome_on_port,
+)
+
+# Process management
+from .process import get_pid_on_port, get_process_cmdline, kill_process_tree
+
 # Connection
 from .connection import connect_browser, get_active_tab
 
@@ -51,6 +80,30 @@ from .storage import get_local_storage, set_local_storage
 from .download import set_download_path, download_file
 
 __all__ = [
+    # Config
+    "DEFAULT_BASE_DIR",
+    "DEFAULT_PROFILE_DIR",
+    "DEFAULT_COOKIES_FILE",
+    "DEFAULT_COOKIES_DIR",
+    "DEFAULT_PROFILE_PREFIX",
+    "DEFAULT_DEBUG_HOST",
+    "DEFAULT_DEBUG_PORT",
+    "DEFAULT_PORT_RANGE",
+    # Chrome
+    "find_chrome",
+    "launch_chrome",
+    # Port
+    "is_port_in_use",
+    "is_temp_chrome_on_port",
+    "is_chrome_in_use",
+    "find_temp_chromes",
+    "find_debug_chromes",
+    "get_available_port",
+    "cleanup_temp_profile",
+    # Process
+    "get_pid_on_port",
+    "get_process_cmdline",
+    "kill_process_tree",
     # Connection
     "connect_browser",
     "get_active_tab",

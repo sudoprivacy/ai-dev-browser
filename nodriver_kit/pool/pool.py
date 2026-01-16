@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Generic, Literal, Protocol, TypeVar
 
-from ..browser import get_available_port, get_pid_on_port, kill_process_tree
+from ..core import get_available_port, get_pid_on_port, kill_process_tree
 from ..profile import ProfileManager, ProfileMode
 from .job import Job, JobResult, JobStatus
 from .persistence import PoolState, load_state, save_state

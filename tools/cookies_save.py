@@ -14,9 +14,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from nodriver_kit import DEFAULT_COOKIES_FILE
 from tools._common import output, error, add_port_arg, connect_browser, run_async
-
-DEFAULT_COOKIES_FILE = Path("~/.nodriver-kit/cookies.dat").expanduser()
 
 
 async def main_async(args):

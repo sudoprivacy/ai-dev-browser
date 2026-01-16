@@ -29,14 +29,11 @@ import logging
 from pathlib import Path
 from typing import Literal
 
+from .core.config import DEFAULT_COOKIES_DIR, DEFAULT_COOKIES_FILE
+
 logger = logging.getLogger(__name__)
 
 ProfileMode = Literal["shared", "per_worker", "temp"]
-
-# Default paths
-DEFAULT_BASE_DIR = Path("~/.nodriver-kit").expanduser()
-DEFAULT_COOKIES_FILE = DEFAULT_BASE_DIR / "cookies.dat"
-DEFAULT_COOKIES_DIR = DEFAULT_BASE_DIR / "cookies"
 
 
 class ProfileManager:

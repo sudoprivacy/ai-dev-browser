@@ -15,17 +15,17 @@ Example:
 
 import json
 import logging
+import shutil
 import socket
+import tempfile
 import urllib.error
 import urllib.request
+from pathlib import Path
 
-from .process import get_process_cmdline, get_pid_on_port
+from .config import DEFAULT_DEBUG_HOST, DEFAULT_DEBUG_PORT, DEFAULT_PORT_RANGE, DEFAULT_PROFILE_PREFIX
+from .process import get_pid_on_port, get_process_cmdline
 
 logger = logging.getLogger(__name__)
-
-# Default debugging port for Chrome
-DEFAULT_DEBUG_PORT = 9222
-DEFAULT_DEBUG_HOST = "127.0.0.1"
 
 
 def is_port_in_use(host: str = DEFAULT_DEBUG_HOST, port: int = DEFAULT_DEBUG_PORT, timeout: float = 0.1) -> bool:
@@ -69,7 +69,7 @@ def is_port_in_use(host: str = DEFAULT_DEBUG_HOST, port: int = DEFAULT_DEBUG_POR
     return False
 
 
-def is_temp_chrome_on_port(port: int, profile_prefix: str = "nodriver_chrome_") -> tuple[bool, int | None]:
+def is_temp_chrome_on_port(port: int, profile_prefix: str = DEFAULT_PROFILE_PREFIX) -> tuple[bool, int | None]:
     """
     Check if the Chrome on a port is a temp profile launched by this library.
 
@@ -161,7 +161,7 @@ def is_chrome_in_use(port: int, timeout: float = 0.5) -> bool:
 
 def find_temp_chromes(
     port_range: tuple[int, int] = (9222, 9300),
-    profile_prefix: str = "nodriver_chrome_",
+    profile_prefix: str = DEFAULT_PROFILE_PREFIX,
     exclude_in_use: bool = True,
 ) -> list[int]:
     """
@@ -200,7 +200,7 @@ def get_available_port(
     start: int = 9222,
     end: int = 9300,
     exclude: set[int] | None = None,
-    profile_prefix: str = "nodriver_chrome_",
+    profile_prefix: str = DEFAULT_PROFILE_PREFIX,
 ) -> int:
     """
     Find an available port for Chrome, preferring to reuse existing instances.
@@ -247,3 +247,52 @@ def get_available_port(
             return port
 
     raise RuntimeError(f"No available port found in range {start}-{end}")
+
+
+def find_debug_chromes(
+    port_range: tuple[int, int] = DEFAULT_PORT_RANGE,
+) -> list[tuple[int, int]]:
+    """
+    Find all Chrome instances listening on debug ports.
+
+    Unlike find_temp_chromes(), this finds ALL Chromes regardless of profile prefix.
+    Useful for browser_stop --all to clean up any debug Chrome.
+
+    Args:
+        port_range: Tuple of (start_port, end_port) to scan
+
+    Returns:
+        List of (port, pid) tuples for each found Chrome
+    """
+    chromes = []
+    for port in range(port_range[0], port_range[1]):
+        if is_port_in_use(DEFAULT_DEBUG_HOST, port):
+            pid = get_pid_on_port(port)
+            if pid:
+                chromes.append((port, pid))
+    return chromes
+
+
+def cleanup_temp_profile(
+    port: int,
+    profile_prefix: str = DEFAULT_PROFILE_PREFIX,
+) -> bool:
+    """
+    Clean up temp profile directory for a port if it exists.
+
+    Args:
+        port: The port number (used to construct temp dir name)
+        profile_prefix: Profile directory prefix
+
+    Returns:
+        True if profile was cleaned up, False otherwise
+    """
+    temp_dir = Path(tempfile.gettempdir()) / f"{profile_prefix}{port}"
+    if temp_dir.exists():
+        try:
+            shutil.rmtree(temp_dir)
+            logger.debug(f"Cleaned up temp profile: {temp_dir}")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to clean up temp profile {temp_dir}: {e}")
+    return False
