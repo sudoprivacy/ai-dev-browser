@@ -1,6 +1,6 @@
 # nodriver-kit
 
-Browser automation toolkit built on [nodriver](https://github.com/ultrafunkamsterdam/nodriver) - AI-first design for browser automation.
+A browser for AI agents. Built on [nodriver](https://github.com/ultrafunkamsterdam/nodriver) - human-like automation that works seamlessly in a world designed for humans.
 
 ## Why nodriver?
 
