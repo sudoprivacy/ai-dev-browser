@@ -21,7 +21,7 @@ Unlike Selenium (sends "I'm a robot" signals) or Playwright (fast but detectable
 - **Human-like Automation**: Built on nodriver's anti-detection technology
 - **Browser Management**: Cross-platform Chrome detection, launching, and port management
 - **Worker Pool**: Parallel task execution with multiple browser instances
-- **CLI Tools**: 37 standalone tools for AI agents and scripting (see [tools/](tools/README.md))
+- **Dual-Interface Tools**: 34 tools that work as both CLI commands and Python imports
 - **AI-Friendly API**: Intuitive `run()` method, sensible defaults, clear error messages
 
 ## Installation
@@ -102,28 +102,71 @@ tab = await browser.get("https://protected-site.com")
 await tab.verify_cf()  # Built-in CF bypass (requires opencv-python)
 ```
 
-## CLI Tools
+## Tools: CLI & Python, Same Code
 
-37 standalone tools for AI agents and scripting. Key tools:
+**Design Philosophy**: Write once, use two ways.
+
+Every tool in `nodriver_kit/tools/` works as both a CLI command and a Python function. No translation layer, no duplication - the same code serves both interfaces.
 
 ```bash
-# AI-friendly page snapshot (accessibility tree - best for AI)
-python tools/page_snapshot.py --port 9222
-
-# Browser management
-python tools/browser_start.py
-python tools/browser_stop.py --all
-
-# Navigation
-python tools/page_goto.py --url "https://example.com"
-python tools/element_click.py --selector "button.submit"
-
-# Tab management
-python tools/tab_new.py --url "https://google.com"
-python tools/tab_list.py
+# Discover all tools
+ls nodriver_kit/tools/
 ```
 
-See [tools/README.md](tools/README.md) for all 37 tools.
+### As CLI (for exploration & scripting)
+
+```bash
+# Start browser
+python -m nodriver_kit.tools.browser_start --port 9222
+
+# Navigate
+python -m nodriver_kit.tools.goto --port 9222 --url "https://example.com"
+
+# Find element
+python -m nodriver_kit.tools.find --port 9222 --selector "a"
+# {"found": true, "tag": "a", "text": "Learn more"}
+
+# Click it
+python -m nodriver_kit.tools.click --port 9222 --text "Learn more"
+
+# Take screenshot
+python -m nodriver_kit.tools.screenshot --port 9222 --path ./shot.png
+
+# Stop browser
+python -m nodriver_kit.tools.browser_stop --port 9222
+```
+
+### As Python (for codification)
+
+```python
+from nodriver_kit.tools import (
+    browser_start, goto, find, click, screenshot, browser_stop
+)
+
+# Same tools, programmatic interface
+result = browser_start(port=9222)
+await goto(tab, url="https://example.com")
+elem = await find(tab, selector="a")
+await click(tab, text="Learn more")
+await screenshot(tab, path="./shot.png")
+browser_stop(port=9222)
+```
+
+### Available Tools (34 total)
+
+| Category | Tools |
+|----------|-------|
+| **Browser** | `browser_start`, `browser_stop`, `browser_list` |
+| **Page** | `goto`, `reload`, `page_info`, `screenshot`, `snapshot`, `html` |
+| **Elements** | `find`, `click`, `type_text`, `wait`, `xpath`, `evaluate` |
+| **Mouse** | `mouse_click`, `mouse_move`, `mouse_drag` |
+| **Tabs** | `tab_new`, `tab_list`, `tab_switch`, `tab_close` |
+| **Scroll** | `scroll` |
+| **Cookies** | `cookies_list`, `cookies_save`, `cookies_load` |
+| **Storage** | `storage_get`, `storage_set` |
+| **Window** | `window_resize`, `window_state` |
+| **Download** | `download_file`, `download_path` |
+| **Advanced** | `cdp_send`, `cf_verify` |
 
 ## API Reference
 
