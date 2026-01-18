@@ -60,6 +60,7 @@ from .storage_get import storage_get
 from .storage_set import storage_set
 
 # Window
+from .window_focus import window_focus
 from .window_resize import window_resize
 from .window_state import window_state
 
@@ -116,6 +117,7 @@ __all__ = [
     "storage_get",
     "storage_set",
     # Window
+    "window_focus",
     "window_resize",
     "window_state",
     # Download
