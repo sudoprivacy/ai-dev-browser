@@ -1,12 +1,12 @@
 """Wait for URL to match a pattern.
 
 CLI:
-    python -m nodriver_kit.tools.wait_url --pattern "/dashboard"
-    python -m nodriver_kit.tools.wait_url --exact "https://example.com/login"
+    python -m nodriver_kit.tools.page_wait_url --pattern "/dashboard"
+    python -m nodriver_kit.tools.page_wait_url --exact "https://example.com/login"
 
 Python:
-    from nodriver_kit.tools import wait_url
-    result = await wait_url(tab, pattern="/dashboard")
+    from nodriver_kit.tools import page_wait_url
+    result = await page_wait_url(tab, pattern="/dashboard")
 """
 
 from ..core.navigation import wait_for_url as core_wait_for_url
@@ -14,7 +14,7 @@ from ._cli import as_cli
 
 
 @as_cli
-async def wait_url(
+async def page_wait_url(
     tab,
     pattern: str = None,
     exact: str = None,
@@ -44,4 +44,4 @@ async def wait_url(
 
 
 if __name__ == "__main__":
-    wait_url.cli_main()
+    page_wait_url.cli_main()

@@ -1,18 +1,18 @@
 """Get page HTML.
 
 CLI:
-    python -m nodriver_kit.tools.html
+    python -m nodriver_kit.tools.page_html
 
 Python:
-    from nodriver_kit.tools import html
-    result = await html(tab)
+    from nodriver_kit.tools import page_html
+    result = await page_html(tab)
 """
 
 from ._cli import as_cli
 
 
 @as_cli
-async def html(tab, outer: bool = False) -> dict:
+async def page_html(tab, outer: bool = False) -> dict:
     """Get page HTML.
 
     Args:
@@ -32,8 +32,8 @@ async def html(tab, outer: bool = False) -> dict:
             "length": len(content),
         }
     except Exception as e:
-        return {"error": f"Get HTML failed: {e}"}
+        return {"error": f"page_html failed: {e}"}
 
 
 if __name__ == "__main__":
-    html.cli_main()
+    page_html.cli_main()

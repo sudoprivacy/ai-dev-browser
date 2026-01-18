@@ -23,16 +23,16 @@ from .element_wait import element_wait
 from .element_xpath import element_xpath
 
 # Page actions
-from .evaluate import evaluate
-from .goto import goto
-from .html import html
+from .page_eval import page_eval
+from .page_goto import page_goto
+from .page_html import page_html
 from .page_info import page_info
+from .page_reload import page_reload
 from .page_wait import page_wait
-from .reload import reload
+from .page_wait_url import page_wait_url
 from .screenshot import screenshot
 from .scroll import scroll
 from .snapshot import snapshot  # deprecated, use ax_tree
-from .wait_url import wait_url
 
 # Accessibility tree
 from .ax_tree import ax_tree
@@ -88,16 +88,16 @@ __all__ = [
     "element_wait",
     "element_xpath",
     # Page
-    "evaluate",
-    "goto",
-    "html",
+    "page_eval",
+    "page_goto",
+    "page_html",
     "page_info",
+    "page_reload",
     "page_wait",
-    "reload",
+    "page_wait_url",
     "screenshot",
     "scroll",
     "snapshot",  # deprecated, use ax_tree
-    "wait_url",
     # Accessibility tree
     "ax_tree",
     "ax_select",

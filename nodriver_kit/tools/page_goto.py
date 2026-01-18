@@ -1,11 +1,11 @@
 """Navigate to a URL.
 
 CLI:
-    python -m nodriver_kit.tools.goto --url "https://example.com"
+    python -m nodriver_kit.tools.page_goto --url "https://example.com"
 
 Python:
-    from nodriver_kit.tools import goto
-    result = await goto(tab, url="https://example.com")
+    from nodriver_kit.tools import page_goto
+    result = await page_goto(tab, url="https://example.com")
 """
 
 from nodriver_kit.core import goto as core_goto
@@ -13,7 +13,7 @@ from ._cli import as_cli
 
 
 @as_cli
-async def goto(tab, url: str) -> dict:
+async def page_goto(tab, url: str) -> dict:
     """Navigate to a URL.
 
     Args:
@@ -32,8 +32,8 @@ async def goto(tab, url: str) -> dict:
             "success": True,
         }
     except Exception as e:
-        return {"error": f"Navigation failed: {e}"}
+        return {"error": f"page_goto failed: {e}"}
 
 
 if __name__ == "__main__":
-    goto.cli_main()
+    page_goto.cli_main()
