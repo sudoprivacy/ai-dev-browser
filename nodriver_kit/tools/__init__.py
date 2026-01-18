@@ -15,18 +15,23 @@ from .browser_stop import browser_stop
 
 # Page actions
 from .click import click
+from .element_wait import element_wait
 from .evaluate import evaluate
 from .find import find
 from .goto import goto
 from .html import html
 from .page_info import page_info
+from .page_wait import page_wait
 from .reload import reload
 from .screenshot import screenshot
 from .scroll import scroll
 from .snapshot import snapshot
 from .type_text import type_text
-from .wait import wait
+from .wait_url import wait_url
 from .xpath import xpath
+
+# Session
+from .login_interactive import login_interactive
 
 # Mouse actions
 from .mouse_click import mouse_click
@@ -67,18 +72,22 @@ __all__ = [
     "browser_stop",
     # Page
     "click",
+    "element_wait",
     "evaluate",
     "find",
     "goto",
     "html",
     "page_info",
+    "page_wait",
     "reload",
     "screenshot",
     "scroll",
     "snapshot",
     "type_text",
-    "wait",
+    "wait_url",
     "xpath",
+    # Session
+    "login_interactive",
     # Mouse
     "mouse_click",
     "mouse_drag",

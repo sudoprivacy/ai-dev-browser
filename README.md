@@ -21,7 +21,7 @@ Unlike Selenium (sends "I'm a robot" signals) or Playwright (fast but detectable
 - **Human-like Automation**: Built on nodriver's anti-detection technology
 - **Browser Management**: Cross-platform Chrome detection, launching, and port management
 - **Worker Pool**: Parallel task execution with multiple browser instances
-- **Dual-Interface Tools**: 34 tools that work as both CLI commands and Python imports
+- **Dual-Interface Tools**: 37 tools that work as both CLI commands and Python imports
 - **AI-Friendly API**: Intuitive `run()` method, sensible defaults, clear error messages
 
 ## Installation
@@ -152,13 +152,14 @@ await screenshot(tab, path="./shot.png")
 browser_stop(port=9222)
 ```
 
-### Available Tools (34 total)
+### Available Tools (37 total)
 
 | Category | Tools |
 |----------|-------|
 | **Browser** | `browser_start`, `browser_stop`, `browser_list` |
-| **Page** | `goto`, `reload`, `page_info`, `screenshot`, `snapshot`, `html` |
-| **Elements** | `find`, `click`, `type_text`, `wait`, `xpath`, `evaluate` |
+| **Page** | `goto`, `reload`, `page_info`, `page_wait`, `screenshot`, `snapshot`, `html` |
+| **Elements** | `find`, `click`, `type_text`, `element_wait`, `xpath`, `evaluate` |
+| **Wait** | `wait_url` |
 | **Mouse** | `mouse_click`, `mouse_move`, `mouse_drag` |
 | **Tabs** | `tab_new`, `tab_list`, `tab_switch`, `tab_close` |
 | **Scroll** | `scroll` |
@@ -166,6 +167,7 @@ browser_stop(port=9222)
 | **Storage** | `storage_get`, `storage_set` |
 | **Window** | `window_resize`, `window_state` |
 | **Download** | `download_file`, `download_path` |
+| **Session** | `login_interactive` |
 | **Advanced** | `cdp_send`, `cf_verify` |
 
 ## API Reference
