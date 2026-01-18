@@ -1,12 +1,12 @@
 """Find elements on the page.
 
 CLI:
-    python -m nodriver_kit.tools.find --text "Login"
-    python -m nodriver_kit.tools.find --selector "button.submit"
+    python -m nodriver_kit.tools.element_find --text "Login"
+    python -m nodriver_kit.tools.element_find --selector "button.submit"
 
 Python:
-    from nodriver_kit.tools import find
-    result = await find(tab, text="Login")
+    from nodriver_kit.tools import element_find
+    result = await element_find(tab, text="Login")
 """
 
 from nodriver_kit.core import find_element, find_elements
@@ -14,7 +14,7 @@ from ._cli import as_cli
 
 
 @as_cli
-async def find(tab, selector: str = None, text: str = None, all: bool = False) -> dict:
+async def element_find(tab, selector: str = None, text: str = None, all: bool = False) -> dict:
     """Find element(s) by selector or text.
 
     Args:
@@ -50,8 +50,8 @@ async def find(tab, selector: str = None, text: str = None, all: bool = False) -
             else:
                 return {"found": False}
     except Exception as e:
-        return {"error": f"Find failed: {e}"}
+        return {"error": f"element_find failed: {e}"}
 
 
 if __name__ == "__main__":
-    find.cli_main()
+    element_find.cli_main()

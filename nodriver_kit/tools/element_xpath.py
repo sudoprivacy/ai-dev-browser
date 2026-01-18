@@ -1,11 +1,11 @@
 """Find elements by XPath.
 
 CLI:
-    python -m nodriver_kit.tools.xpath --expr "//button[@type='submit']"
+    python -m nodriver_kit.tools.element_xpath --expr "//button[@type='submit']"
 
 Python:
-    from nodriver_kit.tools import xpath
-    result = await xpath(tab, expr="//button[@type='submit']")
+    from nodriver_kit.tools import element_xpath
+    result = await element_xpath(tab, expr="//button[@type='submit']")
 
 Note:
     Git Bash/MSYS2 on Windows converts // to / (UNC path handling).
@@ -17,7 +17,7 @@ from ._cli import as_cli
 
 
 @as_cli
-async def xpath(tab, expr: str) -> dict:
+async def element_xpath(tab, expr: str) -> dict:
     """Find elements by XPath expression.
 
     Args:
@@ -34,8 +34,8 @@ async def xpath(tab, expr: str) -> dict:
             "count": len(elements),
         }
     except Exception as e:
-        return {"error": f"XPath search failed: {e}"}
+        return {"error": f"element_xpath failed: {e}"}
 
 
 if __name__ == "__main__":
-    xpath.cli_main()
+    element_xpath.cli_main()

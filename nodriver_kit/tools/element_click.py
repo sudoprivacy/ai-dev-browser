@@ -1,12 +1,12 @@
 """Click an element on the page.
 
 CLI:
-    python -m nodriver_kit.tools.click --selector "button.submit"
-    python -m nodriver_kit.tools.click --text "Login"
+    python -m nodriver_kit.tools.element_click --selector "button.submit"
+    python -m nodriver_kit.tools.element_click --text "Login"
 
 Python:
-    from nodriver_kit.tools import click
-    result = await click(tab, selector="button.submit")
+    from nodriver_kit.tools import element_click
+    result = await element_click(tab, selector="button.submit")
 """
 
 from nodriver_kit.core import click as core_click
@@ -14,7 +14,7 @@ from ._cli import as_cli
 
 
 @as_cli
-async def click(tab, selector: str = None, text: str = None) -> dict:
+async def element_click(tab, selector: str = None, text: str = None) -> dict:
     """Click an element by selector or text.
 
     Args:
@@ -35,8 +35,8 @@ async def click(tab, selector: str = None, text: str = None) -> dict:
         else:
             return {"error": "Element not found"}
     except Exception as e:
-        return {"error": f"Click failed: {e}"}
+        return {"error": f"element_click failed: {e}"}
 
 
 if __name__ == "__main__":
-    click.cli_main()
+    element_click.cli_main()

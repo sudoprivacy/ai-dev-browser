@@ -13,12 +13,17 @@ from .browser_list import browser_list
 from .browser_start import browser_start
 from .browser_stop import browser_stop
 
-# Page actions
-from .click import click
-from .element_wait import element_wait
-from .evaluate import evaluate
+# Element actions
+from .element_click import element_click
+from .element_find import element_find
 from .element_focus import element_focus
-from .find import find
+from .element_text import element_text
+from .element_type import element_type
+from .element_wait import element_wait
+from .element_xpath import element_xpath
+
+# Page actions
+from .evaluate import evaluate
 from .goto import goto
 from .html import html
 from .page_info import page_info
@@ -27,10 +32,7 @@ from .reload import reload
 from .screenshot import screenshot
 from .scroll import scroll
 from .snapshot import snapshot  # deprecated, use ax_tree
-from .text_content import text_content
-from .type_text import type_text
 from .wait_url import wait_url
-from .xpath import xpath
 
 # Accessibility tree
 from .ax_tree import ax_tree
@@ -77,12 +79,16 @@ __all__ = [
     "browser_list",
     "browser_start",
     "browser_stop",
-    # Page
-    "click",
-    "element_wait",
-    "evaluate",
+    # Element
+    "element_click",
+    "element_find",
     "element_focus",
-    "find",
+    "element_text",
+    "element_type",
+    "element_wait",
+    "element_xpath",
+    # Page
+    "evaluate",
     "goto",
     "html",
     "page_info",
@@ -91,10 +97,7 @@ __all__ = [
     "screenshot",
     "scroll",
     "snapshot",  # deprecated, use ax_tree
-    "text_content",
-    "type_text",
     "wait_url",
-    "xpath",
     # Accessibility tree
     "ax_tree",
     "ax_select",

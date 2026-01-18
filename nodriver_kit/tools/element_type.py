@@ -1,11 +1,11 @@
 """Type text into an element.
 
 CLI:
-    python -m nodriver_kit.tools.type_text --selector "input.email" --text "user@example.com"
+    python -m nodriver_kit.tools.element_type --selector "input.email" --text "user@example.com"
 
 Python:
-    from nodriver_kit.tools import type_text
-    result = await type_text(tab, selector="input.email", text="user@example.com")
+    from nodriver_kit.tools import element_type
+    result = await element_type(tab, selector="input.email", text="user@example.com")
 """
 
 from nodriver_kit.core import type_text as core_type_text
@@ -13,7 +13,7 @@ from ._cli import as_cli
 
 
 @as_cli
-async def type_text(tab, text: str, selector: str = None, clear: bool = False) -> dict:
+async def element_type(tab, text: str, selector: str = None, clear: bool = False) -> dict:
     """Type text into an element.
 
     Args:
@@ -35,8 +35,8 @@ async def type_text(tab, text: str, selector: str = None, clear: bool = False) -
         else:
             return {"error": "Element not found"}
     except Exception as e:
-        return {"error": f"Type failed: {e}"}
+        return {"error": f"element_type failed: {e}"}
 
 
 if __name__ == "__main__":
-    type_text.cli_main()
+    element_type.cli_main()

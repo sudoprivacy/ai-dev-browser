@@ -1,12 +1,12 @@
 """Get text content of an element.
 
 CLI:
-    python -m nodriver_kit.tools.text_content --selector "h1"
-    python -m nodriver_kit.tools.text_content --text "Welcome"
+    python -m nodriver_kit.tools.element_text --selector "h1"
+    python -m nodriver_kit.tools.element_text --text "Welcome"
 
 Python:
-    from nodriver_kit.tools import text_content
-    result = await text_content(tab, selector="h1")
+    from nodriver_kit.tools import element_text
+    result = await element_text(tab, selector="h1")
 """
 
 from nodriver_kit.core import find_element
@@ -14,7 +14,7 @@ from ._cli import as_cli
 
 
 @as_cli
-async def text_content(tab, selector: str = None, text: str = None) -> dict:
+async def element_text(tab, selector: str = None, text: str = None) -> dict:
     """Get text content of an element.
 
     Args:
@@ -36,8 +36,8 @@ async def text_content(tab, selector: str = None, text: str = None) -> dict:
         else:
             return {"error": "Element not found"}
     except Exception as e:
-        return {"error": f"text_content failed: {e}"}
+        return {"error": f"element_text failed: {e}"}
 
 
 if __name__ == "__main__":
-    text_content.cli_main()
+    element_text.cli_main()
