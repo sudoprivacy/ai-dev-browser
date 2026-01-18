@@ -6,6 +6,10 @@ CLI:
 Python:
     from nodriver_kit.tools import xpath
     result = await xpath(tab, expr="//button[@type='submit']")
+
+Note:
+    Git Bash/MSYS2 on Windows converts // to / (UNC path handling).
+    Use PowerShell or cmd.exe for XPath expressions starting with //.
 """
 
 from nodriver_kit.core import find_by_xpath
