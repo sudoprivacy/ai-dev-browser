@@ -25,7 +25,7 @@ from pathlib import Path
 
 from .config import DEFAULT_DEBUG_HOST, DEFAULT_DEBUG_PORT, DEFAULT_PORT_RANGE, DEFAULT_PROFILE_PREFIX
 from .process import get_pid_on_port, get_process_cmdline
-from .session import is_our_session, get_session_id
+from .session import is_our_session, get_session_id, SESSION_FLAG
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +100,39 @@ def is_our_chrome_on_port(port: int) -> tuple[bool, int | None]:
 
     # Check if it's Chrome with our session ID
     if "chrome" in cmdline.lower() and is_our_session(cmdline):
+        return True, pid
+
+    return False, pid
+
+
+def is_nodriver_kit_chrome_on_port(port: int) -> tuple[bool, int | None]:
+    """
+    Check if the Chrome on a port was started by ANY nodriver-kit process.
+
+    Unlike is_our_chrome_on_port(), this checks for the session flag presence
+    (not matching value), so it finds Chromes from previous runs too.
+
+    Args:
+        port: Port to check
+
+    Returns:
+        Tuple of (is_nodriver_kit_chrome, pid). If not nodriver-kit Chrome, returns (False, None).
+
+    Example:
+        is_ndk, pid = is_nodriver_kit_chrome_on_port(9222)
+        if is_ndk:
+            print(f"This Chrome was started by nodriver-kit, PID: {pid}")
+    """
+    pid = get_pid_on_port(port)
+    if pid is None:
+        return False, None
+
+    cmdline = get_process_cmdline(pid)
+    if cmdline is None:
+        return False, pid
+
+    # Check if it's Chrome with nodriver-kit session flag (any session)
+    if "chrome" in cmdline.lower() and SESSION_FLAG in cmdline:
         return True, pid
 
     return False, pid
@@ -209,7 +242,8 @@ def get_available_port(
 
     Port selection strategy:
     1. First, look for existing Chrome from THIS session not in use
-    2. If none found, find an unused port for launching new Chrome
+    2. Then, look for ANY nodriver-kit Chrome (from previous runs) not in use
+    3. If none found, find an unused port for launching new Chrome
 
     This strategy preserves login sessions and reduces startup time.
 
@@ -240,7 +274,17 @@ def get_available_port(
                 logger.debug(f"Found reusable Chrome from our session on port {port}")
                 return port
 
-    # Strategy 2: Find unused port for new Chrome
+    # Strategy 2: Try to reuse ANY nodriver-kit Chrome (from previous runs) not in use
+    for port in range(start, end):
+        if port in exclude:
+            continue
+        if is_port_in_use(DEFAULT_DEBUG_HOST, port):
+            is_ndk, _ = is_nodriver_kit_chrome_on_port(port)
+            if is_ndk and not is_chrome_in_use(port):
+                logger.debug(f"Found reusable nodriver-kit Chrome (from previous run) on port {port}")
+                return port
+
+    # Strategy 3: Find unused port for new Chrome
     for port in range(start, end):
         if port in exclude:
             continue

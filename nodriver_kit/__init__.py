@@ -51,6 +51,7 @@ from .core import (
     # Port management
     is_port_in_use,
     is_our_chrome_on_port,
+    is_nodriver_kit_chrome_on_port,
     is_chrome_in_use,
     find_our_chromes,
     find_debug_chromes,
@@ -109,6 +110,7 @@ __all__ = [
     # Port
     "is_port_in_use",
     "is_our_chrome_on_port",
+    "is_nodriver_kit_chrome_on_port",
     "is_chrome_in_use",
     "find_our_chromes",
     "find_debug_chromes",
