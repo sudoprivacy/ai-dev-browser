@@ -25,10 +25,14 @@ from .page_wait import page_wait
 from .reload import reload
 from .screenshot import screenshot
 from .scroll import scroll
-from .snapshot import snapshot
+from .snapshot import snapshot  # deprecated, use ax_tree
 from .type_text import type_text
 from .wait_url import wait_url
 from .xpath import xpath
+
+# Accessibility tree
+from .ax_tree import ax_tree
+from .ax_select import ax_select
 
 # Session
 from .login_interactive import login_interactive
@@ -82,10 +86,13 @@ __all__ = [
     "reload",
     "screenshot",
     "scroll",
-    "snapshot",
+    "snapshot",  # deprecated, use ax_tree
     "type_text",
     "wait_url",
     "xpath",
+    # Accessibility tree
+    "ax_tree",
+    "ax_select",
     # Session
     "login_interactive",
     # Mouse
