@@ -342,7 +342,9 @@ def find_debug_chromes(
         if is_port_in_use(DEFAULT_DEBUG_HOST, port):
             pid = get_pid_on_port(port)
             if pid:
-                chromes.append((port, pid))
+                cmdline = get_process_cmdline(pid)
+                if cmdline and "chrome" in cmdline.lower():
+                    chromes.append((port, pid))
     return chromes
 
 
