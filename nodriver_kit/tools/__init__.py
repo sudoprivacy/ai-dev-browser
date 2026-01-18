@@ -18,6 +18,7 @@ from .click import click
 from .element_wait import element_wait
 from .evaluate import evaluate
 from .find import find
+from .focus import focus
 from .goto import goto
 from .html import html
 from .page_info import page_info
@@ -26,6 +27,7 @@ from .reload import reload
 from .screenshot import screenshot
 from .scroll import scroll
 from .snapshot import snapshot  # deprecated, use ax_tree
+from .text_content import text_content
 from .type_text import type_text
 from .wait_url import wait_url
 from .xpath import xpath
@@ -79,6 +81,7 @@ __all__ = [
     "element_wait",
     "evaluate",
     "find",
+    "focus",
     "goto",
     "html",
     "page_info",
@@ -87,6 +90,7 @@ __all__ = [
     "screenshot",
     "scroll",
     "snapshot",  # deprecated, use ax_tree
+    "text_content",
     "type_text",
     "wait_url",
     "xpath",
