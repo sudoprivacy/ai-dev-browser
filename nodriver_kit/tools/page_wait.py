@@ -13,6 +13,7 @@ Python:
 import asyncio
 import time
 
+from ..core.navigation import wait_for_load as core_wait_for_load
 from ._cli import as_cli
 
 
@@ -40,35 +41,28 @@ async def page_wait(
 
     if idle:
         start = time.time()
+        # Use core function for the wait loop
+        ready = await core_wait_for_load(tab, timeout=timeout, idle_time=0.5)
+        elapsed = time.time() - start
 
-        while time.time() - start < timeout:
+        if ready:
             state = await tab.evaluate("document.readyState")
-            if state == "complete":
-                await asyncio.sleep(0.5)  # Extra wait for pending XHR/fetch
-                return {
-                    "ready": True,
-                    "state": state,
-                    "elapsed": round(time.time() - start, 2),
-                }
-            await asyncio.sleep(0.2)
-
+            return {
+                "ready": True,
+                "state": state,
+                "elapsed": round(elapsed, 2),
+            }
         return {
             "ready": False,
             "message": f"Timeout after {timeout}s",
         }
 
-    # Default: wait for DOM ready
+    # Default: quick wait for DOM ready (10s max)
+    ready = await core_wait_for_load(tab, timeout=10, idle_time=0)
     state = await tab.evaluate("document.readyState")
-    if state != "complete":
-        start = time.time()
-        while time.time() - start < 10:
-            state = await tab.evaluate("document.readyState")
-            if state == "complete":
-                break
-            await asyncio.sleep(0.2)
 
     return {
-        "ready": state == "complete",
+        "ready": ready,
         "state": state,
     }
 

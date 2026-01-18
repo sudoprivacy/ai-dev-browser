@@ -92,6 +92,9 @@ def launch_chrome(
     user_data_dir: str | Path | None = None,
     profile_prefix: str = DEFAULT_PROFILE_PREFIX,
     extra_args: list[str] | None = None,
+    start_url: str = "about:blank",
+    disable_session_restore_prompt: bool = True,
+    hide_crash_restore_bubble: bool = True,
 ) -> subprocess.Popen:
     """
     Launch Chrome with remote debugging enabled.
@@ -105,6 +108,9 @@ def launch_chrome(
         user_data_dir: Custom user data directory. If None, creates a temp directory.
         profile_prefix: Prefix for temp profile directory name (default: "nodriver_chrome_")
         extra_args: Additional Chrome command-line arguments
+        start_url: Initial URL to open (default: "about:blank" for clean state)
+        disable_session_restore_prompt: Don't prompt to restore session (default: True)
+        hide_crash_restore_bubble: Hide crash restore UI bubble (default: True)
 
     Returns:
         Popen process handle for the Chrome instance.
@@ -153,11 +159,21 @@ def launch_chrome(
         "--safebrowsing-disable-auto-update",
     ]
 
+    # Session restore behavior (default: suppress for clean automation state)
+    if disable_session_restore_prompt:
+        args.append("--disable-session-crashed-bubble")
+    if hide_crash_restore_bubble:
+        args.append("--hide-crash-restore-bubble")
+
     if headless:
         args.append("--headless=new")
 
     if extra_args:
         args.extend(extra_args)
+
+    # Start URL goes last - use start_url parameter to control initial page
+    if start_url:
+        args.append(start_url)
 
     # Start Chrome process
     try:

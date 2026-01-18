@@ -9,10 +9,7 @@ Python:
     result = await wait_url(tab, pattern="/dashboard")
 """
 
-import asyncio
-import re
-import time
-
+from ..core.navigation import wait_for_url as core_wait_for_url
 from ._cli import as_cli
 
 
@@ -37,38 +34,13 @@ async def wait_url(
     if not pattern and not exact:
         return {"error": "Must specify --pattern or --exact"}
 
-    start_time = time.time()
+    result = await core_wait_for_url(tab, pattern=pattern, exact=exact, timeout=timeout)
 
-    while True:
-        elapsed = time.time() - start_time
+    # Add timeout message if not matched
+    if not result.get("matched"):
+        result["message"] = f"Timeout after {timeout}s"
 
-        if elapsed > timeout:
-            current_url = tab.target.url if hasattr(tab, "target") and tab.target else ""
-            return {
-                "matched": False,
-                "url": current_url,
-                "elapsed": round(elapsed, 2),
-                "message": f"Timeout after {timeout}s",
-            }
-
-        current_url = tab.target.url if hasattr(tab, "target") and tab.target else ""
-
-        if exact:
-            if current_url == exact:
-                return {
-                    "matched": True,
-                    "url": current_url,
-                    "elapsed": round(elapsed, 2),
-                }
-        elif pattern:
-            if pattern in current_url or re.search(pattern, current_url):
-                return {
-                    "matched": True,
-                    "url": current_url,
-                    "elapsed": round(elapsed, 2),
-                }
-
-        await asyncio.sleep(0.3)
+    return result
 
 
 if __name__ == "__main__":

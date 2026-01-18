@@ -9,9 +9,7 @@ Python:
     result = await element_wait(tab, text="Success")
 """
 
-import asyncio
-import time
-
+from ..core.elements import wait_for_element as core_wait_for_element
 from ._cli import as_cli
 
 
@@ -36,40 +34,18 @@ async def element_wait(
     if not text and not selector:
         return {"error": "Must specify --text or --selector"}
 
-    start_time = time.time()
+    result = await core_wait_for_element(tab, text=text, selector=selector, timeout=timeout)
 
-    while True:
-        elapsed = time.time() - start_time
+    # Add descriptive message
+    if result.get("found"):
+        if text:
+            result["message"] = f"Element with text '{text}' found"
+        else:
+            result["message"] = f"Element '{selector}' found"
+    else:
+        result["message"] = f"Timeout after {timeout}s"
 
-        if elapsed > timeout:
-            return {
-                "found": False,
-                "elapsed": round(elapsed, 2),
-                "message": f"Timeout after {timeout}s",
-            }
-
-        try:
-            if text:
-                element = await tab.find(text, timeout=1)
-                if element:
-                    return {
-                        "found": True,
-                        "elapsed": round(elapsed, 2),
-                        "message": f"Element with text '{text}' found",
-                    }
-            elif selector:
-                js_code = f"document.querySelector({repr(selector)}) !== null"
-                found = await tab.evaluate(js_code)
-                if found:
-                    return {
-                        "found": True,
-                        "elapsed": round(elapsed, 2),
-                        "message": f"Element '{selector}' found",
-                    }
-        except Exception:
-            pass
-
-        await asyncio.sleep(0.5)
+    return result
 
 
 if __name__ == "__main__":

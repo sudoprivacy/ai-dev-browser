@@ -5,6 +5,13 @@ from typing import Optional
 import nodriver
 
 
+def _get_browser(browser_or_tab: nodriver.Browser | nodriver.Tab) -> nodriver.Browser:
+    """Extract browser from browser or tab instance."""
+    if isinstance(browser_or_tab, nodriver.Tab):
+        return browser_or_tab.browser
+    return browser_or_tab
+
+
 async def new_tab(
     browser_or_tab: nodriver.Browser | nodriver.Tab,
     url: Optional[str] = None,
@@ -38,12 +45,7 @@ def list_tabs(browser_or_tab: nodriver.Browser | nodriver.Tab) -> list:
     Returns:
         List of tab info dicts
     """
-    # Get browser from tab if needed
-    if isinstance(browser_or_tab, nodriver.Tab):
-        browser = browser_or_tab.browser
-    else:
-        browser = browser_or_tab
-
+    browser = _get_browser(browser_or_tab)
     tabs_info = []
 
     for i, tab in enumerate(browser.tabs):
@@ -76,11 +78,7 @@ async def switch_tab(
     Raises:
         IndexError: If tab_id is invalid
     """
-    # Get browser from tab if needed
-    if isinstance(browser_or_tab, nodriver.Tab):
-        browser = browser_or_tab.browser
-    else:
-        browser = browser_or_tab
+    browser = _get_browser(browser_or_tab)
 
     if tab_id < 0 or tab_id >= len(browser.tabs):
         raise IndexError(
@@ -111,11 +109,7 @@ async def close_tab(
     Raises:
         ValueError: If trying to close the last tab
     """
-    # Get browser from tab if needed
-    if isinstance(browser_or_tab, nodriver.Tab):
-        browser = browser_or_tab.browser
-    else:
-        browser = browser_or_tab
+    browser = _get_browser(browser_or_tab)
 
     if len(browser.tabs) <= 1:
         raise ValueError("Cannot close the last tab")

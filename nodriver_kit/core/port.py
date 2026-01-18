@@ -30,6 +30,82 @@ from .session import is_our_session, get_session_id, SESSION_FLAG
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# Shared Helpers (DRY)
+# =============================================================================
+
+
+def _is_chrome_process(cmdline: str | None) -> bool:
+    """Check if cmdline indicates a Chrome process."""
+    return cmdline is not None and "chrome" in cmdline.lower()
+
+
+def _get_chrome_info_on_port(port: int) -> tuple[int | None, str | None]:
+    """Get PID and cmdline for process on port.
+
+    Returns:
+        Tuple of (pid, cmdline). Both None if no process found.
+    """
+    pid = get_pid_on_port(port)
+    if pid is None:
+        return None, None
+    cmdline = get_process_cmdline(pid)
+    return pid, cmdline
+
+
+def _scan_ports(
+    port_range: tuple[int, int],
+    predicate,
+    exclude: set[int] | None = None,
+    check_in_use: bool = False,
+    exclude_in_use: bool = False,
+    return_first: bool = False,
+) -> list[int] | int | None:
+    """Scan ports with a predicate function.
+
+    Args:
+        port_range: (start, end) tuple
+        predicate: Function(port) -> bool, called for each port
+        exclude: Ports to skip
+        check_in_use: If True, only scan ports that are in use
+        exclude_in_use: If True, skip ports where Chrome has attached debugger
+        return_first: If True, return first match instead of list
+
+    Returns:
+        List of matching ports, or first match if return_first=True
+    """
+    exclude = exclude or set()
+    results = []
+
+    for port in range(port_range[0], port_range[1]):
+        if port in exclude:
+            continue
+
+        # Check if port is in use (if required)
+        if check_in_use and not is_port_in_use(DEFAULT_DEBUG_HOST, port):
+            continue
+
+        # Apply predicate
+        if not predicate(port):
+            continue
+
+        # Check CDP in-use status
+        if exclude_in_use and is_chrome_in_use(port):
+            logger.debug(f"Skipping in-use Chrome on port {port}")
+            continue
+
+        if return_first:
+            return port
+        results.append(port)
+
+    return None if return_first else results
+
+
+# =============================================================================
+# Port Detection
+# =============================================================================
+
+
 def is_port_in_use(host: str = DEFAULT_DEBUG_HOST, port: int = DEFAULT_DEBUG_PORT, timeout: float = 0.1) -> bool:
     """
     Check if a port is in use (Chrome might be listening).
@@ -90,16 +166,14 @@ def is_our_chrome_on_port(port: int) -> tuple[bool, int | None]:
         if is_ours:
             print(f"This Chrome was started by us, PID: {pid}")
     """
-    pid = get_pid_on_port(port)
+    pid, cmdline = _get_chrome_info_on_port(port)
     if pid is None:
         return False, None
-
-    cmdline = get_process_cmdline(pid)
-    if cmdline is None:
+    if not _is_chrome_process(cmdline):
         return False, pid
 
-    # Check if it's Chrome with our session ID
-    if "chrome" in cmdline.lower() and is_our_session(cmdline):
+    # Check if it's our session
+    if is_our_session(cmdline):
         return True, pid
 
     return False, pid
@@ -123,16 +197,14 @@ def is_nodriver_kit_chrome_on_port(port: int) -> tuple[bool, int | None]:
         if is_ndk:
             print(f"This Chrome was started by nodriver-kit, PID: {pid}")
     """
-    pid = get_pid_on_port(port)
+    pid, cmdline = _get_chrome_info_on_port(port)
     if pid is None:
         return False, None
-
-    cmdline = get_process_cmdline(pid)
-    if cmdline is None:
+    if not _is_chrome_process(cmdline):
         return False, pid
 
-    # Check if it's Chrome with nodriver-kit session flag (any session)
-    if "chrome" in cmdline.lower() and SESSION_FLAG in cmdline:
+    # Check for nodriver-kit session flag (any session)
+    if SESSION_FLAG in cmdline:
         return True, pid
 
     return False, pid
@@ -161,16 +233,11 @@ def find_our_chromes(
         ports = find_our_chromes()
         print(f"Found {len(ports)} Chrome instances from this session")
     """
-    our_ports = []
-    for port in range(port_range[0], port_range[1]):
+    def is_our_chrome(port: int) -> bool:
         is_ours, _ = is_our_chrome_on_port(port)
-        if is_ours:
-            if exclude_in_use:
-                if is_chrome_in_use(port):
-                    logger.debug(f"Skipping in-use Chrome on port {port}")
-                    continue
-            our_ports.append(port)
-    return our_ports
+        return is_ours
+
+    return _scan_ports(port_range, is_our_chrome, exclude_in_use=exclude_in_use)
 
 
 def is_chrome_in_use(port: int, timeout: float = 0.5) -> bool:
@@ -262,34 +329,41 @@ def get_available_port(
         port = get_available_port(exclude={9222, 9223})
         print(f"Use port {port}")
     """
-    exclude = exclude or set()
+    port_range = (start, end)
 
-    # Strategy 1: Try to reuse existing Chrome from our session not in use
-    for port in range(start, end):
-        if port in exclude:
-            continue
-        if is_port_in_use(DEFAULT_DEBUG_HOST, port):
-            is_ours, _ = is_our_chrome_on_port(port)
-            if is_ours and not is_chrome_in_use(port):
-                logger.debug(f"Found reusable Chrome from our session on port {port}")
-                return port
+    # Strategy 1: Reuse Chrome from our session (not in use)
+    def is_our_available_chrome(port: int) -> bool:
+        is_ours, _ = is_our_chrome_on_port(port)
+        if is_ours and not is_chrome_in_use(port):
+            logger.debug(f"Found reusable Chrome from our session on port {port}")
+            return True
+        return False
 
-    # Strategy 2: Try to reuse ANY nodriver-kit Chrome (from previous runs) not in use
-    for port in range(start, end):
-        if port in exclude:
-            continue
-        if is_port_in_use(DEFAULT_DEBUG_HOST, port):
-            is_ndk, _ = is_nodriver_kit_chrome_on_port(port)
-            if is_ndk and not is_chrome_in_use(port):
-                logger.debug(f"Found reusable nodriver-kit Chrome (from previous run) on port {port}")
-                return port
+    port = _scan_ports(port_range, is_our_available_chrome, exclude=exclude,
+                       check_in_use=True, return_first=True)
+    if port is not None:
+        return port
 
-    # Strategy 3: Find unused port for new Chrome
-    for port in range(start, end):
-        if port in exclude:
-            continue
-        if not is_port_in_use(DEFAULT_DEBUG_HOST, port):
-            return port
+    # Strategy 2: Reuse ANY nodriver-kit Chrome (not in use)
+    def is_ndk_available_chrome(port: int) -> bool:
+        is_ndk, _ = is_nodriver_kit_chrome_on_port(port)
+        if is_ndk and not is_chrome_in_use(port):
+            logger.debug(f"Found reusable nodriver-kit Chrome (from previous run) on port {port}")
+            return True
+        return False
+
+    port = _scan_ports(port_range, is_ndk_available_chrome, exclude=exclude,
+                       check_in_use=True, return_first=True)
+    if port is not None:
+        return port
+
+    # Strategy 3: Find unused port
+    def is_unused_port(port: int) -> bool:
+        return not is_port_in_use(DEFAULT_DEBUG_HOST, port)
+
+    port = _scan_ports(port_range, is_unused_port, exclude=exclude, return_first=True)
+    if port is not None:
+        return port
 
     raise RuntimeError(f"No available port found in range {start}-{end}")
 
@@ -311,15 +385,11 @@ def find_nodriver_kit_chromes(
     Returns:
         List of ports with nodriver-kit Chrome instances
     """
-    ndk_ports = []
-    for port in range(port_range[0], port_range[1]):
+    def is_ndk_chrome(port: int) -> bool:
         is_ndk, _ = is_nodriver_kit_chrome_on_port(port)
-        if is_ndk:
-            if exclude_in_use and is_chrome_in_use(port):
-                logger.debug(f"Skipping in-use nodriver-kit Chrome on port {port}")
-                continue
-            ndk_ports.append(port)
-    return ndk_ports
+        return is_ndk
+
+    return _scan_ports(port_range, is_ndk_chrome, exclude_in_use=exclude_in_use)
 
 
 def find_debug_chromes(
@@ -338,13 +408,14 @@ def find_debug_chromes(
         List of (port, pid) tuples for each found Chrome
     """
     chromes = []
-    for port in range(port_range[0], port_range[1]):
-        if is_port_in_use(DEFAULT_DEBUG_HOST, port):
-            pid = get_pid_on_port(port)
-            if pid:
-                cmdline = get_process_cmdline(pid)
-                if cmdline and "chrome" in cmdline.lower():
-                    chromes.append((port, pid))
+
+    def collect_chrome(port: int) -> bool:
+        pid, cmdline = _get_chrome_info_on_port(port)
+        if pid and _is_chrome_process(cmdline):
+            chromes.append((port, pid))
+        return False  # Always continue scanning
+
+    _scan_ports(port_range, collect_chrome, check_in_use=True)
     return chromes
 
 

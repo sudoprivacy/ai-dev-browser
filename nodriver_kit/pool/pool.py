@@ -114,7 +114,6 @@ class BrowserPool(Generic[ClientT]):
         profile: Profile mode - "shared", "per_worker", or "temp" (default: "shared")
         cookies_file: Path to shared cookies file (default: ~/.nodriver-kit/cookies.dat)
         cookies_dir: Base directory for per-worker cookies (default: ~/.nodriver-kit/cookies)
-        profile_prefix: Prefix for temp Chrome profiles (only used in temp mode)
         **client_kwargs: Additional keyword arguments passed to client constructor
     """
 
@@ -131,7 +130,6 @@ class BrowserPool(Generic[ClientT]):
         profile: ProfileMode = "shared",
         cookies_file: str | Path | None = None,
         cookies_dir: str | Path | None = None,
-        profile_prefix: str = "nodriver_chrome_",
         **client_kwargs,
     ):
         self._client_class = client_class
@@ -143,7 +141,6 @@ class BrowserPool(Generic[ClientT]):
         self._close_browsers = close_browsers
         self._fail_condition = fail_condition
         self._requeue_position = requeue_position
-        self._profile_prefix = profile_prefix
 
         # Profile management (uses cookies files for reliable persistence)
         self._profile_manager = ProfileManager(
@@ -221,19 +218,7 @@ class BrowserPool(Generic[ClientT]):
 
         # Close all browser clients and optionally terminate Chrome
         for worker in self._workers.values():
-            if worker.client:
-                try:
-                    await worker.client.__aexit__(None, None, None)
-
-                    if self._close_browsers and hasattr(worker.client, "_chrome_process"):
-                        chrome_process = worker.client._chrome_process
-                        if chrome_process is not None:
-                            actual_pid = get_pid_on_port(worker.port)
-                            if actual_pid:
-                                logger.info(f"Killing Chrome (PID: {actual_pid}) for worker {worker.worker_id}")
-                                kill_process_tree(actual_pid)
-                except Exception as e:
-                    logger.warning(f"Error closing worker {worker.worker_id}: {e}")
+            await self._close_worker_client(worker)
 
         # Final state save
         self.save_state()
@@ -241,6 +226,24 @@ class BrowserPool(Generic[ClientT]):
     # =========================================================================
     # Worker Management
     # =========================================================================
+
+    async def _close_worker_client(self, worker: Worker) -> None:
+        """Close worker client and optionally kill Chrome process (DRY helper)."""
+        if not worker.client:
+            return
+
+        try:
+            await worker.client.__aexit__(None, None, None)
+
+            if self._close_browsers and hasattr(worker.client, "_chrome_process"):
+                chrome_process = worker.client._chrome_process
+                if chrome_process is not None:
+                    actual_pid = get_pid_on_port(worker.port)
+                    if actual_pid:
+                        logger.info(f"Killing Chrome (PID: {actual_pid}) for worker {worker.worker_id}")
+                        kill_process_tree(actual_pid)
+        except Exception as e:
+            logger.warning(f"Error closing worker {worker.worker_id}: {e}")
 
     async def add_worker(self) -> int:
         """
@@ -257,7 +260,7 @@ class BrowserPool(Generic[ClientT]):
         self._next_worker_id += 1
 
         # Get next available port
-        port = get_available_port(exclude=self._used_ports, profile_prefix=self._profile_prefix)
+        port = get_available_port(exclude=self._used_ports)
         self._used_ports.add(port)
 
         # Create worker
@@ -321,19 +324,7 @@ class BrowserPool(Generic[ClientT]):
             del self._worker_tasks[worker_id]
 
         # Close browser client
-        if worker.client:
-            try:
-                await worker.client.__aexit__(None, None, None)
-
-                if self._close_browsers and hasattr(worker.client, "_chrome_process"):
-                    chrome_process = worker.client._chrome_process
-                    if chrome_process is not None:
-                        actual_pid = get_pid_on_port(worker.port)
-                        if actual_pid:
-                            logger.info(f"Killing Chrome (PID: {actual_pid}) for worker {worker_id}")
-                            kill_process_tree(actual_pid)
-            except Exception as e:
-                logger.warning(f"Error closing worker {worker_id}: {e}")
+        await self._close_worker_client(worker)
 
         port = worker.port
         self._used_ports.discard(port)
