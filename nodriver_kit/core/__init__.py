@@ -31,6 +31,7 @@ from .chrome import find_chrome, launch_chrome
 from .port import (
     cleanup_temp_profile,
     find_debug_chromes,
+    find_nodriver_kit_chromes,
     find_our_chromes,
     get_available_port,
     is_chrome_in_use,
@@ -102,6 +103,7 @@ __all__ = [
     "is_nodriver_kit_chrome_on_port",
     "is_chrome_in_use",
     "find_our_chromes",
+    "find_nodriver_kit_chromes",
     "find_debug_chromes",
     "get_available_port",
     "cleanup_temp_profile",

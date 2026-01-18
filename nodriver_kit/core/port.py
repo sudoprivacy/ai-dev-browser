@@ -294,13 +294,41 @@ def get_available_port(
     raise RuntimeError(f"No available port found in range {start}-{end}")
 
 
+def find_nodriver_kit_chromes(
+    port_range: tuple[int, int] = DEFAULT_PORT_RANGE,
+    exclude_in_use: bool = False,
+) -> list[int]:
+    """
+    Find all Chrome instances started by ANY nodriver-kit process.
+
+    Unlike find_our_chromes() which only finds current session's Chromes,
+    this finds Chromes from all nodriver-kit sessions (but NOT user-started Chromes).
+
+    Args:
+        port_range: Tuple of (start_port, end_port) to scan
+        exclude_in_use: If True, skip ports with attached debugger sessions
+
+    Returns:
+        List of ports with nodriver-kit Chrome instances
+    """
+    ndk_ports = []
+    for port in range(port_range[0], port_range[1]):
+        is_ndk, _ = is_nodriver_kit_chrome_on_port(port)
+        if is_ndk:
+            if exclude_in_use and is_chrome_in_use(port):
+                logger.debug(f"Skipping in-use nodriver-kit Chrome on port {port}")
+                continue
+            ndk_ports.append(port)
+    return ndk_ports
+
+
 def find_debug_chromes(
     port_range: tuple[int, int] = DEFAULT_PORT_RANGE,
 ) -> list[tuple[int, int]]:
     """
     Find all Chrome instances listening on debug ports.
 
-    This finds ALL Chromes regardless of session ID.
+    This finds ALL Chromes regardless of who started them.
     Useful for browser_stop --all to clean up any debug Chrome.
 
     Args:
