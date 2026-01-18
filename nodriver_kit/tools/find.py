@@ -40,8 +40,8 @@ async def find(tab, selector: str = None, text: str = None, all: bool = False) -
             element = await find_element(tab, text=text, selector=selector)
             if element:
                 # Get element info
-                tag = await element.evaluate("this.tagName.toLowerCase()")
-                text_content = await element.evaluate("this.textContent.slice(0, 100)")
+                tag = await element.apply("(el) => el.tagName.toLowerCase()")
+                text_content = await element.apply("(el) => el.textContent.slice(0, 100)")
                 return {
                     "found": True,
                     "tag": tag,

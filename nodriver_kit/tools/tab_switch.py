@@ -24,7 +24,7 @@ async def tab_switch(tab, index: int) -> dict:
         {"switched": True, "index": ...}
     """
     try:
-        await switch_tab(tab, index=index)
+        await switch_tab(tab, tab_id=index)
         return {"switched": True, "index": index}
     except Exception as e:
         return {"error": f"Switch tab failed: {e}"}

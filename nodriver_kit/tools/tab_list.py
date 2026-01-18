@@ -23,7 +23,7 @@ async def tab_list(tab) -> dict:
         {"tabs": [...], "count": ...}
     """
     try:
-        tabs = await list_tabs(tab)
+        tabs = list_tabs(tab)
         return {
             "tabs": tabs,
             "count": len(tabs),

@@ -29,15 +29,21 @@ async def new_tab(
     return tab
 
 
-def list_tabs(browser: nodriver.Browser) -> list:
+def list_tabs(browser_or_tab: nodriver.Browser | nodriver.Tab) -> list:
     """List all open tabs.
 
     Args:
-        browser: Browser instance
+        browser_or_tab: Browser or Tab instance
 
     Returns:
         List of tab info dicts
     """
+    # Get browser from tab if needed
+    if isinstance(browser_or_tab, nodriver.Tab):
+        browser = browser_or_tab.browser
+    else:
+        browser = browser_or_tab
+
     tabs_info = []
 
     for i, tab in enumerate(browser.tabs):
@@ -54,11 +60,14 @@ def list_tabs(browser: nodriver.Browser) -> list:
     return tabs_info
 
 
-async def switch_tab(browser: nodriver.Browser, tab_id: int) -> nodriver.Tab:
+async def switch_tab(
+    browser_or_tab: nodriver.Browser | nodriver.Tab,
+    tab_id: int,
+) -> nodriver.Tab:
     """Switch to a different tab.
 
     Args:
-        browser: Browser instance
+        browser_or_tab: Browser or Tab instance
         tab_id: Tab index to switch to
 
     Returns:
@@ -67,6 +76,12 @@ async def switch_tab(browser: nodriver.Browser, tab_id: int) -> nodriver.Tab:
     Raises:
         IndexError: If tab_id is invalid
     """
+    # Get browser from tab if needed
+    if isinstance(browser_or_tab, nodriver.Tab):
+        browser = browser_or_tab.browser
+    else:
+        browser = browser_or_tab
+
     if tab_id < 0 or tab_id >= len(browser.tabs):
         raise IndexError(
             f"Invalid tab ID: {tab_id}. Available: 0-{len(browser.tabs) - 1}"
@@ -79,14 +94,14 @@ async def switch_tab(browser: nodriver.Browser, tab_id: int) -> nodriver.Tab:
 
 
 async def close_tab(
-    browser: nodriver.Browser,
+    browser_or_tab: nodriver.Browser | nodriver.Tab,
     tab_id: Optional[int] = None,
     tab: Optional[nodriver.Tab] = None,
 ) -> int:
     """Close a tab.
 
     Args:
-        browser: Browser instance
+        browser_or_tab: Browser or Tab instance
         tab_id: Tab index to close
         tab: Tab instance to close
 
@@ -96,6 +111,12 @@ async def close_tab(
     Raises:
         ValueError: If trying to close the last tab
     """
+    # Get browser from tab if needed
+    if isinstance(browser_or_tab, nodriver.Tab):
+        browser = browser_or_tab.browser
+    else:
+        browser = browser_or_tab
+
     if len(browser.tabs) <= 1:
         raise ValueError("Cannot close the last tab")
 
