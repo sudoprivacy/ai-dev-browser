@@ -1,12 +1,12 @@
 """Focus an element on the page.
 
 CLI:
-    python -m nodriver_kit.tools.focus --selector "input[name='email']"
-    python -m nodriver_kit.tools.focus --text "Email"
+    python -m nodriver_kit.tools.element_focus --selector "input[name='email']"
+    python -m nodriver_kit.tools.element_focus --text "Email"
 
 Python:
-    from nodriver_kit.tools import focus
-    result = await focus(tab, selector="input[name='email']")
+    from nodriver_kit.tools import element_focus
+    result = await element_focus(tab, selector="input[name='email']")
 """
 
 from nodriver_kit.core import find_element
@@ -14,7 +14,7 @@ from ._cli import as_cli
 
 
 @as_cli
-async def focus(tab, selector: str = None, text: str = None) -> dict:
+async def element_focus(tab, selector: str = None, text: str = None) -> dict:
     """Focus an element by selector or text.
 
     Useful for input fields before typing.
@@ -38,8 +38,8 @@ async def focus(tab, selector: str = None, text: str = None) -> dict:
         else:
             return {"error": "Element not found"}
     except Exception as e:
-        return {"error": f"Focus failed: {e}"}
+        return {"error": f"element_focus failed: {e}"}
 
 
 if __name__ == "__main__":
-    focus.cli_main()
+    element_focus.cli_main()

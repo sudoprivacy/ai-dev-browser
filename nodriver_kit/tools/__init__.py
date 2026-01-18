@@ -17,8 +17,8 @@ from .browser_stop import browser_stop
 from .click import click
 from .element_wait import element_wait
 from .evaluate import evaluate
+from .element_focus import element_focus
 from .find import find
-from .focus import focus
 from .goto import goto
 from .html import html
 from .page_info import page_info
@@ -81,8 +81,8 @@ __all__ = [
     "click",
     "element_wait",
     "evaluate",
+    "element_focus",
     "find",
-    "focus",
     "goto",
     "html",
     "page_info",
