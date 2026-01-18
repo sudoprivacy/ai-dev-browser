@@ -25,7 +25,7 @@ async def storage_set(tab, key: str, value: str) -> dict:
         {"set": True, "key": ..., "value": ...}
     """
     try:
-        await set_local_storage(tab, key=key, value=value)
+        await set_local_storage(tab, items={key: value})
         return {"set": True, "key": key, "value": value}
     except Exception as e:
         return {"error": f"Set storage failed: {e}"}

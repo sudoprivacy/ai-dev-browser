@@ -24,7 +24,7 @@ async def tab_close(tab, index: int = None) -> dict:
         {"closed": True}
     """
     try:
-        await close_tab(tab, index=index)
+        await close_tab(tab, tab_id=index)
         return {"closed": True, "index": index}
     except Exception as e:
         return {"error": f"Close tab failed: {e}"}

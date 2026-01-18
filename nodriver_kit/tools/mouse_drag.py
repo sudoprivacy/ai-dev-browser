@@ -27,7 +27,7 @@ async def mouse_drag(tab, start_x: int, start_y: int, end_x: int, end_y: int) ->
         {"dragged": True, ...} on success
     """
     try:
-        await core_mouse_drag(tab, start_x=start_x, start_y=start_y, end_x=end_x, end_y=end_y)
+        await core_mouse_drag(tab, from_x=start_x, from_y=start_y, to_x=end_x, to_y=end_y)
         return {
             "dragged": True,
             "from": {"x": start_x, "y": start_y},

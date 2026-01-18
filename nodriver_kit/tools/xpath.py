@@ -24,7 +24,7 @@ async def xpath(tab, expr: str) -> dict:
         {"found": True, "count": ...} on success
     """
     try:
-        elements = await find_by_xpath(tab, expr)
+        elements = await find_by_xpath(tab, xpath=expr)
         return {
             "found": len(elements) > 0,
             "count": len(elements),

@@ -25,7 +25,7 @@ async def download_file(tab, url: str, path: str) -> dict:
         {"downloaded": True, "path": ...}
     """
     try:
-        await core_download(tab, url=url, path=path)
+        await core_download(tab, url=url, output=path)
         return {"downloaded": True, "url": url, "path": path}
     except Exception as e:
         return {"error": f"Download failed: {e}"}
