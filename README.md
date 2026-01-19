@@ -21,7 +21,7 @@ Unlike Selenium (sends "I'm a robot" signals) or Playwright (fast but detectable
 - **Human-like Automation**: Built on nodriver's anti-detection technology
 - **Browser Management**: Cross-platform Chrome detection, launching, and port management
 - **Worker Pool**: Parallel task execution with multiple browser instances
-- **Dual-Interface Tools**: 37 tools that work as both CLI commands and Python imports
+- **Dual-Interface Tools**: 42 tools that work as both CLI commands and Python imports
 - **AI-Friendly API**: Intuitive `run()` method, sensible defaults, clear error messages
 
 ## Installation
@@ -116,18 +116,14 @@ ls nodriver_kit/tools/
 ### As CLI (for exploration & scripting)
 
 ```bash
-# Start browser
-python -m nodriver_kit.tools.browser_start --port 9222
+# Start browser (uses default profile for persistence)
+python -m nodriver_kit.tools.browser_start --url "https://example.com"
 
-# Navigate
-python -m nodriver_kit.tools.goto --port 9222 --url "https://example.com"
+# Get accessibility tree
+python -m nodriver_kit.tools.ax_tree --port 9222
 
-# Find element
-python -m nodriver_kit.tools.find --port 9222 --selector "a"
-# {"found": true, "tag": "a", "text": "Learn more"}
-
-# Click it
-python -m nodriver_kit.tools.click --port 9222 --text "Learn more"
+# Click element by ref
+python -m nodriver_kit.tools.ax_select --port 9222 --ref 5
 
 # Take screenshot
 python -m nodriver_kit.tools.screenshot --port 9222 --path ./shot.png
@@ -139,36 +135,35 @@ python -m nodriver_kit.tools.browser_stop --port 9222
 ### As Python (for codification)
 
 ```python
-from nodriver_kit.tools import (
-    browser_start, goto, find, click, screenshot, browser_stop
-)
+from nodriver_kit.core import connect_browser, get_active_tab
+from nodriver_kit.tools import browser_start, ax_tree, ax_select, screenshot
 
-# Same tools, programmatic interface
-result = browser_start(port=9222)
-await goto(tab, url="https://example.com")
-elem = await find(tab, selector="a")
-await click(tab, text="Learn more")
+# Start browser with default profile
+result = browser_start(url="https://example.com")
+browser = await connect_browser(port=result["port"])
+tab = await get_active_tab(browser)
+
+# Find and click using accessibility tree
+tree = await ax_tree(tab, interactable_only=True)
+await ax_select(tab, node_id=tree[0]["_nodeId"])
 await screenshot(tab, path="./shot.png")
-browser_stop(port=9222)
 ```
 
-### Available Tools (37 total)
+### Available Tools (42 total)
 
 | Category | Tools |
 |----------|-------|
 | **Browser** | `browser_start`, `browser_stop`, `browser_list` |
-| **Page** | `goto`, `reload`, `page_info`, `page_wait`, `screenshot`, `snapshot`, `html` |
-| **Elements** | `find`, `click`, `type_text`, `element_wait`, `xpath`, `evaluate` |
-| **Wait** | `wait_url` |
+| **Element** | `element_click`, `element_find`, `element_focus`, `element_text`, `element_type`, `element_wait`, `element_xpath` |
+| **Page** | `page_eval`, `page_goto`, `page_html`, `page_info`, `page_reload`, `page_wait`, `page_wait_url` |
+| **Accessibility** | `ax_tree`, `ax_select` |
 | **Mouse** | `mouse_click`, `mouse_move`, `mouse_drag` |
 | **Tabs** | `tab_new`, `tab_list`, `tab_switch`, `tab_close` |
-| **Scroll** | `scroll` |
+| **Window** | `window_focus`, `window_resize`, `window_state` |
 | **Cookies** | `cookies_list`, `cookies_save`, `cookies_load` |
 | **Storage** | `storage_get`, `storage_set` |
-| **Window** | `window_resize`, `window_state` |
 | **Download** | `download_file`, `download_path` |
-| **Session** | `login_interactive` |
-| **Advanced** | `cdp_send`, `cf_verify` |
+| **Other** | `screenshot`, `scroll`, `login_interactive`, `cdp_send`, `cf_verify` |
 
 ## API Reference
 
