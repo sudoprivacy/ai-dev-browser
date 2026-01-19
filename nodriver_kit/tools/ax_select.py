@@ -18,6 +18,9 @@ from ._cli import as_cli
 async def _click_by_node_id(tab, node_id) -> bool:
     """Click element by backend node id via CDP."""
     try:
+        # Wrap int in BackendNodeId if needed
+        if isinstance(node_id, int):
+            node_id = dom.BackendNodeId(node_id)
         # Get box model for the node
         box = await tab.send(dom.get_box_model(backend_node_id=node_id))
         if not box or not box.content:
@@ -47,19 +50,33 @@ async def _click_by_node_id(tab, node_id) -> bool:
 
 
 @as_cli
-async def ax_select(tab, ref: str) -> dict:
-    """Select and click element by accessibility tree ref.
+async def ax_select(tab, ref: str = None, node_id: int = None) -> dict:
+    """Select and click element by accessibility tree ref or node_id.
 
     Use ax_tree to get element refs, then ax_select to interact with them.
+    For stable clicks, pass node_id directly from ax_tree result's _nodeId.
 
     Args:
         tab: Browser tab
-        ref: Element ref from ax_tree (e.g., "5")
+        ref: Element ref from ax_tree (e.g., "5") - will re-fetch snapshot
+        node_id: Backend node ID from ax_tree's _nodeId - direct click, no re-fetch
 
     Returns:
         {"clicked": True, "element": {...}} on success
     """
     try:
+        # If node_id provided directly, use it (stable, no re-fetch)
+        if node_id is not None:
+            success = await _click_by_node_id(tab, node_id)
+            if success:
+                return {"clicked": True, "node_id": node_id}
+            else:
+                return {"error": f"Failed to click node_id '{node_id}'"}
+
+        # Otherwise, look up by ref (may be unstable if page changed)
+        if ref is None:
+            return {"error": "Must specify --ref or node_id"}
+
         # Get accessibility tree with nodeIds
         elements = await get_snapshot(tab)
 
@@ -73,12 +90,12 @@ async def ax_select(tab, ref: str) -> dict:
         if not target:
             return {"error": f"Element with ref '{ref}' not found"}
 
-        node_id = target.get("_nodeId")
-        if not node_id:
+        target_node_id = target.get("_nodeId")
+        if not target_node_id:
             return {"error": f"Element ref '{ref}' has no nodeId"}
 
         # Click the element
-        success = await _click_by_node_id(tab, node_id)
+        success = await _click_by_node_id(tab, target_node_id)
         if success:
             return {
                 "clicked": True,
