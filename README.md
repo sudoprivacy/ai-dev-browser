@@ -21,7 +21,7 @@ Unlike Selenium (sends "I'm a robot" signals) or Playwright (fast but detectable
 - **Human-like Automation**: Built on nodriver's anti-detection technology
 - **Browser Management**: Cross-platform Chrome detection, launching, and port management
 - **Worker Pool**: Parallel task execution with multiple browser instances
-- **Dual-Interface Tools**: 42 tools that work as both CLI commands and Python imports
+- **Dual-Interface Tools**: Every tool works as both CLI command and Python import
 - **AI-Friendly API**: Intuitive `run()` method, sensible defaults, clear error messages
 
 ## Installation
@@ -126,7 +126,7 @@ python -m nodriver_kit.tools.ax_tree --port 9222
 python -m nodriver_kit.tools.ax_select --port 9222 --ref 5
 
 # Take screenshot
-python -m nodriver_kit.tools.screenshot --port 9222 --path ./shot.png
+python -m nodriver_kit.tools.page_screenshot --port 9222 --path ./shot.png
 
 # Stop browser
 python -m nodriver_kit.tools.browser_stop --port 9222
@@ -136,7 +136,7 @@ python -m nodriver_kit.tools.browser_stop --port 9222
 
 ```python
 from nodriver_kit.core import connect_browser, get_active_tab
-from nodriver_kit.tools import browser_start, ax_tree, ax_select, screenshot
+from nodriver_kit.tools import browser_start, ax_tree, ax_select, page_screenshot
 
 # Start browser with default profile
 result = browser_start(url="https://example.com")
@@ -146,24 +146,15 @@ tab = await get_active_tab(browser)
 # Find and click using accessibility tree
 tree = await ax_tree(tab, interactable_only=True)
 await ax_select(tab, node_id=tree[0]["_nodeId"])
-await screenshot(tab, path="./shot.png")
+await page_screenshot(tab, path="./shot.png")
 ```
 
-### Available Tools (42 total)
+### Available Tools
 
-| Category | Tools |
-|----------|-------|
-| **Browser** | `browser_start`, `browser_stop`, `browser_list` |
-| **Element** | `element_click`, `element_find`, `element_focus`, `element_text`, `element_type`, `element_wait`, `element_xpath` |
-| **Page** | `page_eval`, `page_goto`, `page_html`, `page_info`, `page_reload`, `page_wait`, `page_wait_url` |
-| **Accessibility** | `ax_tree`, `ax_select` |
-| **Mouse** | `mouse_click`, `mouse_move`, `mouse_drag` |
-| **Tabs** | `tab_new`, `tab_list`, `tab_switch`, `tab_close` |
-| **Window** | `window_focus`, `window_resize`, `window_state` |
-| **Cookies** | `cookies_list`, `cookies_save`, `cookies_load` |
-| **Storage** | `storage_get`, `storage_set` |
-| **Download** | `download_file`, `download_path` |
-| **Other** | `screenshot`, `scroll`, `login_interactive`, `cdp_send`, `cf_verify` |
+```bash
+ls nodriver_kit/tools/                        # Discover all tools
+python -m nodriver_kit.tools.<name> --help    # Usage for any tool
+```
 
 ## API Reference
 
