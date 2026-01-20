@@ -1,12 +1,12 @@
 """Take a screenshot of the page.
 
 CLI:
-    python -m nodriver_kit.tools.screenshot --path "screenshot.png"
-    python -m nodriver_kit.tools.screenshot  # saves to temp file
+    python -m nodriver_kit.tools.page_screenshot --path "screenshot.png"
+    python -m nodriver_kit.tools.page_screenshot  # saves to temp file
 
 Python:
-    from nodriver_kit.tools import screenshot
-    result = await screenshot(tab, path="screenshot.png")
+    from nodriver_kit.tools import page_screenshot
+    result = await page_screenshot(tab, path="screenshot.png")
 """
 
 import tempfile
@@ -15,7 +15,7 @@ from ._cli import as_cli
 
 
 @as_cli
-async def screenshot(tab, path: str = None, full_page: bool = False) -> dict:
+async def page_screenshot(tab, path: str = None, full_page: bool = False) -> dict:
     """Take a screenshot of the page.
 
     Args:
@@ -43,4 +43,4 @@ async def screenshot(tab, path: str = None, full_page: bool = False) -> dict:
 
 
 if __name__ == "__main__":
-    screenshot.cli_main()
+    page_screenshot.cli_main()

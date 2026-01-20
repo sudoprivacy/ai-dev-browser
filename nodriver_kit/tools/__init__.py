@@ -30,9 +30,8 @@ from .page_info import page_info
 from .page_reload import page_reload
 from .page_wait import page_wait
 from .page_wait_url import page_wait_url
-from .screenshot import screenshot
+from .page_screenshot import page_screenshot
 from .scroll import scroll
-from .snapshot import snapshot  # deprecated, use ax_tree
 
 # Accessibility tree
 from .ax_tree import ax_tree
@@ -95,9 +94,8 @@ __all__ = [
     "page_reload",
     "page_wait",
     "page_wait_url",
-    "screenshot",
+    "page_screenshot",
     "scroll",
-    "snapshot",  # deprecated, use ax_tree
     # Accessibility tree
     "ax_tree",
     "ax_select",
