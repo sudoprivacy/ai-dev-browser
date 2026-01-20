@@ -158,37 +158,10 @@ python -m nodriver_kit.tools.<name> --help    # Usage for any tool
 
 ## API Reference
 
-### Browser Module
-
 ```python
-from nodriver_kit import (
-    find_chrome,           # Find Chrome executable
-    launch_chrome,         # Launch Chrome with debug port
-    get_available_port,    # Get next available port
-    is_port_in_use,        # Check if port is occupied
-    find_temp_chromes,     # Find Chrome instances launched by this lib
-    kill_process_tree,     # Terminate process and children
-)
+# See nodriver_kit/__init__.py for all exports
+from nodriver_kit import *
 ```
-
-### Pool Module
-
-```python
-from nodriver_kit import (
-    BrowserPool,           # Main pool class
-    Job,                   # Task representation
-    JobResult,             # Task result
-    JobStatus,             # Task status enum
-    Worker,                # Worker representation
-    WorkerStats,           # Worker statistics
-)
-```
-
-## Requirements
-
-- Python 3.10+
-- nodriver >= 0.38
-- websocket-client >= 1.0
 
 ## License
 
