@@ -16,7 +16,6 @@ Python:
 """
 
 from pathlib import Path
-from typing import Literal
 from nodriver_kit.core import (
     launch_chrome,
     get_available_port,
@@ -25,6 +24,7 @@ from nodriver_kit.core import (
     find_debug_chromes,
     is_chrome_in_use,
     get_pid_on_port,
+    ReuseStrategy,
 )
 from ._cli import as_cli
 
@@ -38,7 +38,7 @@ def browser_start(
     url: str = None,
     profile: str = None,
     temp: bool = False,
-    reuse: Literal["none", "this_session", "nodriver_kit", "any"] = "none",
+    reuse: ReuseStrategy = "none",
 ) -> dict:
     """Start or reuse a browser instance.
 

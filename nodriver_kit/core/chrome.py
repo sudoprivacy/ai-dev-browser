@@ -130,6 +130,7 @@ def launch_chrome(
     profile_prefix: str = DEFAULT_PROFILE_PREFIX,
     extra_args: list[str] | None = None,
     start_url: str = "about:blank",
+    disable_session_restore: bool = True,
     disable_session_restore_prompt: bool = True,
     hide_crash_restore_bubble: bool = True,
 ) -> subprocess.Popen:
@@ -146,6 +147,8 @@ def launch_chrome(
         profile_prefix: Prefix for temp profile directory name (default: "nodriver_chrome_")
         extra_args: Additional Chrome command-line arguments
         start_url: Initial URL to open (default: "about:blank" for clean state)
+        disable_session_restore: Prevent Chrome from restoring previous tabs (default: True).
+                                Sets restore_on_startup=5 in Preferences file.
         disable_session_restore_prompt: Don't prompt to restore session (default: True)
         hide_crash_restore_bubble: Hide crash restore UI bubble (default: True)
 
@@ -176,7 +179,8 @@ def launch_chrome(
 
     # Disable session restore by setting Preferences
     # This prevents Chrome from restoring previous tabs on startup
-    _ensure_no_session_restore(Path(user_data_dir))
+    if disable_session_restore:
+        _ensure_no_session_restore(Path(user_data_dir))
 
     # Build Chrome arguments (cross-platform)
     args = [

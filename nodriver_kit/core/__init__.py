@@ -22,6 +22,8 @@ from .config import (
     DEFAULT_PORT_RANGE,
     DEFAULT_PROFILE_DIR,
     DEFAULT_PROFILE_PREFIX,
+    DEFAULT_REUSE_STRATEGY,
+    ReuseStrategy,
 )
 
 # Chrome detection and launching
@@ -94,6 +96,8 @@ __all__ = [
     "DEFAULT_DEBUG_HOST",
     "DEFAULT_DEBUG_PORT",
     "DEFAULT_PORT_RANGE",
+    "DEFAULT_REUSE_STRATEGY",
+    "ReuseStrategy",
     # Chrome
     "find_chrome",
     "launch_chrome",
