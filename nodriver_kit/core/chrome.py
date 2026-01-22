@@ -131,7 +131,7 @@ def launch_chrome(
     extra_args: list[str] | None = None,
     start_url: str = "about:blank",
     disable_session_restore: bool = True,
-    disable_session_restore_prompt: bool = True,
+    disable_session_crashed_bubble: bool = True,
     hide_crash_restore_bubble: bool = True,
 ) -> subprocess.Popen:
     """
@@ -149,8 +149,8 @@ def launch_chrome(
         start_url: Initial URL to open (default: "about:blank" for clean state)
         disable_session_restore: Prevent Chrome from restoring previous tabs (default: True).
                                 Sets restore_on_startup=5 in Preferences file.
-        disable_session_restore_prompt: Don't prompt to restore session (default: True)
-        hide_crash_restore_bubble: Hide crash restore UI bubble (default: True)
+        disable_session_crashed_bubble: Chrome flag --disable-session-crashed-bubble (default: True)
+        hide_crash_restore_bubble: Chrome flag --hide-crash-restore-bubble (default: True)
 
     Returns:
         Popen process handle for the Chrome instance.
@@ -205,7 +205,7 @@ def launch_chrome(
     ]
 
     # Session restore behavior (default: suppress for clean automation state)
-    if disable_session_restore_prompt:
+    if disable_session_crashed_bubble:
         args.append("--disable-session-crashed-bubble")
     if hide_crash_restore_bubble:
         args.append("--hide-crash-restore-bubble")
