@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nodriver-kit"
+name = "ai-dev-browser"
 version = "0.1.0"
-description = "Browser automation toolkit built on nodriver - AI-first design"
+description = "A browser for AI to develop web automation - human-like automation that works seamlessly"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
@@ -40,12 +40,12 @@ cv = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/elfenlieds7/nodriver-kit"
-Repository = "https://github.com/elfenlieds7/nodriver-kit"
+Homepage = "https://github.com/elfenlieds7/ai-dev-browser"
+Repository = "https://github.com/elfenlieds7/ai-dev-browser"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["nodriver_kit*"]
+include = ["ai_dev_browser*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

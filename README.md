@@ -1,10 +1,10 @@
-# nodriver-kit
+# ai-dev-browser
 
 A browser for AI to develop web automation — human-like automation that works seamlessly in a world designed for humans. Built on [nodriver](https://github.com/ultrafunkamsterdam/nodriver).
 
 ## What is this?
 
-**nodriver-kit is designed for AI agents (like Claude) to explore websites and build automation scripts.**
+**ai-dev-browser is designed for AI agents (like Claude) to explore websites and build automation scripts.**
 
 The workflow:
 1. **Explore** (CLI): AI uses tools like `ax_tree`, `page_screenshot` to understand a webpage
@@ -15,14 +15,14 @@ This is not a traditional testing framework — it's a development environment w
 
 ## Human-like Automation (Priority 1)
 
-**nodriver-kit mimics human behavior** — this is our core feature:
+**ai-dev-browser mimics human behavior** — this is our core feature:
 
 - Randomized delays between actions
 - Human-like mouse movements and clicks
 - Natural typing patterns
 - Passes Cloudflare, bot detection, and CAPTCHAs
 
-Unlike Selenium (sends "I'm a robot" signals) or Playwright (fast but detectable), nodriver-kit:
+Unlike Selenium (sends "I'm a robot" signals) or Playwright (fast but detectable), ai-dev-browser:
 - Uses actual Chrome via CDP (Chrome DevTools Protocol)
 - Implements human-like delays and movements
 - Works where other automation tools get blocked
@@ -38,12 +38,12 @@ Unlike Selenium (sends "I'm a robot" signals) or Playwright (fast but detectable
 ## Installation
 
 ```bash
-pip install nodriver-kit
+pip install ai-dev-browser
 ```
 
 For Cloudflare bypass support (uses nodriver's built-in `verify_cf()`):
 ```bash
-pip install nodriver-kit[cv]
+pip install ai-dev-browser[cv]
 ```
 
 ## Quick Start
@@ -51,7 +51,7 @@ pip install nodriver-kit[cv]
 ### Simple Browser Launch
 
 ```python
-from nodriver_kit import find_chrome, launch_chrome, get_available_port
+from ai_dev_browser import find_chrome, launch_chrome, get_available_port
 import nodriver as uc
 
 # Find available port and launch Chrome
@@ -66,7 +66,7 @@ tab = await browser.get("https://example.com")
 ### Worker Pool for Parallel Tasks
 
 ```python
-from nodriver_kit import BrowserPool
+from ai_dev_browser import BrowserPool
 
 class MyClient:
     def __init__(self, port: int, headless: bool = False):
@@ -117,37 +117,37 @@ await tab.verify_cf()  # Built-in CF bypass (requires opencv-python)
 
 **Design Philosophy**: Write once, use two ways.
 
-Every tool in `nodriver_kit/tools/` works as both a CLI command and a Python function. No translation layer, no duplication - the same code serves both interfaces.
+Every tool in `ai_dev_browser/tools/` works as both a CLI command and a Python function. No translation layer, no duplication - the same code serves both interfaces.
 
 ```bash
 # Discover all tools
-ls nodriver_kit/tools/
+ls ai_dev_browser/tools/
 ```
 
 ### As CLI (for exploration & scripting)
 
 ```bash
 # Start browser (uses default profile for persistence)
-python -m nodriver_kit.tools.browser_start --url "https://example.com"
+python -m ai_dev_browser.tools.browser_start --url "https://example.com"
 
 # Get accessibility tree
-python -m nodriver_kit.tools.ax_tree --port 9222
+python -m ai_dev_browser.tools.ax_tree --port 9222
 
 # Click element by ref
-python -m nodriver_kit.tools.ax_select --port 9222 --ref 5
+python -m ai_dev_browser.tools.ax_select --port 9222 --ref 5
 
 # Take screenshot
-python -m nodriver_kit.tools.page_screenshot --port 9222 --path ./shot.png
+python -m ai_dev_browser.tools.page_screenshot --port 9222 --path ./shot.png
 
 # Stop browser
-python -m nodriver_kit.tools.browser_stop --port 9222
+python -m ai_dev_browser.tools.browser_stop --port 9222
 ```
 
 ### As Python (for codification)
 
 ```python
-from nodriver_kit.core import connect_browser, get_active_tab
-from nodriver_kit.tools import browser_start, ax_tree, ax_select, page_screenshot
+from ai_dev_browser.core import connect_browser, get_active_tab
+from ai_dev_browser.tools import browser_start, ax_tree, ax_select, page_screenshot
 
 # Start browser with default profile
 result = browser_start(url="https://example.com")
@@ -163,15 +163,15 @@ await page_screenshot(tab, path="./shot.png")
 ### Available Tools
 
 ```bash
-ls nodriver_kit/tools/                        # Discover all tools
-python -m nodriver_kit.tools.<name> --help    # Usage for any tool
+ls ai_dev_browser/tools/                        # Discover all tools
+python -m ai_dev_browser.tools.<name> --help    # Usage for any tool
 ```
 
 ## API Reference
 
 ```python
-# See nodriver_kit/__init__.py for all exports
-from nodriver_kit import *
+# See ai_dev_browser/__init__.py for all exports
+from ai_dev_browser import *
 ```
 
 ## License
