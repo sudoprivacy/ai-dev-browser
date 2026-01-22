@@ -14,7 +14,7 @@ from pathlib import Path
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def page_screenshot(tab, path: str = None, full_page: bool = False) -> dict:
     """Take a screenshot of the page.
 

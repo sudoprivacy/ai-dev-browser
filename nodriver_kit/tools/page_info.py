@@ -12,7 +12,7 @@ from nodriver_kit.core import get_page_info
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def page_info(tab) -> dict:
     """Get current page information.
 

@@ -12,7 +12,7 @@ from nodriver_kit.core import resize_window
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def window_resize(tab, width: int, height: int) -> dict:
     """Resize the browser window.
 

@@ -13,7 +13,7 @@ from nodriver_kit.core import get_snapshot
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def ax_tree(tab, interactable_only: bool = False) -> dict:
     """Get accessibility tree of the page.
 

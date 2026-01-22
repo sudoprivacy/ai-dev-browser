@@ -2,41 +2,41 @@
 
 CLI:
     python -m nodriver_kit.tools.browser_stop --port 9222
-    python -m nodriver_kit.tools.browser_stop --all
+    python -m nodriver_kit.tools.browser_stop --stop-all
 
 Python:
     from nodriver_kit.tools import browser_stop
-    result = await browser_stop(port=9222)
+    result = browser_stop(port=9222)
+    result = browser_stop(stop_all=True)
 """
 
-import argparse
-import asyncio
-import json
 from nodriver_kit.core import (
     find_our_chromes,
     kill_process_tree,
     cleanup_temp_profile,
     get_pid_on_port,
 )
+from ._cli import as_cli
 
 
-async def browser_stop(port: int = None, all: bool = False) -> dict:
+@as_cli(requires_tab=False)
+def browser_stop(port: int = None, stop_all: bool = False) -> dict:
     """Stop browser instance(s).
 
     Args:
         port: Port of browser to stop
-        all: Stop all our browser instances
+        stop_all: Stop all our browser instances
 
     Returns:
         {"stopped": True, "count": ...}
     """
     try:
-        if not port and not all:
-            return {"error": "Please specify --port or --all"}
+        if not port and not stop_all:
+            return {"error": "Please specify --port or --stop-all"}
 
         stopped = []
 
-        if all:
+        if stop_all:
             browsers = find_our_chromes()
             for browser in browsers:
                 try:
@@ -61,15 +61,5 @@ async def browser_stop(port: int = None, all: bool = False) -> dict:
         return {"error": f"Stop browser failed: {e}"}
 
 
-def cli_main():
-    parser = argparse.ArgumentParser(description="Stop browser instance(s)")
-    parser.add_argument("--port", "-p", type=int, help="Port to stop")
-    parser.add_argument("--all", "-a", action="store_true", help="Stop all")
-    args = parser.parse_args()
-
-    result = asyncio.run(browser_stop(port=args.port, all=args.all))
-    print(json.dumps(result, indent=2))
-
-
 if __name__ == "__main__":
-    cli_main()
+    browser_stop.cli_main()

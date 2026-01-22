@@ -12,7 +12,7 @@ from nodriver_kit.core import set_window_state
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def window_state(tab, state: str) -> dict:
     """Set the window state.
 

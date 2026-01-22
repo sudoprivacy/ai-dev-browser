@@ -13,7 +13,7 @@ from nodriver_kit.core import click as core_click
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def element_click(tab, selector: str = None, text: str = None) -> dict:
     """Click an element by selector or text.
 

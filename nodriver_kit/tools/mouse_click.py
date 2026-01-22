@@ -13,7 +13,7 @@ from nodriver_kit.core import mouse_click as core_mouse_click
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def mouse_click(tab, x: int, y: int, button: str = "left") -> dict:
     """Click at coordinates.
 

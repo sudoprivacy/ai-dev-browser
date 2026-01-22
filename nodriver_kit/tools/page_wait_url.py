@@ -13,7 +13,7 @@ from ..core.navigation import wait_for_url as core_wait_for_url
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def page_wait_url(
     tab,
     pattern: str = None,

@@ -12,7 +12,7 @@ Python:
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def cookies_list(tab, domain: str = None) -> dict:
     """List browser cookies.
 

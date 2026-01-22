@@ -12,7 +12,7 @@ from nodriver_kit.core import close_tab
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def tab_close(tab, id: int = None) -> dict:
     """Close a tab by id.
 

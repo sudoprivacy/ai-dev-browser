@@ -1,11 +1,18 @@
-"""CLI decorator for actions.
+"""CLI decorator for tools.
 
-Makes async functions usable as both Python imports and CLI commands.
+Makes functions usable as both Python imports and CLI commands.
 
 Usage:
-    @as_cli
+    # Tool that operates on existing browser (requires tab)
+    @as_cli()
     async def click(tab, selector: str, text: str = None) -> dict:
         '''Click an element.'''
+        ...
+
+    # Tool that manages browser lifecycle (no tab needed)
+    @as_cli(requires_tab=False)
+    def browser_start(port: int = None, headless: bool = False) -> dict:
+        '''Start a browser.'''
         ...
 
     # As CLI: python -m nodriver_kit.tools.click --selector "button"
@@ -18,7 +25,7 @@ import functools
 import inspect
 import json
 import sys
-from typing import Any, Callable, get_type_hints
+from typing import Callable, get_type_hints
 
 
 def _get_param_type(hint) -> type:
@@ -30,7 +37,11 @@ def _get_param_type(hint) -> type:
     return str
 
 
-def _generate_parser(func: Callable, description: str = None) -> argparse.ArgumentParser:
+def _generate_parser(
+    func: Callable,
+    requires_tab: bool = True,
+    description: str = None,
+) -> argparse.ArgumentParser:
     """Generate argparse parser from function signature."""
     sig = inspect.signature(func)
     hints = get_type_hints(func) if hasattr(func, "__annotations__") else {}
@@ -40,13 +51,14 @@ def _generate_parser(func: Callable, description: str = None) -> argparse.Argume
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
-    # Add --port for browser connection
-    parser.add_argument(
-        "--port", "-p",
-        type=int,
-        default=9222,
-        help="Chrome debugging port (default: 9222)",
-    )
+    # Add --port for browser connection (only when requires_tab)
+    if requires_tab:
+        parser.add_argument(
+            "--port", "-p",
+            type=int,
+            default=9222,
+            help="Chrome debugging port (default: 9222)",
+        )
 
     # Add arguments from function signature (skip 'tab' parameter)
     for name, param in sig.parameters.items():
@@ -57,22 +69,29 @@ def _generate_parser(func: Callable, description: str = None) -> argparse.Argume
         param_type = _get_param_type(hint)
         required = param.default is inspect.Parameter.empty
 
-        kwargs = {
-            "type": param_type,
-            "help": f"({hint.__name__ if hasattr(hint, '__name__') else 'str'})",
-        }
-
-        if not required:
-            kwargs["default"] = param.default
+        # Generate help text from type hint
+        if hasattr(hint, "__name__"):
+            help_text = f"({hint.__name__})"
+        elif hasattr(hint, "__origin__"):
+            # Handle Optional, Union, etc.
+            help_text = f"({str(hint)})"
+        else:
+            help_text = "(str)"
 
         if hint is bool:
-            # For bool, use store_true action
+            # For bool, use store_true/store_false action
             parser.add_argument(
                 f"--{name.replace('_', '-')}",
                 action="store_true" if param.default is False else "store_false",
-                help=kwargs["help"],
+                help=help_text,
             )
         else:
+            kwargs = {
+                "type": param_type,
+                "help": help_text,
+            }
+            if not required:
+                kwargs["default"] = param.default
             parser.add_argument(
                 f"--{name.replace('_', '-')}",
                 required=required,
@@ -82,58 +101,90 @@ def _generate_parser(func: Callable, description: str = None) -> argparse.Argume
     return parser
 
 
-def as_cli(func: Callable) -> Callable:
-    """Decorator that adds CLI capability to an async function.
+def as_cli(requires_tab: bool = True):
+    """Decorator that adds CLI capability to a function.
+
+    Args:
+        requires_tab: If True (default), the function requires a browser tab.
+                     CLI will auto-connect to browser and pass tab as first arg.
+                     If False, the function manages browser lifecycle itself.
 
     The decorated function can be:
-    1. Imported and called directly: await func(tab, ...)
+    1. Imported and called directly: await func(tab, ...) or func(...)
     2. Run as CLI: python -m module --arg value
 
-    The function must:
-    - Be async
-    - Take 'tab' as first parameter
-    - Return a dict (will be JSON-serialized for CLI output)
+    Returns:
+        Decorator function
     """
 
-    @functools.wraps(func)
-    async def wrapper(*args, **kwargs):
-        return await func(*args, **kwargs)
+    def decorator(func: Callable) -> Callable:
+        is_async = asyncio.iscoroutinefunction(func)
 
-    def cli_main():
-        """Entry point for CLI usage."""
-        from nodriver_kit.core import connect_browser, get_active_tab
+        @functools.wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            return await func(*args, **kwargs)
 
-        parser = _generate_parser(func)
-        args = parser.parse_args()
+        @functools.wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            return func(*args, **kwargs)
 
-        async def run():
-            try:
-                browser = await connect_browser(port=args.port)
-                tab = await get_active_tab(browser)
+        wrapper = async_wrapper if is_async else sync_wrapper
 
-                # Build kwargs from args, excluding 'port'
-                kwargs = {
-                    k.replace("-", "_"): v
-                    for k, v in vars(args).items()
-                    if k != "port"
-                }
+        def cli_main():
+            """Entry point for CLI usage."""
+            parser = _generate_parser(func, requires_tab=requires_tab)
+            args = parser.parse_args()
 
-                result = await func(tab, **kwargs)
+            if requires_tab:
+                # Connect to browser and get tab
+                from nodriver_kit.core import connect_browser, get_active_tab
 
-                # Output as JSON
-                print(json.dumps(result, ensure_ascii=False, indent=2))
+                async def run():
+                    try:
+                        browser = await connect_browser(port=args.port)
+                        tab = await get_active_tab(browser)
 
-            except Exception as e:
-                print(json.dumps({"error": str(e)}, ensure_ascii=False, indent=2))
-                sys.exit(1)
+                        # Build kwargs from args, excluding 'port'
+                        kwargs = {
+                            k.replace("-", "_"): v
+                            for k, v in vars(args).items()
+                            if k != "port"
+                        }
 
-        asyncio.run(run())
+                        result = await func(tab, **kwargs)
+                        print(json.dumps(result, ensure_ascii=False, indent=2))
 
-    # Attach CLI runner to the function
-    wrapper.cli_main = cli_main
-    wrapper.__wrapped__ = func
+                    except Exception as e:
+                        print(json.dumps({"error": str(e)}, ensure_ascii=False, indent=2))
+                        sys.exit(1)
 
-    return wrapper
+                asyncio.run(run())
+            else:
+                # No browser connection needed
+                try:
+                    kwargs = {
+                        k.replace("-", "_"): v
+                        for k, v in vars(args).items()
+                    }
+
+                    if is_async:
+                        result = asyncio.run(func(**kwargs))
+                    else:
+                        result = func(**kwargs)
+
+                    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+                except Exception as e:
+                    print(json.dumps({"error": str(e)}, ensure_ascii=False, indent=2))
+                    sys.exit(1)
+
+        # Attach CLI runner to the function
+        wrapper.cli_main = cli_main
+        wrapper.__wrapped__ = func
+
+        return wrapper
+
+    return decorator
 
 
 def output(data: dict) -> None:

@@ -14,7 +14,7 @@ from nodriver_kit.core import scroll as core_scroll
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def scroll(
     tab,
     direction: str = "down",

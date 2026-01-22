@@ -44,7 +44,7 @@ def _get_cdp_command(method: str, params: dict):
     return cmd_func(**params) if params else cmd_func()
 
 
-@as_cli
+@as_cli()
 async def cdp_send(tab, method: str, params: str = None) -> dict:
     """Send a CDP (Chrome DevTools Protocol) command.
 

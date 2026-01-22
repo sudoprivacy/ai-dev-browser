@@ -12,7 +12,7 @@ from nodriver_kit.core import set_local_storage
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def storage_set(tab, key: str, value: str) -> dict:
     """Set localStorage value.
 

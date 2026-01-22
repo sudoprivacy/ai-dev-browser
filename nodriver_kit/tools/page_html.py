@@ -11,7 +11,7 @@ Python:
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def page_html(tab, outer: bool = False) -> dict:
     """Get page HTML.
 

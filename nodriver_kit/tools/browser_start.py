@@ -13,14 +13,14 @@ Python:
     result = browser_start(temp=True, url="https://example.com")  # temp profile
 """
 
-import argparse
-import json
 from pathlib import Path
 from nodriver_kit.core import launch_chrome, get_available_port
+from ._cli import as_cli
 
 DEFAULT_PROFILE_DIR = Path.home() / ".nodriver-kit" / "profiles"
 
 
+@as_cli(requires_tab=False)
 def browser_start(
     port: int = None,
     headless: bool = False,
@@ -74,24 +74,5 @@ def browser_start(
         return {"error": f"Start browser failed: {e}"}
 
 
-def cli_main():
-    parser = argparse.ArgumentParser(description="Start a browser instance")
-    parser.add_argument("--port", "-p", type=int, help="Debug port")
-    parser.add_argument("--url", "-u", help="Initial URL to open")
-    parser.add_argument("--profile", help="Profile name (default: 'default')")
-    parser.add_argument("--temp", action="store_true", help="Use temp profile (no persistence)")
-    parser.add_argument("--headless", action="store_true", help="Run headless")
-    args = parser.parse_args()
-
-    result = browser_start(
-        port=args.port,
-        headless=args.headless,
-        url=args.url,
-        profile=args.profile,
-        temp=args.temp,
-    )
-    print(json.dumps(result, indent=2))
-
-
 if __name__ == "__main__":
-    cli_main()
+    browser_start.cli_main()

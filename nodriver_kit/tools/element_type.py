@@ -12,7 +12,7 @@ from nodriver_kit.core import type_text as core_type_text
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def element_type(tab, text: str, selector: str = None, clear: bool = False) -> dict:
     """Type text into an element.
 

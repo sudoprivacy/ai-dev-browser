@@ -12,7 +12,7 @@ from nodriver_kit.core import mouse_drag as core_mouse_drag
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def mouse_drag(tab, start_x: int, start_y: int, end_x: int, end_y: int) -> dict:
     """Drag mouse from one point to another.
 

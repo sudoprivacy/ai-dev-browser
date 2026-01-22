@@ -12,7 +12,7 @@ from nodriver_kit.core import list_tabs
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def tab_list(tab) -> dict:
     """List all open tabs.
 

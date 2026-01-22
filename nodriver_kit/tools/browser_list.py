@@ -10,8 +10,6 @@ Python:
     result = browser_list(mine=True)   # Only this session
 """
 
-import argparse
-import json
 from nodriver_kit.core import (
     find_our_chromes,
     find_nodriver_kit_chromes,
@@ -19,8 +17,10 @@ from nodriver_kit.core import (
     get_pid_on_port,
     is_chrome_in_use,
 )
+from ._cli import as_cli
 
 
+@as_cli(requires_tab=False)
 def browser_list(mine: bool = False) -> dict:
     """List running nodriver-kit Chrome instances.
 
@@ -69,17 +69,5 @@ def browser_list(mine: bool = False) -> dict:
         return {"error": f"List browsers failed: {e}"}
 
 
-def cli_main():
-    parser = argparse.ArgumentParser(description="List running browser instances")
-    parser.add_argument(
-        "--mine", "-m", action="store_true",
-        help="Only show Chromes from this session"
-    )
-    args = parser.parse_args()
-
-    result = browser_list(mine=args.mine)
-    print(json.dumps(result, indent=2))
-
-
 if __name__ == "__main__":
-    cli_main()
+    browser_list.cli_main()

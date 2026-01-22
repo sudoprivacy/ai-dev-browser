@@ -12,7 +12,7 @@ from nodriver_kit.core import switch_tab
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def tab_switch(tab, id: int) -> dict:
     """Switch to a tab by id.
 

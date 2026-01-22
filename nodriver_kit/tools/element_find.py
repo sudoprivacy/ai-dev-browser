@@ -13,7 +13,7 @@ from nodriver_kit.core import find_element, find_elements
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def element_find(tab, selector: str = None, text: str = None, all: bool = False) -> dict:
     """Find element(s) by selector or text.
 

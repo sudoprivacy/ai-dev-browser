@@ -11,7 +11,7 @@ Python:
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def window_focus(tab) -> dict:
     """Bring the browser window to front.
 

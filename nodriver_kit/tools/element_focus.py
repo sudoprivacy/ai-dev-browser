@@ -13,7 +13,7 @@ from nodriver_kit.core import find_element
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def element_focus(tab, selector: str = None, text: str = None) -> dict:
     """Focus an element by selector or text.
 

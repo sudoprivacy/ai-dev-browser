@@ -13,7 +13,7 @@ import json
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def page_eval(tab, js: str) -> dict:
     """Execute JavaScript in the page.
 

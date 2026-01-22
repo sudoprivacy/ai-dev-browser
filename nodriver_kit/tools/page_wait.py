@@ -17,7 +17,7 @@ from ..core.navigation import wait_for_load as core_wait_for_load
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def page_wait(
     tab,
     idle: bool = False,

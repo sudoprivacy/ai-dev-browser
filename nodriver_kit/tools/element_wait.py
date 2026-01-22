@@ -13,7 +13,7 @@ from ..core.elements import wait_for_element as core_wait_for_element
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def element_wait(
     tab,
     text: str = None,

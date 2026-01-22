@@ -12,7 +12,7 @@ from nodriver_kit.core import new_tab
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def tab_new(tab, url: str = None) -> dict:
     """Open a new tab.
 

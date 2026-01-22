@@ -13,7 +13,7 @@ from nodriver_kit import DEFAULT_COOKIES_FILE
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def cookies_load(tab, input: str = None) -> dict:
     """Load cookies from file into browser.
 

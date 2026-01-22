@@ -12,7 +12,7 @@ from nodriver_kit.core import set_download_path
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def download_path(tab, path: str) -> dict:
     """Set the download directory.
 

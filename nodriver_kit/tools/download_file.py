@@ -12,7 +12,7 @@ from nodriver_kit.core import download_file as core_download
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def download_file(tab, url: str, path: str) -> dict:
     """Download a file.
 

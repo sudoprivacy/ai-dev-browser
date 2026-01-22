@@ -12,7 +12,7 @@ from nodriver_kit.core import goto as core_goto
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def page_goto(tab, url: str) -> dict:
     """Navigate to a URL.
 

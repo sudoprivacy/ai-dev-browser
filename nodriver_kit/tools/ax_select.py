@@ -49,7 +49,7 @@ async def _click_by_node_id(tab, node_id) -> bool:
         return False
 
 
-@as_cli
+@as_cli()
 async def ax_select(tab, ref: str = None, node_id: int = None) -> dict:
     """Select and click element by accessibility tree ref or node_id.
 

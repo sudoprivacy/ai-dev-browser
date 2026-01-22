@@ -12,7 +12,7 @@ from nodriver_kit.core import mouse_move as core_mouse_move
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def mouse_move(tab, x: int, y: int) -> dict:
     """Move mouse to coordinates.
 

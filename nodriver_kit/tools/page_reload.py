@@ -12,7 +12,7 @@ from nodriver_kit.core import reload as core_reload
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def page_reload(tab) -> dict:
     """Reload the current page.
 

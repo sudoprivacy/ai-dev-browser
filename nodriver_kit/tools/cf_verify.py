@@ -12,7 +12,7 @@ from nodriver_kit.core.cloudflare import verify_cloudflare
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def cf_verify(tab, max_retries: int = 5) -> dict:
     """Verify and bypass Cloudflare challenge.
 

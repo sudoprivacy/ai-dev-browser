@@ -12,7 +12,7 @@ from nodriver_kit.core import get_local_storage
 from ._cli import as_cli
 
 
-@as_cli
+@as_cli()
 async def storage_get(tab, key: str = None) -> dict:
     """Get localStorage value.
 

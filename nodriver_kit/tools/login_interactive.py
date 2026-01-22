@@ -15,15 +15,15 @@ Behavior:
     4. Session is automatically saved to profile
 """
 
-import argparse
 import asyncio
-import json
 import sys
 from pathlib import Path
+from ._cli import as_cli
 
 DEFAULT_PROFILE_DIR = Path.home() / ".nodriver-kit" / "profiles"
 
 
+@as_cli(requires_tab=False)
 def login_interactive(url: str, profile: str = "default") -> dict:
     """Interactive login - opens browser for manual login.
 
@@ -96,19 +96,5 @@ async def _login_async(url: str, profile: str) -> dict:
                 pass
 
 
-def cli_main():
-    parser = argparse.ArgumentParser(description="Interactive login helper")
-    parser.add_argument("--url", "-u", required=True, help="Login page URL")
-    parser.add_argument(
-        "--profile", "-p", default="default",
-        help="Profile name (stored in ~/.nodriver-kit/profiles/)"
-    )
-    parser.add_argument("--port", type=int, help="(ignored, for CLI consistency)")
-    args = parser.parse_args()
-
-    result = login_interactive(url=args.url, profile=args.profile)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-
-
 if __name__ == "__main__":
-    cli_main()
+    login_interactive.cli_main()
