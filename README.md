@@ -1,6 +1,6 @@
 # nodriver-kit
 
-A browser for AI to develop web automation. Built on [nodriver](https://github.com/ultrafunkamsterdam/nodriver).
+A browser for AI to develop web automation — human-like automation that works seamlessly in a world designed for humans. Built on [nodriver](https://github.com/ultrafunkamsterdam/nodriver).
 
 ## What is this?
 
