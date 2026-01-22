@@ -1,27 +1,38 @@
 # nodriver-kit
 
-A browser for AI agents. Built on [nodriver](https://github.com/ultrafunkamsterdam/nodriver) - human-like automation that works seamlessly in a world designed for humans.
+A browser for AI to develop web automation. Built on [nodriver](https://github.com/ultrafunkamsterdam/nodriver).
 
-## Why nodriver?
+## What is this?
 
-**nodriver mimics human behavior** - making it ideal for:
+**nodriver-kit is designed for AI agents (like Claude) to explore websites and build automation scripts.**
 
-- **AI Agents**: Best choice for AI-driven browser automation. nodriver's human-like interactions avoid detection and work with sites that block traditional automation tools.
-- **UI Testing**: Tests that behave like real users, catching issues that robotic automation misses.
-- **Web Scraping**: Access sites that detect and block Selenium/Puppeteer/Playwright.
+The workflow:
+1. **Explore** (CLI): AI uses tools like `ax_tree`, `page_screenshot` to understand a webpage
+2. **Develop** (Python): AI codifies the automation using the same functions
+3. **Run**: The automation runs reliably with human-like behavior
 
-Unlike Selenium (sends "I'm a robot" signals) or Playwright (fast but detectable), nodriver:
+This is not a traditional testing framework — it's a development environment where AI is the developer.
+
+## Human-like Automation (Priority 1)
+
+**nodriver-kit mimics human behavior** — this is our core feature:
+
+- Randomized delays between actions
+- Human-like mouse movements and clicks
+- Natural typing patterns
+- Passes Cloudflare, bot detection, and CAPTCHAs
+
+Unlike Selenium (sends "I'm a robot" signals) or Playwright (fast but detectable), nodriver-kit:
 - Uses actual Chrome via CDP (Chrome DevTools Protocol)
 - Implements human-like delays and movements
-- Passes Cloudflare, bot detection, and CAPTCHAs
-- Works where other tools fail
+- Works where other automation tools get blocked
 
 ## Features
 
-- **Human-like Automation**: Built on nodriver's anti-detection technology
+- **Human-like Automation**: Randomized delays, natural movements, anti-detection
 - **Browser Management**: Cross-platform Chrome detection, launching, and port management
 - **Worker Pool**: Parallel task execution with multiple browser instances
-- **Dual-Interface Tools**: Every tool works as both CLI command and Python import
+- **Dual-Interface Tools**: Every tool works as both CLI command and Python import (explore → codify)
 - **AI-Friendly API**: Intuitive `run()` method, sensible defaults, clear error messages
 
 ## Installation
