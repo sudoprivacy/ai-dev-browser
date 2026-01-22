@@ -2,6 +2,7 @@
 
 CLI:
     python -m nodriver_kit.tools.browser_start --url "https://example.com"
+    python -m nodriver_kit.tools.browser_start --reuse any  # reuse existing Chrome
     python -m nodriver_kit.tools.browser_start --profile chatgpt --url "https://chatgpt.com"
     python -m nodriver_kit.tools.browser_start --temp --url "https://example.com"
     python -m nodriver_kit.tools.browser_start --headless
@@ -9,12 +10,22 @@ CLI:
 Python:
     from nodriver_kit.tools import browser_start
     result = browser_start(url="https://example.com")  # uses default profile
+    result = browser_start(reuse="any")  # reuse existing Chrome if available
     result = browser_start(profile="chatgpt", url="https://chatgpt.com")
     result = browser_start(temp=True, url="https://example.com")  # temp profile
 """
 
 from pathlib import Path
-from nodriver_kit.core import launch_chrome, get_available_port
+from typing import Literal
+from nodriver_kit.core import (
+    launch_chrome,
+    get_available_port,
+    find_our_chromes,
+    find_nodriver_kit_chromes,
+    find_debug_chromes,
+    is_chrome_in_use,
+    get_pid_on_port,
+)
 from ._cli import as_cli
 
 DEFAULT_PROFILE_DIR = Path.home() / ".nodriver-kit" / "profiles"
@@ -27,8 +38,9 @@ def browser_start(
     url: str = None,
     profile: str = None,
     temp: bool = False,
+    reuse: Literal["none", "this_session", "nodriver_kit", "any"] = "none",
 ) -> dict:
-    """Start a new browser instance.
+    """Start or reuse a browser instance.
 
     Args:
         port: Debug port (auto-assigned if None)
@@ -36,13 +48,32 @@ def browser_start(
         url: Initial URL to open (default: about:blank)
         profile: Profile name (default: "default", stored in ~/.nodriver-kit/profiles/)
         temp: Use temporary profile instead (clean, no persistence)
+        reuse: Reuse strategy:
+            - none: Always start new Chrome (default)
+            - this_session: Reuse Chrome from current session only
+            - nodriver_kit: Reuse any nodriver-kit Chrome
+            - any: Reuse any debugging Chrome
 
     Returns:
-        {"port": ..., "pid": ..., "headless": ..., "url": ..., "profile": ...}
+        {"port": ..., "pid": ..., "reused": bool, ...}
     """
     try:
+        # Try to reuse existing Chrome based on reuse strategy
+        if reuse != "none":
+            reused_port = _find_reusable_chrome(reuse)
+            if reused_port:
+                pid = get_pid_on_port(reused_port)
+                return {
+                    "port": reused_port,
+                    "pid": pid,
+                    "reused": True,
+                    "message": f"Reusing existing Chrome on port {reused_port}",
+                }
+
+        # No reusable Chrome found, start new one
         if port is None:
-            port = get_available_port()
+            # When reuse="none", don't let get_available_port() reuse either
+            port = get_available_port(reuse=(reuse != "none"))
 
         # Determine user data directory
         if temp:
@@ -68,10 +99,41 @@ def browser_start(
             "headless": headless,
             "url": start_url,
             "profile": profile_name,
+            "reused": False,
             "message": f"Browser started on port {port}",
         }
     except Exception as e:
         return {"error": f"Start browser failed: {e}"}
+
+
+def _find_reusable_chrome(reuse: str) -> int | None:
+    """Find a reusable Chrome based on reuse strategy.
+
+    Args:
+        reuse: "this_session", "nodriver_kit", or "any"
+
+    Returns:
+        Port number if found, None otherwise
+    """
+    if reuse == "this_session":
+        # Only current session's Chromes (returns list[int])
+        for port in find_our_chromes(exclude_in_use=False):
+            if not is_chrome_in_use(port):
+                return port
+
+    elif reuse == "nodriver_kit":
+        # Any nodriver-kit Chrome (returns list[int])
+        for port in find_nodriver_kit_chromes():
+            if not is_chrome_in_use(port):
+                return port
+
+    elif reuse == "any":
+        # Any debugging Chrome (returns list[tuple[int, int]])
+        for port, _pid in find_debug_chromes():
+            if not is_chrome_in_use(port):
+                return port
+
+    return None
 
 
 if __name__ == "__main__":

@@ -86,6 +86,43 @@ def find_chrome() -> str | None:
     return None
 
 
+def _ensure_no_session_restore(user_data_dir: Path) -> None:
+    """Ensure Chrome won't restore previous session on startup.
+
+    Sets restore_on_startup=5 in Preferences file, which tells Chrome
+    to open a new tab page instead of restoring previous tabs.
+
+    Args:
+        user_data_dir: Chrome user data directory path
+    """
+    import json
+
+    default_dir = user_data_dir / "Default"
+    default_dir.mkdir(parents=True, exist_ok=True)
+
+    prefs_file = default_dir / "Preferences"
+
+    # Load existing preferences or start fresh
+    prefs = {}
+    if prefs_file.exists():
+        try:
+            prefs = json.loads(prefs_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, IOError):
+            prefs = {}
+
+    # Set restore_on_startup to 5 (open new tab page)
+    if "session" not in prefs:
+        prefs["session"] = {}
+    prefs["session"]["restore_on_startup"] = 5
+
+    # Write back
+    try:
+        prefs_file.write_text(json.dumps(prefs), encoding="utf-8")
+        logger.debug(f"Set restore_on_startup=5 in {prefs_file}")
+    except IOError as e:
+        logger.warning(f"Failed to write Preferences: {e}")
+
+
 def launch_chrome(
     port: int = 9222,
     headless: bool = False,
@@ -136,6 +173,10 @@ def launch_chrome(
         temp_dir = Path(tempfile.gettempdir()) / f"{profile_prefix}{port}"
         temp_dir.mkdir(parents=True, exist_ok=True)
         user_data_dir = str(temp_dir)
+
+    # Disable session restore by setting Preferences
+    # This prevents Chrome from restoring previous tabs on startup
+    _ensure_no_session_restore(Path(user_data_dir))
 
     # Build Chrome arguments (cross-platform)
     args = [

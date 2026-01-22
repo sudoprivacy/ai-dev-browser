@@ -303,21 +303,24 @@ def get_available_port(
     start: int = 9222,
     end: int = 9300,
     exclude: set[int] | None = None,
+    reuse: bool = True,
 ) -> int:
     """
-    Find an available port for Chrome, preferring to reuse existing instances.
+    Find an available port for Chrome.
 
-    Port selection strategy:
+    Port selection strategy (when reuse=True):
     1. First, look for existing Chrome from THIS session not in use
     2. Then, look for ANY nodriver-kit Chrome (from previous runs) not in use
     3. If none found, find an unused port for launching new Chrome
 
-    This strategy preserves login sessions and reduces startup time.
+    When reuse=False, skips directly to finding an unused port.
 
     Args:
         start: Start of port range to search (default: 9222)
         end: End of port range to search (default: 9300)
         exclude: Set of ports to skip (e.g., already assigned to workers)
+        reuse: If True (default), prefer reusing existing Chrome instances.
+               If False, only find unused ports for new Chrome.
 
     Returns:
         An available port number
@@ -327,37 +330,38 @@ def get_available_port(
 
     Example:
         port = get_available_port(exclude={9222, 9223})
-        print(f"Use port {port}")
+        port = get_available_port(reuse=False)  # Always get fresh port
     """
     port_range = (start, end)
 
-    # Strategy 1: Reuse Chrome from our session (not in use)
-    def is_our_available_chrome(port: int) -> bool:
-        is_ours, _ = is_our_chrome_on_port(port)
-        if is_ours and not is_chrome_in_use(port):
-            logger.debug(f"Found reusable Chrome from our session on port {port}")
-            return True
-        return False
+    if reuse:
+        # Strategy 1: Reuse Chrome from our session (not in use)
+        def is_our_available_chrome(port: int) -> bool:
+            is_ours, _ = is_our_chrome_on_port(port)
+            if is_ours and not is_chrome_in_use(port):
+                logger.debug(f"Found reusable Chrome from our session on port {port}")
+                return True
+            return False
 
-    port = _scan_ports(port_range, is_our_available_chrome, exclude=exclude,
-                       check_in_use=True, return_first=True)
-    if port is not None:
-        return port
+        port = _scan_ports(port_range, is_our_available_chrome, exclude=exclude,
+                           check_in_use=True, return_first=True)
+        if port is not None:
+            return port
 
-    # Strategy 2: Reuse ANY nodriver-kit Chrome (not in use)
-    def is_ndk_available_chrome(port: int) -> bool:
-        is_ndk, _ = is_nodriver_kit_chrome_on_port(port)
-        if is_ndk and not is_chrome_in_use(port):
-            logger.debug(f"Found reusable nodriver-kit Chrome (from previous run) on port {port}")
-            return True
-        return False
+        # Strategy 2: Reuse ANY nodriver-kit Chrome (not in use)
+        def is_ndk_available_chrome(port: int) -> bool:
+            is_ndk, _ = is_nodriver_kit_chrome_on_port(port)
+            if is_ndk and not is_chrome_in_use(port):
+                logger.debug(f"Found reusable nodriver-kit Chrome (from previous run) on port {port}")
+                return True
+            return False
 
-    port = _scan_ports(port_range, is_ndk_available_chrome, exclude=exclude,
-                       check_in_use=True, return_first=True)
-    if port is not None:
-        return port
+        port = _scan_ports(port_range, is_ndk_available_chrome, exclude=exclude,
+                           check_in_use=True, return_first=True)
+        if port is not None:
+            return port
 
-    # Strategy 3: Find unused port
+    # Strategy 3 (or only strategy when reuse=False): Find unused port
     def is_unused_port(port: int) -> bool:
         return not is_port_in_use(DEFAULT_DEBUG_HOST, port)
 

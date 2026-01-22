@@ -25,7 +25,15 @@ import functools
 import inspect
 import json
 import sys
-from typing import Callable, get_type_hints
+from typing import Callable, get_type_hints, get_origin, get_args, Literal
+
+
+def _get_literal_choices(hint) -> list | None:
+    """Extract choices from Literal type hint."""
+    origin = get_origin(hint)
+    if origin is Literal:
+        return list(get_args(hint))
+    return None
 
 
 def _get_param_type(hint) -> type:
@@ -34,6 +42,9 @@ def _get_param_type(hint) -> type:
         return lambda x: x.lower() in ("true", "1", "yes")
     if hint in (int, float, str):
         return hint
+    # For Literal, use str (choices will constrain values)
+    if get_origin(hint) is Literal:
+        return str
     return str
 
 
@@ -92,6 +103,13 @@ def _generate_parser(
             }
             if not required:
                 kwargs["default"] = param.default
+
+            # Handle Literal types with choices
+            choices = _get_literal_choices(hint)
+            if choices:
+                kwargs["choices"] = choices
+                kwargs["help"] = f"One of: {', '.join(str(c) for c in choices)}"
+
             parser.add_argument(
                 f"--{name.replace('_', '-')}",
                 required=required,
