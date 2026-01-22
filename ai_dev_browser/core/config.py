@@ -7,12 +7,6 @@ Both tools/ and package code should import from this module.
 from pathlib import Path
 from typing import Literal
 
-# TODO(temp): Remove after macOS migration - 2025-01-23
-_old_dir = Path("~/.nodriver-kit").expanduser()
-if _old_dir.exists():
-    print(f"[ai-dev-browser] Legacy dir found: {_old_dir}")
-    print(f"[ai-dev-browser] Run: mv ~/.nodriver-kit ~/.ai-dev-browser")
-
 # Base directory for all ai-dev-browser data
 DEFAULT_BASE_DIR = Path("~/.ai-dev-browser").expanduser()
 
