@@ -60,6 +60,9 @@ from .profile import ProfileManager, ProfileMode
 # Cloudflare verification (wraps nodriver's native verify_cf)
 from .core.cloudflare import verify_cloudflare
 
+# Overlay dismissal (generic backdrop/modal handling)
+from .core.overlays import dismiss_overlays
+
 # Core browser operations (shared by tools/ and Python code)
 from . import core
 
@@ -114,6 +117,8 @@ __all__ = [
     "ProfileMode",
     # Cloudflare verification
     "verify_cloudflare",
+    # Overlay dismissal
+    "dismiss_overlays",
     # Core operations module
     "core",
     # Re-exported from nodriver (use these instead of importing nodriver directly)

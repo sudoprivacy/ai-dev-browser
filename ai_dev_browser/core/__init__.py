@@ -86,6 +86,9 @@ from .storage import get_local_storage, set_local_storage
 # Download
 from .download import set_download_path, download_file
 
+# Overlays
+from .overlays import dismiss_overlays
+
 __all__ = [
     # Config
     "DEFAULT_BASE_DIR",
@@ -159,4 +162,6 @@ __all__ = [
     # Download
     "set_download_path",
     "download_file",
+    # Overlays
+    "dismiss_overlays",
 ]
