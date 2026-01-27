@@ -20,16 +20,35 @@ from ai_dev_browser.core import get_snapshot
 from ._cli import as_cli
 
 
-def _parse_ref(ref: str) -> tuple[str | None, str]:
-    """Parse ref to extract frame prefix and local ref.
+def _parse_ref(ref: str) -> tuple[str | None, str, int | None]:
+    """Parse ref to extract frame prefix, local ref, and embedded node_id.
+
+    Ref format: "index#nodeId" or "FRAME_xxx:index#nodeId"
+    Examples:
+        "9#214" -> (None, "9", 214)
+        "FRAME_ABC123:9#214" -> ("FRAME_ABC123", "9", 214)
+        "9" -> (None, "9", None)  # legacy format without node_id
 
     Returns:
-        (frame_id_prefix, local_ref) - frame_id_prefix is None for main frame
+        (frame_id_prefix, local_ref, node_id)
     """
-    match = re.match(r"^(FRAME_[^:]+):(.+)$", ref)
-    if match:
-        return match.group(1), match.group(2)
-    return None, ref
+    frame_prefix = None
+    local_ref = ref
+    node_id = None
+
+    # Check for frame prefix
+    frame_match = re.match(r"^(FRAME_[^:]+):(.+)$", ref)
+    if frame_match:
+        frame_prefix = frame_match.group(1)
+        local_ref = frame_match.group(2)
+
+    # Check for embedded node_id
+    node_match = re.match(r"^(\d+)#(\d+)$", local_ref)
+    if node_match:
+        local_ref = node_match.group(1)
+        node_id = int(node_match.group(2))
+
+    return frame_prefix, local_ref, node_id
 
 
 async def _get_frame_id_by_prefix(tab, prefix: str) -> str | None:
@@ -113,13 +132,22 @@ async def ax_select(tab, ref: str = None, node_id: int = None) -> dict:
             else:
                 return {"error": f"Failed to click node_id '{node_id}'"}
 
-        # Otherwise, look up by ref (may be unstable if page changed)
+        # Otherwise, look up by ref
         if ref is None:
             return {"error": "Must specify --ref or node_id"}
 
-        # Parse ref to check for frame prefix
-        frame_prefix, local_ref = _parse_ref(ref)
+        # Parse ref to extract frame prefix, local ref, and embedded node_id
+        frame_prefix, local_ref, embedded_node_id = _parse_ref(ref)
 
+        # If ref contains embedded node_id, use it directly (most reliable)
+        if embedded_node_id is not None:
+            success = await _click_by_node_id(tab, embedded_node_id)
+            if success:
+                return {"clicked": True, "ref": ref, "node_id": embedded_node_id}
+            else:
+                return {"error": f"Failed to click ref '{ref}' (node_id={embedded_node_id})"}
+
+        # Fallback: re-fetch snapshot and find by ref (less reliable)
         # Get frame ID if this is an iframe ref
         frame_id = None
         if frame_prefix:
@@ -130,17 +158,28 @@ async def ax_select(tab, ref: str = None, node_id: int = None) -> dict:
         # Get accessibility tree for the appropriate frame
         elements = await get_snapshot(tab, frame_id=frame_id)
 
-        # Find element by local ref (without frame prefix)
+        # Find element by local ref (without frame prefix or node_id suffix)
         target = None
         for el in elements:
-            if el.get("ref") == local_ref:
+            # Match by index part only (el.ref might be "9#214", we want to match "9")
+            el_ref = el.get("ref", "")
+            el_index = el_ref.split("#")[0] if "#" in el_ref else el_ref
+            if el_index == local_ref:
                 target = el
                 break
 
         if not target:
             return {"error": f"Element with ref '{ref}' not found"}
 
-        target_node_id = target.get("_nodeId")
+        # Extract node_id from target's ref
+        target_ref = target.get("ref", "")
+        target_node_id = None
+        if "#" in target_ref:
+            try:
+                target_node_id = int(target_ref.split("#")[1])
+            except ValueError:
+                pass
+
         if not target_node_id:
             return {"error": f"Element ref '{ref}' has no nodeId"}
 
@@ -150,7 +189,7 @@ async def ax_select(tab, ref: str = None, node_id: int = None) -> dict:
             return {
                 "clicked": True,
                 "element": {
-                    "ref": ref,  # Return the full ref including frame prefix
+                    "ref": target.get("ref"),
                     "role": target.get("role"),
                     "name": target.get("name"),
                 }

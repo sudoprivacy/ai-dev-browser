@@ -90,8 +90,24 @@ def _format_ax_node(
     # Build node info
     if role and (name or is_interactable):
         ref_counter[0] += 1
+
+        # Get node_id first so we can encode it in ref
+        node_id = None
+        if hasattr(node, "backend_dom_node_id") and node.backend_dom_node_id:
+            node_id = node.backend_dom_node_id
+            # Extract int from BackendNodeId
+            try:
+                node_id = int(node_id)
+            except (TypeError, ValueError):
+                node_id = None
+
+        # Build ref with embedded node_id: "9#214" or just "9" if no node_id
+        ref_str = str(ref_counter[0])
+        if node_id is not None:
+            ref_str = f"{ref_counter[0]}#{node_id}"
+
         info = {
-            "ref": str(ref_counter[0]),
+            "ref": ref_str,
             "role": role,
         }
 
@@ -119,9 +135,6 @@ def _format_ax_node(
 
         if role == "heading" and props.get("level"):
             info["level"] = props["level"]
-
-        if hasattr(node, "backend_dom_node_id") and node.backend_dom_node_id:
-            info["_nodeId"] = node.backend_dom_node_id
 
         results.append(info)
 
