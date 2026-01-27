@@ -2,6 +2,7 @@
 
 import nodriver
 import nodriver.cdp.accessibility as accessibility
+import nodriver.cdp.page as page
 
 
 def _format_ax_node(
@@ -136,37 +137,42 @@ def _format_ax_node(
     return results
 
 
-async def get_snapshot(
-    tab: nodriver.Tab,
-    interactable_only: bool = False,
-    max_depth: int = 10,
+async def _get_all_frames(tab) -> list[dict]:
+    """Get all frames in the page."""
+    try:
+        result = await tab.send(page.get_frame_tree())
+        frames = []
+
+        def collect_frames(frame_tree, is_main=True):
+            frame = frame_tree.frame
+            frames.append(
+                {
+                    "id": frame.id_,
+                    "url": frame.url,
+                    "is_main": is_main,
+                }
+            )
+            if frame_tree.child_frames:
+                for child in frame_tree.child_frames:
+                    collect_frames(child, is_main=False)
+
+        collect_frames(result)
+        return frames
+    except Exception:
+        return []
+
+
+async def _get_frame_nodes(
+    tab,
+    frame_id: str | None,
+    interactable_only: bool,
+    max_depth: int,
+    ref_prefix: str = "",
 ) -> list:
-    """Get AI-friendly accessibility tree snapshot.
+    """Get accessibility nodes for a specific frame."""
+    frame = page.FrameId(frame_id) if frame_id else None
+    result = await tab.send(accessibility.get_full_ax_tree(frame_id=frame))
 
-    This is the key AI feature - returns semantic page structure
-    instead of raw HTML.
-
-    Args:
-        tab: Tab instance
-        interactable_only: If True, only return buttons, links, inputs, etc.
-        max_depth: Maximum tree depth to traverse
-
-    Returns:
-        List of nodes with role, name, and state info
-
-    Example:
-        [
-            {"ref": "1", "role": "button", "name": "Sign in"},
-            {"ref": "2", "role": "textbox", "name": "Email", "focused": True},
-        ]
-    """
-    # Enable accessibility domain
-    await tab.send(accessibility.enable())
-
-    # Get full tree
-    result = await tab.send(accessibility.get_full_ax_tree())
-
-    # Handle both list and object with .nodes attribute
     if not result:
         return []
 
@@ -174,7 +180,6 @@ async def get_snapshot(
     if not ax_nodes:
         return []
 
-    # Format nodes
     ref_counter = [0]
     nodes = []
 
@@ -188,7 +193,12 @@ async def get_snapshot(
             )
             nodes.extend(formatted)
 
-    # Remove duplicates
+    # Add prefix to refs for non-main frames
+    if ref_prefix:
+        for n in nodes:
+            n["ref"] = f"{ref_prefix}:{n['ref']}"
+
+    # Remove duplicates within this frame
     seen_refs = set()
     unique_nodes = []
     for n in nodes:
@@ -198,3 +208,79 @@ async def get_snapshot(
             unique_nodes.append(n)
 
     return unique_nodes
+
+
+async def get_snapshot(
+    tab: nodriver.Tab,
+    interactable_only: bool = False,
+    max_depth: int = 10,
+    frame_id: str | None = None,
+    include_iframes: bool = True,
+) -> list:
+    """Get AI-friendly accessibility tree snapshot.
+
+    This is the key AI feature - returns semantic page structure
+    instead of raw HTML.
+
+    Args:
+        tab: Tab instance
+        interactable_only: If True, only return buttons, links, inputs, etc.
+        max_depth: Maximum tree depth to traverse
+        frame_id: If specified, only get accessibility tree for this frame.
+        include_iframes: If True (default), include all iframes in the result.
+                         Iframe elements have refs like "FRAME_xxx:1".
+
+    Returns:
+        List of nodes with role, name, and state info.
+        Main frame elements have simple refs: "1", "2", etc.
+        Iframe elements have prefixed refs: "FRAME_ABC123:1", "FRAME_ABC123:2", etc.
+
+    Example:
+        [
+            {"ref": "1", "role": "button", "name": "Sign in"},
+            {"ref": "2", "role": "textbox", "name": "Email", "focused": True},
+            {"ref": "FRAME_ABC123:1", "role": "button", "name": "Submit"},
+        ]
+    """
+    # Enable accessibility domain
+    await tab.send(accessibility.enable())
+
+    # If specific frame requested, just get that frame
+    if frame_id:
+        return await _get_frame_nodes(
+            tab, frame_id, interactable_only, max_depth, ref_prefix=""
+        )
+
+    # Get main frame nodes
+    all_nodes = await _get_frame_nodes(
+        tab, None, interactable_only, max_depth, ref_prefix=""
+    )
+
+    # If not including iframes, return just main frame
+    if not include_iframes:
+        return all_nodes
+
+    # Get all frames and add iframe content
+    frames = await _get_all_frames(tab)
+    for frame in frames:
+        if frame["is_main"]:
+            continue  # Already got main frame
+
+        # Skip about:blank and other non-content frames
+        if frame["url"].startswith("about:"):
+            continue
+
+        try:
+            iframe_nodes = await _get_frame_nodes(
+                tab,
+                frame["id"],
+                interactable_only,
+                max_depth,
+                ref_prefix=f"FRAME_{frame['id'][:8]}",  # Use first 8 chars of frame ID
+            )
+            all_nodes.extend(iframe_nodes)
+        except Exception:
+            # Some frames may not be accessible, skip them
+            pass
+
+    return all_nodes
