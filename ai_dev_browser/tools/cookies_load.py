@@ -1,12 +1,4 @@
-"""Load cookies from file into browser.
-
-CLI:
-    python -m ai_dev_browser.tools.cookies_load --input "cookies.dat"
-
-Python:
-    from ai_dev_browser.tools import cookies_load
-    result = await cookies_load(tab, input="cookies.dat")
-"""
+"""Load cookies from file into browser."""
 
 from pathlib import Path
 from ai_dev_browser import DEFAULT_COOKIES_FILE
@@ -20,9 +12,6 @@ async def cookies_load(tab, input: str = None) -> dict:
     Args:
         tab: Browser tab
         input: Input file path (default: ~/.ai-dev-browser/cookies.dat)
-
-    Returns:
-        {"path": ..., "loaded": True}
     """
     try:
         cookies_path = Path(input or DEFAULT_COOKIES_FILE).expanduser()

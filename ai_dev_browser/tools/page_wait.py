@@ -1,14 +1,4 @@
-"""Wait for page to be ready.
-
-CLI:
-    python -m ai_dev_browser.tools.page_wait
-    python -m ai_dev_browser.tools.page_wait --idle
-    python -m ai_dev_browser.tools.page_wait --sleep 3
-
-Python:
-    from ai_dev_browser.tools import page_wait
-    result = await page_wait(tab, idle=True)
-"""
+"""Wait for page to be ready."""
 
 import asyncio
 import time
@@ -31,9 +21,6 @@ async def page_wait(
         idle: Wait for network idle (document.readyState == complete)
         sleep: Just sleep for N seconds
         timeout: Maximum wait time in seconds
-
-    Returns:
-        {"ready": True, "state": ...}
     """
     if sleep:
         await asyncio.sleep(sleep)

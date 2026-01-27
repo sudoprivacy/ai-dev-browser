@@ -1,12 +1,4 @@
-"""Navigate to a URL.
-
-CLI:
-    python -m ai_dev_browser.tools.page_goto --url "https://example.com"
-
-Python:
-    from ai_dev_browser.tools import page_goto
-    result = await page_goto(tab, url="https://example.com")
-"""
+"""Navigate to a URL."""
 
 from ai_dev_browser.core import goto as core_goto
 from ._cli import as_cli
@@ -19,9 +11,6 @@ async def page_goto(tab, url: str) -> dict:
     Args:
         tab: Browser tab
         url: URL to navigate to
-
-    Returns:
-        {"url": ..., "title": ...} on success
     """
     try:
         await core_goto(tab, url)

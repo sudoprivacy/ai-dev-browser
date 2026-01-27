@@ -1,13 +1,4 @@
-"""Send CDP command.
-
-CLI:
-    python -m ai_dev_browser.tools.cdp_send --method "Browser.getVersion"
-    python -m ai_dev_browser.tools.cdp_send --method "DOM.getDocument" --params '{"depth": 1}'
-
-Python:
-    from ai_dev_browser.tools import cdp_send
-    result = await cdp_send(tab, method="Browser.getVersion")
-"""
+"""Send CDP command."""
 
 import json as json_module
 import re
@@ -52,9 +43,6 @@ async def cdp_send(tab, method: str, params: str = None) -> dict:
         tab: Browser tab
         method: CDP method name (e.g., "Browser.getVersion", "DOM.getDocument")
         params: JSON string of parameters
-
-    Returns:
-        CDP response
     """
     try:
         # Parse params if provided

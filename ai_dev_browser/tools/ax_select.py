@@ -1,14 +1,4 @@
-"""Select and click element by accessibility tree ref.
-
-CLI:
-    python -m ai_dev_browser.tools.ax_select --ref 5
-    python -m ai_dev_browser.tools.ax_select --ref "FRAME_ABC123:5"
-
-Python:
-    from ai_dev_browser.tools import ax_select
-    result = await ax_select(tab, ref="5")
-    result = await ax_select(tab, ref="FRAME_ABC123:5")  # for iframe elements
-"""
+"""Select and click element by accessibility tree ref."""
 
 import re
 
@@ -119,11 +109,12 @@ async def ax_select(tab, ref: str = None, node_id: int = None) -> dict:
         tab: Browser tab
         ref: Element ref from ax_tree (e.g., "5" or "FRAME_ABC123:5")
         node_id: Backend node ID from ax_tree's _nodeId - direct click, no re-fetch
-
-    Returns:
-        {"clicked": True, "element": {...}} on success
     """
     try:
+        # Must specify at least one of ref or node_id
+        if ref is None and node_id is None:
+            return {"error": "Must specify --ref or --node-id"}
+
         # If node_id provided directly, use it (stable, no re-fetch)
         if node_id is not None:
             success = await _click_by_node_id(tab, node_id)
@@ -131,10 +122,6 @@ async def ax_select(tab, ref: str = None, node_id: int = None) -> dict:
                 return {"clicked": True, "node_id": node_id}
             else:
                 return {"error": f"Failed to click node_id '{node_id}'"}
-
-        # Otherwise, look up by ref
-        if ref is None:
-            return {"error": "Must specify --ref or node_id"}
 
         # Parse ref to extract frame prefix, local ref, and embedded node_id
         frame_prefix, local_ref, embedded_node_id = _parse_ref(ref)

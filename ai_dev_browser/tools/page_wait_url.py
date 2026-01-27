@@ -1,13 +1,4 @@
-"""Wait for URL to match a pattern.
-
-CLI:
-    python -m ai_dev_browser.tools.page_wait_url --pattern "/dashboard"
-    python -m ai_dev_browser.tools.page_wait_url --exact "https://example.com/login"
-
-Python:
-    from ai_dev_browser.tools import page_wait_url
-    result = await page_wait_url(tab, pattern="/dashboard")
-"""
+"""Wait for URL to match a pattern."""
 
 from ..core.navigation import wait_for_url as core_wait_for_url
 from ._cli import as_cli
@@ -27,9 +18,6 @@ async def page_wait_url(
         pattern: URL pattern (substring or regex)
         exact: Exact URL to match
         timeout: Maximum wait time in seconds
-
-    Returns:
-        {"matched": True, "url": ..., "elapsed": ...}
     """
     if not pattern and not exact:
         return {"error": "Must specify --pattern or --exact"}

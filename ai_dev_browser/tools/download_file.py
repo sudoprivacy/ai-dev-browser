@@ -1,12 +1,4 @@
-"""Download a file.
-
-CLI:
-    python -m ai_dev_browser.tools.download_file --url "https://example.com/file.pdf" --path "/tmp/file.pdf"
-
-Python:
-    from ai_dev_browser.tools import download_file
-    result = await download_file(tab, url="https://example.com/file.pdf", path="/tmp/file.pdf")
-"""
+"""Download a file."""
 
 from ai_dev_browser.core import download_file as core_download
 from ._cli import as_cli
@@ -20,9 +12,6 @@ async def download_file(tab, url: str, path: str) -> dict:
         tab: Browser tab
         url: URL to download
         path: Local path to save
-
-    Returns:
-        {"downloaded": True, "path": ...}
     """
     try:
         await core_download(tab, url=url, output=path)

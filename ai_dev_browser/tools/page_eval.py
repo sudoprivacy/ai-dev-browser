@@ -1,13 +1,4 @@
-"""Execute JavaScript in the page.
-
-CLI:
-    python -m ai_dev_browser.tools.page_eval --js "document.title"
-    python -m ai_dev_browser.tools.page_eval --js "window.scrollTo(0, 100)"
-
-Python:
-    from ai_dev_browser.tools import page_eval
-    result = await page_eval(tab, js="document.title")
-"""
+"""Execute JavaScript in the page."""
 
 import json
 from ._cli import as_cli
@@ -20,9 +11,6 @@ async def page_eval(tab, js: str) -> dict:
     Args:
         tab: Browser tab
         js: JavaScript code to execute
-
-    Returns:
-        {"result": ...} with the JS return value
     """
     try:
         result = await tab.evaluate(js)

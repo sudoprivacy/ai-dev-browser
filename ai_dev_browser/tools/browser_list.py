@@ -1,14 +1,4 @@
-"""List running browser instances.
-
-CLI:
-    python -m ai_dev_browser.tools.browser_list         # All ai-dev-browser Chromes
-    python -m ai_dev_browser.tools.browser_list --mine  # Only this session
-
-Python:
-    from ai_dev_browser.tools import browser_list
-    result = browser_list()            # All ai-dev-browser Chromes
-    result = browser_list(mine=True)   # Only this session
-"""
+"""List running browser instances."""
 
 from ai_dev_browser.core import (
     find_our_chromes,
@@ -25,11 +15,7 @@ def browser_list(mine: bool = False) -> dict:
     """List running ai-dev-browser Chrome instances.
 
     Args:
-        mine: If True, only show Chromes from this session.
-              If False (default), show all ai-dev-browser Chromes.
-
-    Returns:
-        {"this_session": [...], "other_sessions": [...], "count": ...}
+        mine: If True, only show Chromes from this session
     """
     try:
         session_id = get_session_id()

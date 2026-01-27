@@ -1,12 +1,4 @@
-"""Verify and bypass Cloudflare challenge.
-
-CLI:
-    python -m ai_dev_browser.tools.cf_verify
-
-Python:
-    from ai_dev_browser.tools import cf_verify
-    result = await cf_verify(tab)
-"""
+"""Verify and bypass Cloudflare challenge."""
 
 from ai_dev_browser.core.cloudflare import verify_cloudflare
 from ._cli import as_cli
@@ -14,16 +6,11 @@ from ._cli import as_cli
 
 @as_cli()
 async def cf_verify(tab, max_retries: int = 5) -> dict:
-    """Verify and bypass Cloudflare challenge.
-
-    Requires: pip install opencv-python
+    """Verify and bypass Cloudflare challenge. Requires: pip install opencv-python
 
     Args:
         tab: Browser tab
         max_retries: Maximum retry attempts
-
-    Returns:
-        {"verified": True} on success
     """
     try:
         success = await verify_cloudflare(tab, max_retries=max_retries)

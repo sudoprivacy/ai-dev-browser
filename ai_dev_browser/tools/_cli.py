@@ -36,6 +36,51 @@ def _get_literal_choices(hint) -> list | None:
     return None
 
 
+def _parse_docstring_args(docstring: str) -> dict[str, str]:
+    """Extract arg descriptions from docstring Args section.
+
+    Parses Google-style docstrings:
+        Args:
+            param_name: Description here
+            another_param: Another description
+    """
+    if not docstring:
+        return {}
+
+    args_section = {}
+    in_args = False
+    current_arg = None
+    current_desc = []
+
+    for line in docstring.split('\n'):
+        stripped = line.strip()
+
+        if stripped == 'Args:':
+            in_args = True
+            continue
+        elif in_args and stripped and not stripped[0].isspace() and stripped.endswith(':'):
+            # New section like "Returns:" or "Raises:"
+            if current_arg:
+                args_section[current_arg] = ' '.join(current_desc).strip()
+            break
+        elif in_args:
+            # Check if this is a new arg definition (name: description)
+            if ': ' in stripped:
+                if current_arg:
+                    args_section[current_arg] = ' '.join(current_desc).strip()
+                parts = stripped.split(': ', 1)
+                current_arg = parts[0].strip()
+                current_desc = [parts[1].strip()] if len(parts) > 1 else []
+            elif current_arg and stripped:
+                # Continuation of previous arg description
+                current_desc.append(stripped)
+
+    if current_arg:
+        args_section[current_arg] = ' '.join(current_desc).strip()
+
+    return args_section
+
+
 def _get_param_type(hint) -> type:
     """Convert type hint to argparse type."""
     if hint is bool:
@@ -56,6 +101,7 @@ def _generate_parser(
     """Generate argparse parser from function signature."""
     sig = inspect.signature(func)
     hints = get_type_hints(func) if hasattr(func, "__annotations__") else {}
+    arg_descriptions = _parse_docstring_args(func.__doc__ or "")
 
     parser = argparse.ArgumentParser(
         description=description or func.__doc__,
@@ -80,14 +126,15 @@ def _generate_parser(
         param_type = _get_param_type(hint)
         required = param.default is inspect.Parameter.empty
 
-        # Generate help text from type hint
-        if hasattr(hint, "__name__"):
-            help_text = f"({hint.__name__})"
-        elif hasattr(hint, "__origin__"):
-            # Handle Optional, Union, etc.
-            help_text = f"({str(hint)})"
-        else:
-            help_text = "(str)"
+        # Get help text from docstring Args section, fallback to type hint
+        help_text = arg_descriptions.get(name)
+        if not help_text:
+            if hasattr(hint, "__name__"):
+                help_text = f"({hint.__name__})"
+            elif hasattr(hint, "__origin__"):
+                help_text = f"({str(hint)})"
+            else:
+                help_text = "(str)"
 
         if hint is bool:
             # For bool, use store_true/store_false action

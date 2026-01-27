@@ -1,19 +1,4 @@
-"""Start a browser instance.
-
-CLI:
-    python -m ai_dev_browser.tools.browser_start --url "https://example.com"
-    python -m ai_dev_browser.tools.browser_start --reuse any  # reuse existing Chrome
-    python -m ai_dev_browser.tools.browser_start --profile chatgpt --url "https://chatgpt.com"
-    python -m ai_dev_browser.tools.browser_start --temp --url "https://example.com"
-    python -m ai_dev_browser.tools.browser_start --headless
-
-Python:
-    from ai_dev_browser.tools import browser_start
-    result = browser_start(url="https://example.com")  # uses default profile
-    result = browser_start(reuse="any")  # reuse existing Chrome if available
-    result = browser_start(profile="chatgpt", url="https://chatgpt.com")
-    result = browser_start(temp=True, url="https://example.com")  # temp profile
-"""
+"""Start a browser instance."""
 
 from pathlib import Path
 from ai_dev_browser.core import (
@@ -48,14 +33,7 @@ def browser_start(
         url: Initial URL to open (default: about:blank)
         profile: Profile name (default: "default", stored in ~/.ai-dev-browser/profiles/)
         temp: Use temporary profile instead (clean, no persistence)
-        reuse: Reuse strategy:
-            - none: Always start new Chrome (default)
-            - this_session: Reuse Chrome from current session only
-            - ai_dev_browser: Reuse any ai-dev-browser Chrome
-            - any: Reuse any debugging Chrome
-
-    Returns:
-        {"port": ..., "pid": ..., "reused": bool, ...}
+        reuse: Reuse strategy - none/this_session/ai_dev_browser/any
     """
     try:
         # Try to reuse existing Chrome based on reuse strategy

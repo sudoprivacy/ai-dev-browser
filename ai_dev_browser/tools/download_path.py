@@ -1,12 +1,4 @@
-"""Set download path.
-
-CLI:
-    python -m ai_dev_browser.tools.download_path --path "/tmp/downloads"
-
-Python:
-    from ai_dev_browser.tools import download_path
-    result = await download_path(tab, path="/tmp/downloads")
-"""
+"""Set download path."""
 
 from ai_dev_browser.core import set_download_path
 from ._cli import as_cli
@@ -19,9 +11,6 @@ async def download_path(tab, path: str) -> dict:
     Args:
         tab: Browser tab
         path: Download directory path
-
-    Returns:
-        {"path": ...}
     """
     try:
         await set_download_path(tab, path=path)

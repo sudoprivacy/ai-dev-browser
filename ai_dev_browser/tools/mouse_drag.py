@@ -1,12 +1,4 @@
-"""Drag mouse from one point to another.
-
-CLI:
-    python -m ai_dev_browser.tools.mouse_drag --start-x 100 --start-y 100 --end-x 200 --end-y 200
-
-Python:
-    from ai_dev_browser.tools import mouse_drag
-    result = await mouse_drag(tab, start_x=100, start_y=100, end_x=200, end_y=200)
-"""
+"""Drag mouse from one point to another."""
 
 from ai_dev_browser.core import mouse_drag as core_mouse_drag
 from ._cli import as_cli
@@ -22,9 +14,6 @@ async def mouse_drag(tab, start_x: int, start_y: int, end_x: int, end_y: int) ->
         start_y: Start Y coordinate
         end_x: End X coordinate
         end_y: End Y coordinate
-
-    Returns:
-        {"dragged": True, ...} on success
     """
     try:
         await core_mouse_drag(tab, from_x=start_x, from_y=start_y, to_x=end_x, to_y=end_y)

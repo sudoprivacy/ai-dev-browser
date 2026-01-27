@@ -1,16 +1,4 @@
-"""Find elements by XPath.
-
-CLI:
-    python -m ai_dev_browser.tools.element_xpath --expr "//button[@type='submit']"
-
-Python:
-    from ai_dev_browser.tools import element_xpath
-    result = await element_xpath(tab, expr="//button[@type='submit']")
-
-Note:
-    Git Bash/MSYS2 on Windows converts // to / (UNC path handling).
-    Use PowerShell or cmd.exe for XPath expressions starting with //.
-"""
+"""Find elements by XPath."""
 
 from ai_dev_browser.core import find_by_xpath
 from ._cli import as_cli
@@ -23,9 +11,6 @@ async def element_xpath(tab, expr: str) -> dict:
     Args:
         tab: Browser tab
         expr: XPath expression
-
-    Returns:
-        {"found": True, "count": ...} on success
     """
     try:
         elements = await find_by_xpath(tab, xpath=expr)

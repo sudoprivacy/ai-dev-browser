@@ -1,12 +1,4 @@
-"""Get page info.
-
-CLI:
-    python -m ai_dev_browser.tools.page_info
-
-Python:
-    from ai_dev_browser.tools import page_info
-    result = await page_info(tab)
-"""
+"""Get page info."""
 
 from ai_dev_browser.core import get_page_info
 from ._cli import as_cli
@@ -18,9 +10,6 @@ async def page_info(tab) -> dict:
 
     Args:
         tab: Browser tab
-
-    Returns:
-        {"url": ..., "title": ..., "ready": ..., "state": ...}
     """
     try:
         return await get_page_info(tab)

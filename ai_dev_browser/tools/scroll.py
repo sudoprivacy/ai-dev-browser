@@ -1,14 +1,4 @@
-"""Scroll the page.
-
-CLI:
-    python -m ai_dev_browser.tools.scroll --direction down
-    python -m ai_dev_browser.tools.scroll --to-bottom
-    python -m ai_dev_browser.tools.scroll --to-top
-
-Python:
-    from ai_dev_browser.tools import scroll
-    result = await scroll(tab, direction="down")
-"""
+"""Scroll the page."""
 
 from ai_dev_browser.core import scroll as core_scroll
 from ._cli import as_cli
@@ -30,9 +20,6 @@ async def scroll(
         amount: Scroll amount (percentage)
         to_bottom: Scroll to bottom of page
         to_top: Scroll to top of page
-
-    Returns:
-        {"scrolled": True} on success
     """
     try:
         await core_scroll(

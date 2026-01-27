@@ -1,27 +1,14 @@
-"""Bring browser window to front.
-
-CLI:
-    python -m ai_dev_browser.tools.window_focus
-
-Python:
-    from ai_dev_browser.tools import window_focus
-    result = await window_focus(tab)
-"""
+"""Bring browser window to front."""
 
 from ._cli import as_cli
 
 
 @as_cli()
 async def window_focus(tab) -> dict:
-    """Bring the browser window to front.
-
-    Useful when the browser window is hidden behind other windows.
+    """Bring the browser window to front. Useful when hidden behind other windows.
 
     Args:
         tab: Browser tab
-
-    Returns:
-        {"focused": True} on success
     """
     try:
         await tab.bring_to_front()

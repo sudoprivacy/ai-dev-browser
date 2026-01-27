@@ -1,19 +1,4 @@
-"""Interactive login helper - opens browser for manual login.
-
-CLI:
-    python -m ai_dev_browser.tools.login_interactive --url "https://example.com/login"
-    python -m ai_dev_browser.tools.login_interactive --url "https://grok.com" --profile grok
-
-Python:
-    from ai_dev_browser.tools import login_interactive
-    result = login_interactive(url="https://example.com/login", profile="default")
-
-Behavior:
-    1. Opens browser with persistent profile
-    2. Navigates to the login URL
-    3. Waits for you to login and close the browser
-    4. Session is automatically saved to profile
-"""
+"""Interactive login helper - opens browser for manual login."""
 
 import asyncio
 import sys
@@ -30,9 +15,6 @@ def login_interactive(url: str, profile: str = "default") -> dict:
     Args:
         url: Login page URL
         profile: Profile name for persistent storage
-
-    Returns:
-        {"success": True, "profile_dir": ...}
     """
     return asyncio.run(_login_async(url, profile))
 

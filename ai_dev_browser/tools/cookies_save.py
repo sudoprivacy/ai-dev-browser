@@ -1,12 +1,4 @@
-"""Save browser cookies to file.
-
-CLI:
-    python -m ai_dev_browser.tools.cookies_save --output "cookies.dat"
-
-Python:
-    from ai_dev_browser.tools import cookies_save
-    result = await cookies_save(tab, output="cookies.dat")
-"""
+"""Save browser cookies to file."""
 
 from pathlib import Path
 from ai_dev_browser import DEFAULT_COOKIES_FILE
@@ -21,9 +13,6 @@ async def cookies_save(tab, output: str = None, pattern: str = None) -> dict:
         tab: Browser tab
         output: Output file path (default: ~/.ai-dev-browser/cookies.dat)
         pattern: Only save cookies matching pattern
-
-    Returns:
-        {"path": ..., "saved": True}
     """
     try:
         cookies_path = Path(output or DEFAULT_COOKIES_FILE).expanduser()

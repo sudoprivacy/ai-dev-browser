@@ -1,12 +1,4 @@
-"""Set localStorage value.
-
-CLI:
-    python -m ai_dev_browser.tools.storage_set --key "token" --value "abc123"
-
-Python:
-    from ai_dev_browser.tools import storage_set
-    result = await storage_set(tab, key="token", value="abc123")
-"""
+"""Set localStorage value."""
 
 from ai_dev_browser.core import set_local_storage
 from ._cli import as_cli
@@ -20,9 +12,6 @@ async def storage_set(tab, key: str, value: str) -> dict:
         tab: Browser tab
         key: Key to set
         value: Value to set
-
-    Returns:
-        {"set": True, "key": ..., "value": ...}
     """
     try:
         await set_local_storage(tab, items={key: value})

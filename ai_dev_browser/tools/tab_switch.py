@@ -1,12 +1,4 @@
-"""Switch to a tab.
-
-CLI:
-    python -m ai_dev_browser.tools.tab_switch --id 1
-
-Python:
-    from ai_dev_browser.tools import tab_switch
-    result = await tab_switch(tab, id=1)
-"""
+"""Switch to a tab."""
 
 from ai_dev_browser.core import switch_tab
 from ._cli import as_cli
@@ -19,9 +11,6 @@ async def tab_switch(tab, id: int) -> dict:
     Args:
         tab: Browser tab
         id: Tab id (from tab_list output)
-
-    Returns:
-        {"switched": True, "id": ...}
     """
     try:
         await switch_tab(tab, tab_id=id)

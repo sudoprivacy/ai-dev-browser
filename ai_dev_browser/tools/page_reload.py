@@ -1,12 +1,4 @@
-"""Reload the page.
-
-CLI:
-    python -m ai_dev_browser.tools.page_reload
-
-Python:
-    from ai_dev_browser.tools import page_reload
-    result = await page_reload(tab)
-"""
+"""Reload the page."""
 
 from ai_dev_browser.core import reload as core_reload
 from ._cli import as_cli
@@ -18,9 +10,6 @@ async def page_reload(tab) -> dict:
 
     Args:
         tab: Browser tab
-
-    Returns:
-        {"reloaded": True} on success
     """
     try:
         await core_reload(tab)

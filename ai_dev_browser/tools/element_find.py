@@ -1,13 +1,4 @@
-"""Find elements on the page.
-
-CLI:
-    python -m ai_dev_browser.tools.element_find --text "Login"
-    python -m ai_dev_browser.tools.element_find --selector "button.submit"
-
-Python:
-    from ai_dev_browser.tools import element_find
-    result = await element_find(tab, text="Login")
-"""
+"""Find elements on the page."""
 
 from ai_dev_browser.core import find_element, find_elements
 from ._cli import as_cli
@@ -22,9 +13,6 @@ async def element_find(tab, selector: str = None, text: str = None, all: bool = 
         selector: CSS selector
         text: Text content to find
         all: If True, find all matching elements
-
-    Returns:
-        {"found": True, "count": ...} on success
     """
     if not selector and not text:
         return {"error": "Must specify --selector or --text"}

@@ -1,12 +1,4 @@
-"""List open tabs.
-
-CLI:
-    python -m ai_dev_browser.tools.tab_list
-
-Python:
-    from ai_dev_browser.tools import tab_list
-    result = await tab_list(tab)
-"""
+"""List open tabs."""
 
 from ai_dev_browser.core import list_tabs
 from ._cli import as_cli
@@ -18,9 +10,6 @@ async def tab_list(tab) -> dict:
 
     Args:
         tab: Browser tab
-
-    Returns:
-        {"tabs": [...], "count": ...}
     """
     try:
         tabs = list_tabs(tab)

@@ -1,12 +1,4 @@
-"""Get page HTML.
-
-CLI:
-    python -m ai_dev_browser.tools.page_html
-
-Python:
-    from ai_dev_browser.tools import page_html
-    result = await page_html(tab)
-"""
+"""Get page HTML."""
 
 from ._cli import as_cli
 
@@ -18,9 +10,6 @@ async def page_html(tab, outer: bool = False) -> dict:
     Args:
         tab: Browser tab
         outer: If True, get outerHTML of document element
-
-    Returns:
-        {"html": ..., "length": ...}
     """
     try:
         if outer:

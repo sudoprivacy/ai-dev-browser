@@ -1,13 +1,4 @@
-"""Click an element on the page.
-
-CLI:
-    python -m ai_dev_browser.tools.element_click --selector "button.submit"
-    python -m ai_dev_browser.tools.element_click --text "Login"
-
-Python:
-    from ai_dev_browser.tools import element_click
-    result = await element_click(tab, selector="button.submit")
-"""
+"""Click an element on the page."""
 
 from ai_dev_browser.core import click as core_click
 from ._cli import as_cli
@@ -21,9 +12,6 @@ async def element_click(tab, selector: str = None, text: str = None) -> dict:
         tab: Browser tab
         selector: CSS selector
         text: Text content to find
-
-    Returns:
-        {"clicked": True} on success
     """
     if not selector and not text:
         return {"error": "Must specify --selector or --text"}

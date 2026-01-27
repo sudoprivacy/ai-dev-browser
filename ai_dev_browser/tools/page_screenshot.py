@@ -1,13 +1,4 @@
-"""Take a screenshot of the page.
-
-CLI:
-    python -m ai_dev_browser.tools.page_screenshot --path "screenshot.png"
-    python -m ai_dev_browser.tools.page_screenshot  # saves to temp file
-
-Python:
-    from ai_dev_browser.tools import page_screenshot
-    result = await page_screenshot(tab, path="screenshot.png")
-"""
+"""Take a screenshot of the page."""
 
 import tempfile
 from pathlib import Path
@@ -22,9 +13,6 @@ async def page_screenshot(tab, path: str = None, full_page: bool = False) -> dic
         tab: Browser tab
         path: Path to save screenshot (optional, uses temp file if not provided)
         full_page: If True, capture full page (not just viewport)
-
-    Returns:
-        {"path": ..., "size": ...} on success
     """
     try:
         if path is None:

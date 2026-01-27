@@ -1,13 +1,4 @@
-"""Wait for an element to appear.
-
-CLI:
-    python -m ai_dev_browser.tools.element_wait --text "Success"
-    python -m ai_dev_browser.tools.element_wait --selector ".loaded"
-
-Python:
-    from ai_dev_browser.tools import element_wait
-    result = await element_wait(tab, text="Success")
-"""
+"""Wait for an element to appear."""
 
 from ..core.elements import wait_for_element as core_wait_for_element
 from ._cli import as_cli
@@ -27,9 +18,6 @@ async def element_wait(
         text: Text to wait for
         selector: CSS selector to wait for
         timeout: Maximum wait time in seconds
-
-    Returns:
-        {"found": True, "elapsed": ...}
     """
     if not text and not selector:
         return {"error": "Must specify --text or --selector"}

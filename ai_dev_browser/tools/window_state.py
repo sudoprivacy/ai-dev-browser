@@ -1,12 +1,4 @@
-"""Set window state (maximize, minimize, fullscreen).
-
-CLI:
-    python -m ai_dev_browser.tools.window_state --state maximize
-
-Python:
-    from ai_dev_browser.tools import window_state
-    result = await window_state(tab, state="maximize")
-"""
+"""Set window state (maximize, minimize, fullscreen)."""
 
 from ai_dev_browser.core import set_window_state
 from ._cli import as_cli
@@ -19,9 +11,6 @@ async def window_state(tab, state: str) -> dict:
     Args:
         tab: Browser tab
         state: Window state ("normal", "minimize", "maximize", "fullscreen")
-
-    Returns:
-        {"state": ...}
     """
     try:
         await set_window_state(tab, state=state)

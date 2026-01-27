@@ -1,14 +1,4 @@
-"""Stop browser instance(s).
-
-CLI:
-    python -m ai_dev_browser.tools.browser_stop --port 9222
-    python -m ai_dev_browser.tools.browser_stop --stop-all
-
-Python:
-    from ai_dev_browser.tools import browser_stop
-    result = browser_stop(port=9222)
-    result = browser_stop(stop_all=True)
-"""
+"""Stop browser instance(s)."""
 
 from ai_dev_browser.core import (
     find_our_chromes,
@@ -26,9 +16,6 @@ def browser_stop(port: int = None, stop_all: bool = False) -> dict:
     Args:
         port: Port of browser to stop
         stop_all: Stop all our browser instances
-
-    Returns:
-        {"stopped": True, "count": ...}
     """
     try:
         if not port and not stop_all:

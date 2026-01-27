@@ -1,13 +1,4 @@
-"""List browser cookies.
-
-CLI:
-    python -m ai_dev_browser.tools.cookies_list
-    python -m ai_dev_browser.tools.cookies_list --domain "example.com"
-
-Python:
-    from ai_dev_browser.tools import cookies_list
-    result = await cookies_list(tab, domain="example.com")
-"""
+"""List browser cookies."""
 
 from ._cli import as_cli
 
@@ -19,9 +10,6 @@ async def cookies_list(tab, domain: str = None) -> dict:
     Args:
         tab: Browser tab
         domain: Filter by domain (optional)
-
-    Returns:
-        {"cookies": [...], "count": ...}
     """
     try:
         browser = tab.browser

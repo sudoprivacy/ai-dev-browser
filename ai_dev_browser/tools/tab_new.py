@@ -1,12 +1,4 @@
-"""Open a new tab.
-
-CLI:
-    python -m ai_dev_browser.tools.tab_new --url "https://example.com"
-
-Python:
-    from ai_dev_browser.tools import tab_new
-    result = await tab_new(tab, url="https://example.com")
-"""
+"""Open a new tab."""
 
 from ai_dev_browser.core import new_tab
 from ._cli import as_cli
@@ -19,9 +11,6 @@ async def tab_new(tab, url: str = None) -> dict:
     Args:
         tab: Browser tab (used to get browser reference)
         url: URL to open in new tab (optional)
-
-    Returns:
-        {"opened": True, "url": ...}
     """
     try:
         new = await new_tab(tab, url=url)
