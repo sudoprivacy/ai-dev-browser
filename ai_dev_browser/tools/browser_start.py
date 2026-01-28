@@ -11,7 +11,7 @@ from ai_dev_browser.core import (
     get_pid_on_port,
     ReuseStrategy,
 )
-from ._cli import as_cli
+from .._cli import as_cli
 
 DEFAULT_PROFILE_DIR = Path.home() / ".ai-dev-browser" / "profiles"
 

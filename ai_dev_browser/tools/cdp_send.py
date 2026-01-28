@@ -3,7 +3,7 @@
 import json as json_module
 import re
 import nodriver.cdp as cdp
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 def _camel_to_snake(name: str) -> str:

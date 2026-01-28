@@ -1,7 +1,7 @@
 """Switch to a tab."""
 
 from ai_dev_browser.core import switch_tab
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli()

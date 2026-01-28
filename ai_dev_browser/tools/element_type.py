@@ -1,7 +1,7 @@
 """Type text into an element."""
 
 from ai_dev_browser.core import type_text as core_type_text
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli()

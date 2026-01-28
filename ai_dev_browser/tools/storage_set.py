@@ -1,7 +1,7 @@
 """Set localStorage value."""
 
 from ai_dev_browser.core import set_local_storage
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli()

@@ -1,7 +1,7 @@
 """Move mouse to coordinates."""
 
 from ai_dev_browser.core import mouse_move as core_mouse_move
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli()

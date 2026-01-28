@@ -7,7 +7,7 @@ import nodriver.cdp.input_ as cdp_input
 import nodriver.cdp.page as page
 
 from ai_dev_browser.core import get_snapshot
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 def _parse_ref(ref: str) -> tuple[str | None, str, int | None]:

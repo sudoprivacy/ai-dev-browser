@@ -1,7 +1,7 @@
 """Focus an element on the page."""
 
 from ai_dev_browser.core import find_element
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli()

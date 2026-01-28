@@ -1,7 +1,7 @@
 """Click an element on the page."""
 
 from ai_dev_browser.core import click as core_click
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli()

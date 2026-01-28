@@ -1,7 +1,7 @@
 """Click at coordinates."""
 
 from ai_dev_browser.core import mouse_click as core_mouse_click
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli()

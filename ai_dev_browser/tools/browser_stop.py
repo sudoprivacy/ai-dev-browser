@@ -6,7 +6,7 @@ from ai_dev_browser.core import (
     cleanup_temp_profile,
     get_pid_on_port,
 )
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli(requires_tab=False)

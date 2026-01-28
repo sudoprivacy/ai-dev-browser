@@ -1,7 +1,7 @@
 """Find elements on the page."""
 
 from ai_dev_browser.core import find_element, find_elements
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli()

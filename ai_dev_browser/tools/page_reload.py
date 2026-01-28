@@ -1,7 +1,7 @@
 """Reload the page."""
 
 from ai_dev_browser.core import reload as core_reload
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli()

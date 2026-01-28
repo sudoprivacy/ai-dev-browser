@@ -1,7 +1,7 @@
 """Set window state (maximize, minimize, fullscreen)."""
 
 from ai_dev_browser.core import set_window_state
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli()

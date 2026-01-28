@@ -3,7 +3,7 @@
 import asyncio
 import sys
 from pathlib import Path
-from ._cli import as_cli
+from .._cli import as_cli
 
 DEFAULT_PROFILE_DIR = Path.home() / ".ai-dev-browser" / "profiles"
 

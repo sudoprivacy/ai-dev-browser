@@ -1,7 +1,7 @@
 """Scroll the page."""
 
 from ai_dev_browser.core import scroll as core_scroll
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli()

@@ -7,7 +7,7 @@ from ai_dev_browser.core import (
     get_pid_on_port,
     is_chrome_in_use,
 )
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli(requires_tab=False)

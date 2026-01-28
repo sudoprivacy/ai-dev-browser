@@ -2,7 +2,7 @@
 
 import tempfile
 from pathlib import Path
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli()

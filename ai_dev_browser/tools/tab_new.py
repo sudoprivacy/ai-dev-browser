@@ -1,7 +1,7 @@
 """Open a new tab."""
 
 from ai_dev_browser.core import new_tab
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli()

@@ -1,7 +1,7 @@
 """Wait for an element to appear."""
 
 from ..core.elements import wait_for_element as core_wait_for_element
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli()

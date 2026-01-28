@@ -1,6 +1,6 @@
 """Get page HTML."""
 
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli()

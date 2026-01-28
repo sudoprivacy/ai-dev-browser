@@ -1,7 +1,7 @@
 """Drag mouse from one point to another."""
 
 from ai_dev_browser.core import mouse_drag as core_mouse_drag
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli()
