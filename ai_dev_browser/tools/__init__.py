@@ -25,6 +25,7 @@ from .element_xpath import element_xpath
 # Page actions
 from .page_eval import page_eval
 from .page_goto import page_goto
+from .page_handle_dialog import page_handle_dialog
 from .page_html import page_html
 from .page_info import page_info
 from .page_reload import page_reload
@@ -90,6 +91,7 @@ __all__ = [
     # Page
     "page_eval",
     "page_goto",
+    "page_handle_dialog",
     "page_html",
     "page_info",
     "page_reload",
