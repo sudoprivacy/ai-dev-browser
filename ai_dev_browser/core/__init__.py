@@ -89,6 +89,9 @@ from .download import set_download_path, download_file
 # Overlays
 from .overlays import dismiss_overlays
 
+# Dialog
+from .dialog import handle_dialog, wait_for_dialog, setup_auto_dialog_handler
+
 __all__ = [
     # Config
     "DEFAULT_BASE_DIR",
@@ -165,4 +168,8 @@ __all__ = [
     "download_file",
     # Overlays
     "dismiss_overlays",
+    # Dialog
+    "handle_dialog",
+    "wait_for_dialog",
+    "setup_auto_dialog_handler",
 ]

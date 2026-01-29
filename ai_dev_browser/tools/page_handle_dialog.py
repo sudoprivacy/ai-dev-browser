@@ -4,36 +4,12 @@ Provides functionality to accept or dismiss browser dialogs that would
 otherwise block automation scripts.
 """
 
-import asyncio
-
-import nodriver.cdp.page as page_cdp
-
+from ai_dev_browser.core import (
+    handle_dialog as core_handle_dialog,
+    wait_for_dialog as core_wait_for_dialog,
+    setup_auto_dialog_handler as core_setup_auto_dialog_handler,
+)
 from .._cli import as_cli
-
-
-async def setup_auto_dialog_handler(tab, accept: bool = True):
-    """Set up automatic dialog handling for a tab.
-
-    This enables Page events and sets up a handler that automatically
-    accepts/dismisses dialogs as they appear. Useful for pages that
-    trigger beforeunload dialogs during navigation.
-
-    Args:
-        tab: Browser tab
-        accept: True to auto-accept, False to auto-dismiss
-    """
-    # Enable page events
-    await tab.send(page_cdp.enable())
-
-    # The handler will be called when dialog opens
-    async def on_dialog(event: page_cdp.JavascriptDialogOpening):
-        try:
-            await tab.send(page_cdp.handle_java_script_dialog(accept=accept))
-        except Exception:
-            pass  # Dialog might already be handled
-
-    # Register the handler
-    tab.add_handler(page_cdp.JavascriptDialogOpening, on_dialog)
 
 
 @as_cli()
@@ -54,68 +30,46 @@ async def page_handle_dialog(
         prompt_text: Optional text to enter for prompt() dialogs
         auto_handle: If True, set up automatic handling for future dialogs
         wait_timeout: If > 0, wait this many seconds for a dialog to appear
-
-    Returns:
-        {"success": True} if dialog was handled,
-        {"success": False, "error": "..."} if no dialog or error
     """
     # Set up auto-handler if requested
     if auto_handle:
         try:
-            await setup_auto_dialog_handler(tab, accept=accept)
+            await core_setup_auto_dialog_handler(tab, accept=accept)
             return {"success": True, "action": "auto_handler_enabled"}
         except Exception as e:
             return {"success": False, "error": "setup_failed", "message": str(e)}
 
-    # If wait_timeout specified, poll for dialog
+    # If wait_timeout specified, wait for dialog
     if wait_timeout > 0:
-        elapsed = 0
-        interval = 0.2
-        while elapsed < wait_timeout:
-            try:
-                if prompt_text is not None:
-                    await tab.send(
-                        page_cdp.handle_java_script_dialog(
-                            accept=accept, prompt_text=prompt_text
-                        )
-                    )
-                else:
-                    await tab.send(page_cdp.handle_java_script_dialog(accept=accept))
+        try:
+            handled = await core_wait_for_dialog(
+                tab, accept=accept, prompt_text=prompt_text, timeout=wait_timeout
+            )
+            if handled:
                 return {
                     "success": True,
                     "action": "accepted" if accept else "dismissed",
                 }
-            except Exception as e:
-                if "No dialog is showing" not in str(e):
-                    return {"success": False, "error": "unknown", "message": str(e)}
-            await asyncio.sleep(interval)
-            elapsed += interval
-        return {
-            "success": False,
-            "error": "timeout",
-            "message": f"No dialog appeared within {wait_timeout}s",
-        }
+            return {
+                "success": False,
+                "error": "timeout",
+                "message": f"No dialog appeared within {wait_timeout}s",
+            }
+        except Exception as e:
+            return {"success": False, "error": "unknown", "message": str(e)}
 
     # Immediate handling
     try:
-        if prompt_text is not None:
-            await tab.send(
-                page_cdp.handle_java_script_dialog(
-                    accept=accept, prompt_text=prompt_text
-                )
-            )
-        else:
-            await tab.send(page_cdp.handle_java_script_dialog(accept=accept))
-        return {"success": True, "action": "accepted" if accept else "dismissed"}
+        handled = await core_handle_dialog(tab, accept=accept, prompt_text=prompt_text)
+        if handled:
+            return {"success": True, "action": "accepted" if accept else "dismissed"}
+        return {
+            "success": False,
+            "error": "no_dialog",
+            "message": "No dialog is currently showing",
+        }
     except Exception as e:
-        error_msg = str(e)
-        if "No dialog is showing" in error_msg:
-            return {
-                "success": False,
-                "error": "no_dialog",
-                "message": "No dialog is currently showing",
-            }
-        return {"success": False, "error": "unknown", "message": error_msg}
+        return {"success": False, "error": "unknown", "message": str(e)}
 
 
 if __name__ == "__main__":
