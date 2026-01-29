@@ -21,9 +21,11 @@ DEFAULT_COOKIES_DIR = DEFAULT_BASE_DIR / "cookies"
 DEFAULT_PROFILE_PREFIX = "nodriver_chrome_"
 
 # Debug port range
+# Note: Windows Hyper-V/WSL may reserve ports in 9164-9263 range
+# We use 9350-9450 to avoid conflicts
 DEFAULT_DEBUG_HOST = "127.0.0.1"
-DEFAULT_DEBUG_PORT = 9222
-DEFAULT_PORT_RANGE = (9222, 9300)
+DEFAULT_DEBUG_PORT = 9350
+DEFAULT_PORT_RANGE = (9350, 9450)
 
 # Browser reuse strategy
 # - none: Always start new Chrome

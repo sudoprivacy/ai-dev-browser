@@ -24,13 +24,14 @@ def browser_stop(port: int = None, stop_all: bool = False) -> dict:
         stopped = []
 
         if stop_all:
-            browsers = find_our_chromes()
-            for browser in browsers:
+            ports = find_our_chromes(exclude_in_use=False)
+            for port in ports:
                 try:
-                    kill_process_tree(browser["pid"])
-                    if browser.get("profile_dir"):
-                        cleanup_temp_profile(browser["profile_dir"])
-                    stopped.append({"port": browser["port"], "pid": browser["pid"]})
+                    pid = get_pid_on_port(port)
+                    if pid:
+                        kill_process_tree(pid)
+                        cleanup_temp_profile(port)
+                        stopped.append({"port": port, "pid": pid})
                 except Exception:
                     pass
         else:

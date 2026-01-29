@@ -23,9 +23,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from .config import DEFAULT_DEBUG_HOST, DEFAULT_DEBUG_PORT, DEFAULT_PORT_RANGE, DEFAULT_PROFILE_PREFIX
+from .config import (
+    DEFAULT_DEBUG_HOST,
+    DEFAULT_DEBUG_PORT,
+    DEFAULT_PORT_RANGE,
+    DEFAULT_PROFILE_PREFIX,
+)
 from .process import get_pid_on_port, get_process_cmdline
-from .session import is_our_session, get_session_id, SESSION_FLAG
+from .session import is_our_session, SESSION_FLAG
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +111,9 @@ def _scan_ports(
 # =============================================================================
 
 
-def is_port_in_use(host: str = DEFAULT_DEBUG_HOST, port: int = DEFAULT_DEBUG_PORT, timeout: float = 0.1) -> bool:
+def is_port_in_use(
+    host: str = DEFAULT_DEBUG_HOST, port: int = DEFAULT_DEBUG_PORT, timeout: float = 0.1
+) -> bool:
     """
     Check if a port is in use (Chrome might be listening).
 
@@ -233,6 +240,7 @@ def find_our_chromes(
         ports = find_our_chromes()
         print(f"Found {len(ports)} Chrome instances from this session")
     """
+
     def is_our_chrome(port: int) -> bool:
         is_ours, _ = is_our_chrome_on_port(port)
         return is_ours
@@ -300,8 +308,8 @@ def is_chrome_in_use(port: int, timeout: float = 0.5) -> bool:
 
 
 def get_available_port(
-    start: int = 9222,
-    end: int = 9300,
+    start: int = None,
+    end: int = None,
     exclude: set[int] | None = None,
     reuse: bool = True,
 ) -> int:
@@ -316,8 +324,8 @@ def get_available_port(
     When reuse=False, skips directly to finding an unused port.
 
     Args:
-        start: Start of port range to search (default: 9222)
-        end: End of port range to search (default: 9300)
+        start: Start of port range to search (default: from DEFAULT_PORT_RANGE)
+        end: End of port range to search (default: from DEFAULT_PORT_RANGE)
         exclude: Set of ports to skip (e.g., already assigned to workers)
         reuse: If True (default), prefer reusing existing Chrome instances.
                If False, only find unused ports for new Chrome.
@@ -332,6 +340,11 @@ def get_available_port(
         port = get_available_port(exclude={9222, 9223})
         port = get_available_port(reuse=False)  # Always get fresh port
     """
+    # Use defaults from config if not specified
+    if start is None:
+        start = DEFAULT_PORT_RANGE[0]
+    if end is None:
+        end = DEFAULT_PORT_RANGE[1]
     port_range = (start, end)
 
     if reuse:
@@ -343,8 +356,13 @@ def get_available_port(
                 return True
             return False
 
-        port = _scan_ports(port_range, is_our_available_chrome, exclude=exclude,
-                           check_in_use=True, return_first=True)
+        port = _scan_ports(
+            port_range,
+            is_our_available_chrome,
+            exclude=exclude,
+            check_in_use=True,
+            return_first=True,
+        )
         if port is not None:
             return port
 
@@ -352,12 +370,19 @@ def get_available_port(
         def is_ndk_available_chrome(port: int) -> bool:
             is_ndk, _ = is_ai_dev_browser_chrome_on_port(port)
             if is_ndk and not is_chrome_in_use(port):
-                logger.debug(f"Found reusable ai-dev-browser Chrome (from previous run) on port {port}")
+                logger.debug(
+                    f"Found reusable ai-dev-browser Chrome (from previous run) on port {port}"
+                )
                 return True
             return False
 
-        port = _scan_ports(port_range, is_ndk_available_chrome, exclude=exclude,
-                           check_in_use=True, return_first=True)
+        port = _scan_ports(
+            port_range,
+            is_ndk_available_chrome,
+            exclude=exclude,
+            check_in_use=True,
+            return_first=True,
+        )
         if port is not None:
             return port
 
@@ -389,6 +414,7 @@ def find_ai_dev_browser_chromes(
     Returns:
         List of ports with ai-dev-browser Chrome instances
     """
+
     def is_ndk_chrome(port: int) -> bool:
         is_ndk, _ = is_ai_dev_browser_chrome_on_port(port)
         return is_ndk

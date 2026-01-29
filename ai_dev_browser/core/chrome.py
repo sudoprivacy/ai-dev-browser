@@ -17,7 +17,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .config import DEFAULT_PROFILE_PREFIX
+from .config import DEFAULT_PROFILE_PREFIX, DEFAULT_DEBUG_PORT
 from .session import make_session_arg
 
 logger = logging.getLogger(__name__)
@@ -124,7 +124,7 @@ def _ensure_no_session_restore(user_data_dir: Path) -> None:
 
 
 def launch_chrome(
-    port: int = 9222,
+    port: int = DEFAULT_DEBUG_PORT,
     headless: bool = False,
     user_data_dir: str | Path | None = None,
     profile_prefix: str = DEFAULT_PROFILE_PREFIX,

@@ -1,5 +1,6 @@
 """Start a browser instance."""
 
+import time
 from pathlib import Path
 from ai_dev_browser.core import (
     launch_chrome,
@@ -8,6 +9,7 @@ from ai_dev_browser.core import (
     find_ai_dev_browser_chromes,
     find_debug_chromes,
     is_chrome_in_use,
+    is_port_in_use,
     get_pid_on_port,
     ReuseStrategy,
 )
@@ -70,6 +72,27 @@ def browser_start(
             start_url=start_url,
             user_data_dir=str(user_data_dir) if user_data_dir else None,
         )
+
+        # Wait for Chrome to actually start listening on the port
+        # Chrome takes time to initialize and bind to the debug port
+        max_wait = 10  # seconds
+        poll_interval = 0.2
+        elapsed = 0
+        while elapsed < max_wait:
+            if is_port_in_use(port=port):
+                break
+            # Check if process died
+            if process.poll() is not None:
+                stderr = process.stderr.read() if process.stderr else ""
+                return {"error": f"Chrome process exited unexpectedly: {stderr}"}
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+        else:
+            # Timeout - port never became available
+            return {
+                "error": f"Chrome started (PID {process.pid}) but port {port} not listening after {max_wait}s",
+                "pid": process.pid,
+            }
 
         return {
             "port": port,

@@ -1,5 +1,6 @@
 """Select and click element by accessibility tree ref."""
 
+import asyncio
 import re
 
 import nodriver.cdp.dom as dom
@@ -62,6 +63,40 @@ async def _get_frame_id_by_prefix(tab, prefix: str) -> str | None:
         return None
 
 
+async def _wait_for_element(
+    tab,
+    wait_for_role: str = None,
+    wait_for_name: str = None,
+    timeout: float = 5.0,
+    interval: float = 0.3,
+) -> dict | None:
+    """Wait for an element to appear in the accessibility tree.
+
+    Returns the matching element if found, None if timeout.
+    """
+    if not wait_for_role and not wait_for_name:
+        return {"_skipped": True}  # Nothing to wait for
+
+    elapsed = 0.0
+    while elapsed < timeout:
+        await asyncio.sleep(interval)
+        elapsed += interval
+
+        try:
+            elements = await get_snapshot(tab)
+            for el in elements:
+                role_match = wait_for_role is None or el.get("role") == wait_for_role
+                name_match = wait_for_name is None or wait_for_name in el.get(
+                    "name", ""
+                )
+                if role_match and name_match:
+                    return el
+        except Exception:
+            pass  # Keep trying
+
+    return None  # Timeout
+
+
 async def _click_by_node_id(tab, node_id) -> bool:
     """Click element by backend node id via CDP."""
     try:
@@ -79,25 +114,39 @@ async def _click_by_node_id(tab, node_id) -> bool:
         y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4
 
         # Dispatch mouse events
-        await tab.send(cdp_input.dispatch_mouse_event(
-            type_="mousePressed",
-            x=x, y=y,
-            button=cdp_input.MouseButton.LEFT,
-            click_count=1
-        ))
-        await tab.send(cdp_input.dispatch_mouse_event(
-            type_="mouseReleased",
-            x=x, y=y,
-            button=cdp_input.MouseButton.LEFT,
-            click_count=1
-        ))
+        await tab.send(
+            cdp_input.dispatch_mouse_event(
+                type_="mousePressed",
+                x=x,
+                y=y,
+                button=cdp_input.MouseButton.LEFT,
+                click_count=1,
+            )
+        )
+        await tab.send(
+            cdp_input.dispatch_mouse_event(
+                type_="mouseReleased",
+                x=x,
+                y=y,
+                button=cdp_input.MouseButton.LEFT,
+                click_count=1,
+            )
+        )
         return True
     except Exception:
         return False
 
 
 @as_cli()
-async def ax_select(tab, ref: str = None, node_id: int = None) -> dict:
+async def ax_select(
+    tab,
+    ref: str = None,
+    node_id: int = None,
+    wait_for_role: str = None,
+    wait_for_name: str = None,
+    wait_timeout: float = 5.0,
+    wait_interval: float = 0.3,
+) -> dict:
     """Select and click element by accessibility tree ref or node_id.
 
     Use ax_tree to get element refs, then ax_select to interact with them.
@@ -105,10 +154,17 @@ async def ax_select(tab, ref: str = None, node_id: int = None) -> dict:
 
     Supports iframe elements with prefixed refs like "FRAME_ABC123:5".
 
+    Optionally wait for another element to appear after clicking - useful for
+    triggering menus, dialogs, or other dynamic content.
+
     Args:
         tab: Browser tab
         ref: Element ref from ax_tree (e.g., "5" or "FRAME_ABC123:5")
         node_id: Backend node ID from ax_tree's _nodeId - direct click, no re-fetch
+        wait_for_role: After click, wait for element with this role to appear
+        wait_for_name: After click, wait for element with this name to appear
+        wait_timeout: Max time to wait in seconds (default: 5.0)
+        wait_interval: Poll interval in seconds (default: 0.3)
     """
     try:
         # Must specify at least one of ref or node_id
@@ -119,7 +175,19 @@ async def ax_select(tab, ref: str = None, node_id: int = None) -> dict:
         if node_id is not None:
             success = await _click_by_node_id(tab, node_id)
             if success:
-                return {"clicked": True, "node_id": node_id}
+                result = {"clicked": True, "node_id": node_id}
+                # Wait for element if requested
+                waited = await _wait_for_element(
+                    tab, wait_for_role, wait_for_name, wait_timeout, wait_interval
+                )
+                if waited is None:
+                    result["wait_timeout"] = True
+                elif not waited.get("_skipped"):
+                    result["waited_for"] = {
+                        "role": waited.get("role"),
+                        "name": waited.get("name"),
+                    }
+                return result
             else:
                 return {"error": f"Failed to click node_id '{node_id}'"}
 
@@ -130,9 +198,23 @@ async def ax_select(tab, ref: str = None, node_id: int = None) -> dict:
         if embedded_node_id is not None:
             success = await _click_by_node_id(tab, embedded_node_id)
             if success:
-                return {"clicked": True, "ref": ref, "node_id": embedded_node_id}
+                result = {"clicked": True, "ref": ref, "node_id": embedded_node_id}
+                # Wait for element if requested
+                waited = await _wait_for_element(
+                    tab, wait_for_role, wait_for_name, wait_timeout, wait_interval
+                )
+                if waited is None:
+                    result["wait_timeout"] = True
+                elif not waited.get("_skipped"):
+                    result["waited_for"] = {
+                        "role": waited.get("role"),
+                        "name": waited.get("name"),
+                    }
+                return result
             else:
-                return {"error": f"Failed to click ref '{ref}' (node_id={embedded_node_id})"}
+                return {
+                    "error": f"Failed to click ref '{ref}' (node_id={embedded_node_id})"
+                }
 
         # Fallback: re-fetch snapshot and find by ref (less reliable)
         # Get frame ID if this is an iframe ref
@@ -173,14 +255,26 @@ async def ax_select(tab, ref: str = None, node_id: int = None) -> dict:
         # Click the element
         success = await _click_by_node_id(tab, target_node_id)
         if success:
-            return {
+            result = {
                 "clicked": True,
                 "element": {
                     "ref": target.get("ref"),
                     "role": target.get("role"),
                     "name": target.get("name"),
-                }
+                },
             }
+            # Wait for element if requested
+            waited = await _wait_for_element(
+                tab, wait_for_role, wait_for_name, wait_timeout, wait_interval
+            )
+            if waited is None:
+                result["wait_timeout"] = True
+            elif not waited.get("_skipped"):
+                result["waited_for"] = {
+                    "role": waited.get("role"),
+                    "name": waited.get("name"),
+                }
+            return result
         else:
             return {"error": f"Failed to click element ref '{ref}'"}
 
