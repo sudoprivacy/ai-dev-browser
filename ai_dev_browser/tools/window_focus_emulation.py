@@ -15,7 +15,7 @@ Python:
 """
 
 from ai_dev_browser.core import set_focus_emulation
-from ._cli import as_cli
+from .._cli import as_cli
 
 
 @as_cli()
