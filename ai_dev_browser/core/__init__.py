@@ -78,7 +78,7 @@ from .page import get_page_info
 from .mouse import mouse_move, mouse_click, mouse_drag
 
 # Window
-from .window import resize_window, set_window_state
+from .window import resize_window, set_window_state, set_focus_emulation
 
 # Storage
 from .storage import get_local_storage, set_local_storage
@@ -156,6 +156,7 @@ __all__ = [
     # Window
     "resize_window",
     "set_window_state",
+    "set_focus_emulation",
     # Storage
     "get_local_storage",
     "set_local_storage",
