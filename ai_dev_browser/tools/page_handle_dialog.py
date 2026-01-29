@@ -116,3 +116,7 @@ async def page_handle_dialog(
                 "message": "No dialog is currently showing",
             }
         return {"success": False, "error": "unknown", "message": error_msg}
+
+
+if __name__ == "__main__":
+    page_handle_dialog.cli_main()
