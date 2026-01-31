@@ -1,29 +1,10 @@
 """Type text into an element."""
 
-from ai_dev_browser.core import type_text as core_type_text
-from .._cli import as_cli
+from ai_dev_browser.core import type_text
+from .._cli import as_cli, wrap_core
 
-
-@as_cli()
-async def element_type(tab, text: str, selector: str, clear: bool = False) -> dict:
-    """Type text into an element.
-
-    Args:
-        tab: Browser tab
-        text: Text to type
-        selector: CSS selector of input element
-        clear: If True, clear existing content first
-    """
-
-    try:
-        success = await core_type_text(tab, text=text, selector=selector, clear=clear)
-        if success:
-            return {"typed": True, "text": text}
-        else:
-            return {"error": "Element not found"}
-    except Exception as e:
-        return {"error": f"element_type failed: {e}"}
-
+# True SSOT: parameters defined once in core.type_text, CLI inherits automatically
+element_type = as_cli()(wrap_core(type_text, "typed"))
 
 if __name__ == "__main__":
     element_type.cli_main()

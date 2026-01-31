@@ -261,3 +261,42 @@ def error(message: str, code: int = 1) -> None:
     """Output error and exit."""
     output({"error": message})
     sys.exit(code)
+
+
+def wrap_core(core_func: Callable, result_key: str = "success") -> Callable:
+    """Wrap a core function for CLI use, preserving its signature (SSOT).
+
+    This enables true SSOT: parameters are defined once in core function,
+    CLI automatically inherits them.
+
+    Args:
+        core_func: The core function to wrap
+        result_key: Key name for successful result (e.g., "clicked", "typed")
+
+    Returns:
+        Wrapped function with same signature, JSON-formatted output
+
+    Example:
+        # element_click.py - True SSOT
+        from ai_dev_browser.core import click
+        from .._cli import as_cli, wrap_core
+
+        element_click = as_cli()(wrap_core(click, "clicked"))
+    """
+    @functools.wraps(core_func)
+    async def wrapper(*args, **kwargs):
+        try:
+            result = await core_func(*args, **kwargs)
+            if isinstance(result, bool):
+                if result:
+                    return {result_key: True}
+                else:
+                    return {"error": "Operation failed"}
+            elif isinstance(result, dict):
+                return result
+            else:
+                return {result_key: result}
+        except Exception as e:
+            return {"error": f"{core_func.__name__} failed: {e}"}
+
+    return wrapper

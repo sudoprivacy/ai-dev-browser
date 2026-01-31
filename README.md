@@ -17,23 +17,57 @@ This is not a traditional testing framework — it's a development environment w
 
 **ai-dev-browser mimics human behavior** — this is our core feature:
 
-- Randomized delays between actions
-- Human-like mouse movements and clicks
-- Natural typing patterns
-- Passes Cloudflare, bot detection, and CAPTCHAs
+- **Mouse**: Gaussian random walk + Bezier curves (not linear paths that bots use)
+- **Clicks**: Random offset within element bounds (±20%), not always dead center
+- **Events**: CDP dispatch produces `isTrusted=true` (JS `.click()` produces `isTrusted=false`)
+- **Timing**: Configurable delays, from pro-gamer speed (30-60ms) to natural pace
 
-Unlike Selenium (sends "I'm a robot" signals) or Playwright (fast but detectable), ai-dev-browser:
-- Uses actual Chrome via CDP (Chrome DevTools Protocol)
-- Implements human-like delays and movements
-- Works where other automation tools get blocked
+Unlike Selenium (detectable via `navigator.webdriver`), Playwright (fast but predictable), or Puppeteer (still detectable movements), ai-dev-browser works where others get blocked.
 
-## Features
+## CLI = Python (SSOT)
 
-- **Human-like Automation**: Randomized delays, natural movements, anti-detection
-- **Browser Management**: Cross-platform Chrome detection, launching, and port management
-- **Worker Pool**: Parallel task execution with multiple browser instances
-- **Dual-Interface Tools**: Every tool works as both CLI command and Python import (explore → codify)
-- **AI-Friendly API**: Intuitive `run()` method, sensible defaults, clear error messages
+**Why SSOT matters for AI:**
+
+1. **Seamless exploration**: AI can `ls tools/` to discover capabilities, then directly use the same functions to build automation
+2. **Autoregressive learning**: When AI improves a function, it only edits one place — changes propagate to both CLI and Python automatically
+3. **Meta-learning friendly**: AI can inspect, modify, and extend tools without maintaining duplicate definitions
+
+```bash
+python -m ai_dev_browser.tools.element_click --selector "#btn" --human-like
+```
+
+```python
+from ai_dev_browser.core import click
+await click(tab, selector="#btn", human_like=True)
+```
+
+We maintain SSOT rigorously. See [cli-args-ssot](../../../cli-args-ssot/SKILL.md) for our verification checklist.
+
+**Related**: The [browser-automation-creator](../../SKILL.md) skill uses this library to help AI build custom browser automation tools.
+
+## Quick Start
+
+```python
+from ai_dev_browser.core import click, type_text, goto
+
+await goto(tab, "https://example.com")
+await click(tab, selector="#login")
+await type_text(tab, "user@example.com", selector="#email")
+```
+
+## Human Behavior Config
+
+```python
+from ai_dev_browser.core import human
+
+human.configure(
+    use_gaussian_path=True,    # Curved mouse movements (+50ms)
+    click_hold_enabled=True,   # Hold before release (+45ms)
+    type_humanize=True,        # Typing delays (+35ms/char)
+)
+```
+
+**Default philosophy**: FREE features ON (click offset), costly features OFF (opt-in).
 
 ## Installation
 
@@ -41,140 +75,14 @@ Unlike Selenium (sends "I'm a robot" signals) or Playwright (fast but detectable
 pip install ai-dev-browser
 ```
 
-For Cloudflare bypass support (uses nodriver's built-in `verify_cf()`):
-```bash
-pip install ai-dev-browser[cv]
-```
-
-## Quick Start
-
-### Simple Browser Launch
-
-```python
-from ai_dev_browser import find_chrome, launch_chrome, get_available_port
-import nodriver as uc
-
-# Find available port and launch Chrome
-port = get_available_port()
-process = launch_chrome(port=port)
-
-# Connect with nodriver
-browser = await uc.start(browser_args=[f"--remote-debugging-port={port}"])
-tab = await browser.get("https://example.com")
-```
-
-### Worker Pool for Parallel Tasks
-
-```python
-from ai_dev_browser import BrowserPool
-
-class MyClient:
-    def __init__(self, port: int, headless: bool = False):
-        self.port = port
-        self.headless = headless
-
-    async def __aenter__(self):
-        import nodriver as uc
-        self.browser = await uc.start(
-            browser_args=[f"--remote-debugging-port={self.port}"],
-            headless=self.headless,
-        )
-        return self
-
-    async def __aexit__(self, *args):
-        self.browser.stop()
-
-    async def fetch(self, url: str) -> dict:
-        tab = await self.browser.get(url)
-        return {"url": url, "title": await tab.title}
-
-# Run 3 workers in parallel
-async with BrowserPool(MyClient, workers=3) as pool:
-    # Submit tasks using AI-friendly "run" method
-    await pool.run("fetch", "https://example.com")
-    await pool.run("fetch", "https://google.com")
-    await pool.run("fetch", "https://github.com")
-
-    # Wait for all to complete
-    results = await pool.wait()
-    for job_id, result in results.items():
-        print(f"{result.data['url']}: {result.data['title']}")
-```
-
-### Cloudflare Bypass
-
-Use nodriver's built-in `verify_cf()`:
-
-```python
-import nodriver as uc
-
-browser = await uc.start()
-tab = await browser.get("https://protected-site.com")
-await tab.verify_cf()  # Built-in CF bypass (requires opencv-python)
-```
-
-## Tools: CLI & Python, Same Code
-
-**Design Philosophy**: Write once, use two ways.
-
-Every tool in `ai_dev_browser/tools/` works as both a CLI command and a Python function. No translation layer, no duplication - the same code serves both interfaces.
+## Tools
 
 ```bash
-# Discover all tools
-ls ai_dev_browser/tools/
+python -m ai_dev_browser.tools.<name> --help
 ```
 
-### As CLI (for exploration & scripting)
-
-```bash
-# Start browser (uses default profile for persistence)
-python -m ai_dev_browser.tools.browser_start --url "https://example.com"
-
-# Get accessibility tree
-python -m ai_dev_browser.tools.ax_tree --port 9222
-
-# Click element by ref
-python -m ai_dev_browser.tools.ax_select --port 9222 --ref 5
-
-# Take screenshot
-python -m ai_dev_browser.tools.page_screenshot --port 9222 --path ./shot.png
-
-# Stop browser
-python -m ai_dev_browser.tools.browser_stop --port 9222
-```
-
-### As Python (for codification)
-
-```python
-from ai_dev_browser.core import connect_browser, get_active_tab
-from ai_dev_browser.tools import browser_start, ax_tree, ax_select, page_screenshot
-
-# Start browser with default profile
-result = browser_start(url="https://example.com")
-browser = await connect_browser(port=result["port"])
-tab = await get_active_tab(browser)
-
-# Find and click using accessibility tree
-tree = await ax_tree(tab, interactable_only=True)
-await ax_select(tab, node_id=tree[0]["_nodeId"])
-await page_screenshot(tab, path="./shot.png")
-```
-
-### Available Tools
-
-```bash
-ls ai_dev_browser/tools/                        # Discover all tools
-python -m ai_dev_browser.tools.<name> --help    # Usage for any tool
-```
-
-## API Reference
-
-```python
-# See ai_dev_browser/__init__.py for all exports
-from ai_dev_browser import *
-```
+Navigation, clicks, typing, mouse, tabs, scroll, storage, screenshots — all available as CLI and Python.
 
 ## License
 
-MIT
-# test
+AGPL-3.0 (to maintain compatibility with [nodriver](https://github.com/ultrafunkamsterdam/nodriver) which is AGPL-licensed)

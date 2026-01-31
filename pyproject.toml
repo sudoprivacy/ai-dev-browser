@@ -7,7 +7,7 @@ name = "ai-dev-browser"
 version = "0.1.0"
 description = "A browser for AI to develop web automation - human-like automation that works seamlessly"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "AGPL-3.0"}
 requires-python = ">=3.10"
 authors = [
     {name = "elfenlieds7"}
@@ -16,7 +16,7 @@ keywords = ["browser", "automation", "nodriver", "pool", "cloudflare", "ai"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",

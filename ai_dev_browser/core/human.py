@@ -482,6 +482,7 @@ async def type_text(
     tab: nodriver.Tab,
     text: str,
     element: nodriver.Element = None,
+    humanize: bool = None,
 ) -> None:
     """Type text with optional human-like timing.
 
@@ -489,13 +490,17 @@ async def type_text(
         tab: Browser tab
         text: Text to type
         element: Optional element to focus first
+        humanize: Add delays between keystrokes (default: from config)
     """
     if element:
         await element.apply("(elem) => elem.focus()")
 
+    # Determine whether to use human-like delays
+    use_delays = humanize if humanize is not None else _config.type_humanize
+
     for char in text:
-        # Simulate typo if enabled (only when type_humanize is also on)
-        if _config.type_humanize and _config.typo_enabled and random.random() < _config.typo_probability:
+        # Simulate typo if enabled (only when humanizing)
+        if use_delays and _config.typo_enabled and random.random() < _config.typo_probability:
             # Type wrong char then backspace
             wrong_char = chr(ord(char) + random.choice([-1, 1]))
             await tab.send(cdp.input_.dispatch_key_event("char", text=wrong_char))
@@ -505,7 +510,7 @@ async def type_text(
             await asyncio.sleep(random.uniform(0.05, 0.15))
 
         # Random delay between keystrokes (if humanized)
-        if _config.type_humanize:
+        if use_delays:
             delay_ms = random.uniform(
                 _config.type_delay_min_ms,
                 _config.type_delay_max_ms,

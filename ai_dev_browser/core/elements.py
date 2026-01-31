@@ -149,7 +149,7 @@ async def type_text(
     use_human = human_like if human_like is not None else human.get_config().type_humanize
 
     if use_human:
-        await human.type_text(tab, text, element)
+        await human.type_text(tab, text, element, humanize=True)
     else:
         await element.send_keys(text)
     return True
