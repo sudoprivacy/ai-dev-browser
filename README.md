@@ -69,6 +69,8 @@ human.configure(
 
 **Default philosophy**: FREE features ON (click offset), costly features OFF (opt-in).
 
+**Advanced**: For custom automation, `generate_gaussian_path()` and `calculate_click_offset()` are available from `ai_dev_browser.core.human`.
+
 ## Installation
 
 ```bash
