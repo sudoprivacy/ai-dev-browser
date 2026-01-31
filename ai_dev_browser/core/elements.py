@@ -6,6 +6,8 @@ from typing import Optional
 
 import nodriver
 
+from . import human
+
 
 async def find_element(
     tab: nodriver.Tab,
@@ -79,8 +81,12 @@ async def click(
     text: Optional[str] = None,
     selector: Optional[str] = None,
     timeout: float = 10,
+    human_like: bool = True,
 ) -> bool:
     """Click on element.
+
+    Uses CDP mouse events by default (isTrusted=true) instead of JS click.
+    Applies random offset within element bounds for more human-like behavior.
 
     Args:
         tab: Tab instance
@@ -88,6 +94,7 @@ async def click(
         text: Text to find and click
         selector: CSS selector to find and click
         timeout: Search timeout in seconds
+        human_like: Use CDP events + offset (default True, recommended)
 
     Returns:
         True if clicked successfully
@@ -96,7 +103,12 @@ async def click(
         element = await find_element(tab, text=text, selector=selector, timeout=timeout)
 
     if element:
-        await element.click()
+        if human_like:
+            # Use CDP events (isTrusted=true) with optional offset
+            await human.click_element(tab, element)
+        else:
+            # Use JS click (isTrusted=false, detectable but faster)
+            await element.click()
         return True
     return False
 
@@ -108,6 +120,7 @@ async def type_text(
     selector: Optional[str] = None,
     clear: bool = False,
     timeout: float = 10,
+    human_like: bool = None,
 ) -> bool:
     """Type text into element.
 
@@ -118,6 +131,7 @@ async def type_text(
         selector: CSS selector to find element
         clear: If True, clear existing content first
         timeout: Search timeout in seconds
+        human_like: Add delays between keystrokes (default: from config)
 
     Returns:
         True if typed successfully
@@ -131,7 +145,13 @@ async def type_text(
     if clear:
         await element.clear_input()
 
-    await element.send_keys(text)
+    # Determine whether to use human-like typing
+    use_human = human_like if human_like is not None else human.get_config().type_humanize
+
+    if use_human:
+        await human.type_text(tab, text, element)
+    else:
+        await element.send_keys(text)
     return True
 
 

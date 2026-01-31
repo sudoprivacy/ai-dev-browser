@@ -27,36 +27,45 @@ class HumanConfig:
     """Configuration for human-like behavior.
 
     All delays are in milliseconds unless otherwise noted.
+
+    Default philosophy:
+    - Features that are FREE (0ms cost) → enabled by default
+    - Features that have cost → disabled by default, opt-in
     """
 
-    # Mouse movement
-    use_gaussian_path: bool = False  # Default: use nodriver's linear path
+    # Mouse movement (cost: +50ms, default OFF)
+    use_gaussian_path: bool = False  # Use nodriver's linear path by default
     mouse_duration: float = 0.05  # Duration in seconds (when gaussian enabled)
     mouse_duration_variance: float = 0.2  # +/- variance ratio
     mouse_smoothness: float = 2.0  # Gaussian smoothing factor
     mouse_randomness: float = 0.5  # Path randomness factor
 
-    # Click behavior
+    # Click offset (cost: FREE, default ON)
     click_offset_enabled: bool = True  # Random offset within element bounds
     click_offset_ratio: float = 0.2  # Max offset as ratio of element size (±20%)
+
+    # Click timing (cost: +45ms, default OFF)
+    click_hold_enabled: bool = False  # Use random hold time
     click_hold_min_ms: float = 30  # Min mouse button hold time (pro gamer level)
     click_hold_max_ms: float = 60  # Max mouse button hold time
 
-    # Double-click
+    # Double-click (cost: +60ms, default OFF)
+    double_click_humanize: bool = False  # Use random interval
     double_click_interval_min_ms: float = 40  # Min interval between clicks
     double_click_interval_max_ms: float = 80  # Max interval between clicks
 
-    # Typing (competitive programmer level: ~300-400 WPM)
-    type_delay_min_ms: float = 25  # Min delay between keystrokes (~400 WPM)
-    type_delay_max_ms: float = 45  # Max delay between keystrokes (~270 WPM)
-    typo_enabled: bool = False  # Simulate typos + backspace (default off)
+    # Typing (cost: +350ms/10chars, default OFF)
+    type_humanize: bool = False  # Add delays between keystrokes
+    type_delay_min_ms: float = 25  # Min delay (~400 WPM)
+    type_delay_max_ms: float = 45  # Max delay (~270 WPM)
+    typo_enabled: bool = False  # Simulate typos + backspace
     typo_probability: float = 0.02  # Probability of typo per character
 
     # General delays between actions
     action_delay_min_ms: float = 10  # Min delay between actions
     action_delay_max_ms: float = 50  # Max delay between actions
 
-    # Scroll (advanced, default off)
+    # Scroll (advanced, default OFF)
     scroll_easing_enabled: bool = False  # Use easing function for scroll
     scroll_overshoot_enabled: bool = False  # Overshoot + bounce back
 
@@ -347,7 +356,7 @@ async def mouse_click(
     from_x: float = None,
     from_y: float = None,
 ) -> None:
-    """Click with human-like timing.
+    """Click with optional human-like timing.
 
     Args:
         tab: Browser tab
@@ -361,9 +370,6 @@ async def mouse_click(
     if move_first:
         await mouse_move(tab, x, y, from_x=from_x, from_y=from_y)
 
-    # Random hold time
-    hold_ms = random.uniform(_config.click_hold_min_ms, _config.click_hold_max_ms)
-
     # Press
     await tab.send(
         nodriver.cdp.input_.dispatch_mouse_event(
@@ -371,7 +377,10 @@ async def mouse_click(
         )
     )
 
-    await asyncio.sleep(hold_ms / 1000)
+    # Optional: random hold time (if enabled)
+    if _config.click_hold_enabled:
+        hold_ms = random.uniform(_config.click_hold_min_ms, _config.click_hold_max_ms)
+        await asyncio.sleep(hold_ms / 1000)
 
     # Release
     await tab.send(
@@ -390,7 +399,7 @@ async def mouse_double_click(
     from_x: float = None,
     from_y: float = None,
 ) -> None:
-    """Double-click with human-like timing.
+    """Double-click with optional human-like timing.
 
     Args:
         tab: Browser tab
@@ -405,34 +414,37 @@ async def mouse_double_click(
         await mouse_move(tab, x, y, from_x=from_x, from_y=from_y)
 
     # First click
-    hold_ms = random.uniform(_config.click_hold_min_ms, _config.click_hold_max_ms)
     await tab.send(
         nodriver.cdp.input_.dispatch_mouse_event(
             "mousePressed", x=x, y=y, button=button, click_count=1
         )
     )
-    await asyncio.sleep(hold_ms / 1000)
+    if _config.click_hold_enabled:
+        hold_ms = random.uniform(_config.click_hold_min_ms, _config.click_hold_max_ms)
+        await asyncio.sleep(hold_ms / 1000)
     await tab.send(
         nodriver.cdp.input_.dispatch_mouse_event(
             "mouseReleased", x=x, y=y, button=button, click_count=1
         )
     )
 
-    # Random interval between clicks
-    interval_ms = random.uniform(
-        _config.double_click_interval_min_ms,
-        _config.double_click_interval_max_ms,
-    )
-    await asyncio.sleep(interval_ms / 1000)
+    # Interval between clicks (random if humanized, else minimal)
+    if _config.double_click_humanize:
+        interval_ms = random.uniform(
+            _config.double_click_interval_min_ms,
+            _config.double_click_interval_max_ms,
+        )
+        await asyncio.sleep(interval_ms / 1000)
 
     # Second click
-    hold_ms = random.uniform(_config.click_hold_min_ms, _config.click_hold_max_ms)
     await tab.send(
         nodriver.cdp.input_.dispatch_mouse_event(
             "mousePressed", x=x, y=y, button=button, click_count=2
         )
     )
-    await asyncio.sleep(hold_ms / 1000)
+    if _config.click_hold_enabled:
+        hold_ms = random.uniform(_config.click_hold_min_ms, _config.click_hold_max_ms)
+        await asyncio.sleep(hold_ms / 1000)
     await tab.send(
         nodriver.cdp.input_.dispatch_mouse_event(
             "mouseReleased", x=x, y=y, button=button, click_count=2
@@ -445,7 +457,7 @@ async def type_text(
     text: str,
     element: nodriver.Element = None,
 ) -> None:
-    """Type text with human-like timing.
+    """Type text with optional human-like timing.
 
     Args:
         tab: Browser tab
@@ -456,8 +468,8 @@ async def type_text(
         await element.apply("(elem) => elem.focus()")
 
     for char in text:
-        # Simulate typo if enabled
-        if _config.typo_enabled and random.random() < _config.typo_probability:
+        # Simulate typo if enabled (only when type_humanize is also on)
+        if _config.type_humanize and _config.typo_enabled and random.random() < _config.typo_probability:
             # Type wrong char then backspace
             wrong_char = chr(ord(char) + random.choice([-1, 1]))
             await tab.send(nodriver.cdp.input_.dispatch_key_event("char", text=wrong_char))
@@ -466,12 +478,13 @@ async def type_text(
             await tab.send(nodriver.cdp.input_.dispatch_key_event("keyUp", key="Backspace", windows_virtual_key_code=8))
             await asyncio.sleep(random.uniform(0.05, 0.15))
 
-        # Random delay between keystrokes
-        delay_ms = random.uniform(
-            _config.type_delay_min_ms,
-            _config.type_delay_max_ms,
-        )
-        await asyncio.sleep(delay_ms / 1000)
+        # Random delay between keystrokes (if humanized)
+        if _config.type_humanize:
+            delay_ms = random.uniform(
+                _config.type_delay_min_ms,
+                _config.type_delay_max_ms,
+            )
+            await asyncio.sleep(delay_ms / 1000)
 
         # Type character
         await tab.send(nodriver.cdp.input_.dispatch_key_event("char", text=char))

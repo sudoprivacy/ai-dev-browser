@@ -92,6 +92,9 @@ from .overlays import dismiss_overlays
 # Dialog
 from .dialog import handle_dialog, wait_for_dialog, setup_auto_dialog_handler
 
+# Human-like behavior
+from . import human
+
 __all__ = [
     # Config
     "DEFAULT_BASE_DIR",
@@ -172,4 +175,6 @@ __all__ = [
     "handle_dialog",
     "wait_for_dialog",
     "setup_auto_dialog_handler",
+    # Human-like behavior
+    "human",
 ]
