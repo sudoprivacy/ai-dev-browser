@@ -296,6 +296,78 @@ async def get_element_text(
     """
     result = await find_element(tab, text=text, selector=selector, timeout=timeout)
     if result["found"] and result["element"]:
-        content = await result["element"].text
+        # Use text_all property which is synchronous
+        content = result["element"].text_all
         return {"text": content if content else ""}
     return {"text": None, "error": "Element not found"}
+
+
+async def find_element_info(
+    tab: nodriver.Tab,
+    text: str | None = None,
+    selector: str | None = None,
+    all_elements: bool = False,
+    timeout: float = 10,
+) -> dict:
+    """Find element(s) and return info suitable for CLI/script use.
+
+    Args:
+        tab: Tab instance
+        text: Text to search for
+        selector: CSS selector
+        all_elements: If True, find all matching elements
+        timeout: Search timeout in seconds
+
+    Returns:
+        dict with found, count (if all), tag, text (for single element)
+    """
+    if all_elements:
+        result = await find_elements(tab, text=text, selector=selector, timeout=timeout)
+        return {
+            "found": result["count"] > 0,
+            "count": result["count"],
+        }
+    else:
+        result = await find_element(tab, text=text, selector=selector, timeout=timeout)
+        element = result.get("element")
+        if element:
+            # Get element info
+            tag = await element.apply("(el) => el.tagName.toLowerCase()")
+            text_content = await element.apply("(el) => el.textContent.slice(0, 100)")
+            return {
+                "found": True,
+                "tag": tag,
+                "text": text_content.strip() if text_content else "",
+            }
+        return {"found": False}
+
+
+async def wait_for_element_with_info(
+    tab: nodriver.Tab,
+    text: str | None = None,
+    selector: str | None = None,
+    timeout: float = 30,
+) -> dict:
+    """Wait for element to appear with descriptive message.
+
+    Args:
+        tab: Tab instance
+        text: Text to wait for
+        selector: CSS selector to wait for
+        timeout: Maximum wait time in seconds
+
+    Returns:
+        dict with found, elapsed, message
+    """
+    result = await wait_for_element(tab, text=text, selector=selector, timeout=timeout)
+
+    # Add descriptive message
+    if result.get("found"):
+        if text:
+            result["message"] = f"Element with text '{text}' found"
+        else:
+            result["message"] = f"Element '{selector}' found"
+    else:
+        result["message"] = f"Timeout after {timeout}s"
+
+    return result

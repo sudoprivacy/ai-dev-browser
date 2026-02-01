@@ -1,40 +1,11 @@
 """Wait for an element to appear."""
 
-from .._cli import as_cli
-from ..core.elements import wait_for_element as core_wait_for_element
+from ai_dev_browser.core import wait_for_element_with_info
+
+from .._cli import as_cli, wrap_core
 
 
-@as_cli()
-async def element_wait(
-    tab,
-    text: str = None,
-    selector: str = None,
-    timeout: float = 30,
-) -> dict:
-    """Wait for element to appear.
-
-    Args:
-        tab: Browser tab
-        text: Text to wait for
-        selector: CSS selector to wait for
-        timeout: Maximum wait time in seconds
-    """
-    if not text and not selector:
-        return {"error": "Must specify --text or --selector"}
-
-    result = await core_wait_for_element(tab, text=text, selector=selector, timeout=timeout)
-
-    # Add descriptive message
-    if result.get("found"):
-        if text:
-            result["message"] = f"Element with text '{text}' found"
-        else:
-            result["message"] = f"Element '{selector}' found"
-    else:
-        result["message"] = f"Timeout after {timeout}s"
-
-    return result
-
+element_wait = as_cli()(wrap_core(wait_for_element_with_info, "found"))
 
 if __name__ == "__main__":
     element_wait.cli_main()

@@ -100,3 +100,63 @@ async def setup_auto_dialog_handler(
 
     # Register the handler
     tab.add_handler(page_cdp.JavascriptDialogOpening, on_dialog)
+
+
+async def handle_dialog_action(
+    tab: nodriver.Tab,
+    accept: bool = True,
+    prompt_text: str | None = None,
+    auto_handle: bool = False,
+    wait_timeout: float = 0,
+) -> dict:
+    """Handle JavaScript dialog with various modes.
+
+    Args:
+        tab: Tab instance
+        accept: True to accept/OK, False to dismiss/Cancel
+        prompt_text: Optional text to enter for prompt() dialogs
+        auto_handle: If True, set up automatic handling for future dialogs
+        wait_timeout: If > 0, wait this many seconds for a dialog to appear
+
+    Returns:
+        dict with success, action, and optional error/message
+    """
+    # Set up auto-handler if requested
+    if auto_handle:
+        try:
+            await setup_auto_dialog_handler(tab, accept=accept)
+            return {"success": True, "action": "auto_handler_enabled"}
+        except Exception as e:
+            return {"success": False, "error": "setup_failed", "message": str(e)}
+
+    # If wait_timeout specified, wait for dialog
+    if wait_timeout > 0:
+        try:
+            handled = await wait_for_dialog(
+                tab, accept=accept, prompt_text=prompt_text, timeout=wait_timeout
+            )
+            if handled:
+                return {
+                    "success": True,
+                    "action": "accepted" if accept else "dismissed",
+                }
+            return {
+                "success": False,
+                "error": "timeout",
+                "message": f"No dialog appeared within {wait_timeout}s",
+            }
+        except Exception as e:
+            return {"success": False, "error": "unknown", "message": str(e)}
+
+    # Immediate handling
+    try:
+        handled = await handle_dialog(tab, accept=accept, prompt_text=prompt_text)
+        if handled:
+            return {"success": True, "action": "accepted" if accept else "dismissed"}
+        return {
+            "success": False,
+            "error": "no_dialog",
+            "message": "No dialog is currently showing",
+        }
+    except Exception as e:
+        return {"success": False, "error": "unknown", "message": str(e)}

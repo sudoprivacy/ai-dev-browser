@@ -94,3 +94,26 @@ async def get_html(
     if selector:
         return await tab.evaluate(f"document.querySelector({repr(selector)})?.outerHTML || ''")
     return await tab.get_content()
+
+
+async def get_page_html(
+    tab: nodriver.Tab,
+    outer: bool = False,
+) -> dict:
+    """Get page HTML content with metadata.
+
+    Args:
+        tab: Tab instance
+        outer: If True, get outerHTML of document element
+
+    Returns:
+        dict with html content and length
+    """
+    if outer:
+        content = await tab.evaluate("document.documentElement.outerHTML")
+    else:
+        content = await tab.evaluate("document.documentElement.innerHTML")
+    return {
+        "html": content,
+        "length": len(content),
+    }

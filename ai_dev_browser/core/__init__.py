@@ -35,7 +35,12 @@ from .config import (
 from .connection import connect_browser, get_active_tab
 
 # Dialog
-from .dialog import handle_dialog, setup_auto_dialog_handler, wait_for_dialog
+from .dialog import (
+    handle_dialog,
+    handle_dialog_action,
+    setup_auto_dialog_handler,
+    wait_for_dialog,
+)
 
 # Download
 from .download import download_file, set_download_path
@@ -45,12 +50,14 @@ from .elements import (
     click,
     find_by_xpath,
     find_element,
+    find_element_info,
     find_elements,
     focus_element,
     get_element_text,
     scroll,
     type_text,
     wait_for_element,
+    wait_for_element_with_info,
 )
 
 # Mouse
@@ -63,7 +70,7 @@ from .navigation import back, forward, goto, reload, wait_for_load, wait_for_url
 from .overlays import dismiss_overlays
 
 # Page info
-from .page import eval_js, get_page_info, screenshot
+from .page import eval_js, get_page_html, get_page_info, screenshot
 
 # Port management
 from .port import (
@@ -142,12 +149,14 @@ __all__ = [
     "wait_for_url",
     # Elements
     "find_element",
+    "find_element_info",
     "find_elements",
     "find_by_xpath",
     "click",
     "type_text",
     "scroll",
     "wait_for_element",
+    "wait_for_element_with_info",
     "focus_element",
     "get_element_text",
     # Snapshot
@@ -159,6 +168,7 @@ __all__ = [
     "close_tab",
     # Page
     "get_page_info",
+    "get_page_html",
     "eval_js",
     "screenshot",
     # Mouse
@@ -180,6 +190,7 @@ __all__ = [
     "dismiss_overlays",
     # Dialog
     "handle_dialog",
+    "handle_dialog_action",
     "wait_for_dialog",
     "setup_auto_dialog_handler",
     # Human-like behavior

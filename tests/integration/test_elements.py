@@ -5,10 +5,14 @@ import asyncio
 from ai_dev_browser.core import (
     find_by_xpath,
     find_element,
+    find_element_info,
     find_elements,
+    focus_element,
+    get_element_text,
     goto,
     scroll,
     wait_for_element,
+    wait_for_element_with_info,
 )
 
 
@@ -32,6 +36,30 @@ class TestFindElement:
         result = await find_element(test_page, selector="#nonexistent", timeout=1)
         assert result["found"] is False
         assert result["element"] is None
+
+
+class TestFindElementInfo:
+    """Test find_element_info which returns CLI-friendly info."""
+
+    async def test_find_single_element_info(self, test_page):
+        """Should return tag and text for single element."""
+        result = await find_element_info(test_page, selector="#btn1")
+        assert isinstance(result, dict)
+        assert result["found"] is True
+        assert result["tag"] == "button"
+        assert "Button 1" in result["text"]
+
+    async def test_find_all_elements_info(self, test_page):
+        """Should return count for multiple elements."""
+        result = await find_element_info(test_page, selector=".btn", all_elements=True)
+        assert isinstance(result, dict)
+        assert result["found"] is True
+        assert result["count"] >= 2
+
+    async def test_find_element_info_not_found(self, test_page):
+        """Should return found=False for missing element."""
+        result = await find_element_info(test_page, selector="#nonexistent", timeout=1)
+        assert result["found"] is False
 
 
 class TestFindElements:
@@ -93,6 +121,57 @@ class TestWaitForElement:
         """Should timeout for non-existent element."""
         result = await wait_for_element(test_page, selector="#never-exists", timeout=1)
         assert result["found"] is False
+
+
+class TestWaitForElementWithInfo:
+    """Test wait_for_element_with_info which includes messages."""
+
+    async def test_wait_with_message_found(self, test_page):
+        """Should include success message when found."""
+        result = await wait_for_element_with_info(test_page, text="Button 1", timeout=5)
+        assert result["found"] is True
+        assert "message" in result
+        assert "found" in result["message"].lower()
+
+    async def test_wait_with_message_timeout(self, test_page):
+        """Should include timeout message."""
+        result = await wait_for_element_with_info(test_page, selector="#never-exists", timeout=1)
+        assert result["found"] is False
+        assert "message" in result
+        assert "timeout" in result["message"].lower()
+
+
+class TestFocusElement:
+    """Test focusing elements."""
+
+    async def test_focus_by_selector(self, test_page):
+        """Should focus element by selector."""
+        result = await focus_element(test_page, selector="#input1")
+        assert isinstance(result, dict)
+        assert result["focused"] is True
+
+    async def test_focus_not_found(self, test_page):
+        """Should return focused=False for missing element."""
+        result = await focus_element(test_page, selector="#nonexistent", timeout=1)
+        assert result["focused"] is False
+        assert "error" in result
+
+
+class TestGetElementText:
+    """Test getting element text content."""
+
+    async def test_get_text_by_selector(self, test_page):
+        """Should get text content."""
+        result = await get_element_text(test_page, selector="#btn1")
+        assert isinstance(result, dict)
+        assert "text" in result
+        assert "Button 1" in result["text"]
+
+    async def test_get_text_not_found(self, test_page):
+        """Should return error for missing element."""
+        result = await get_element_text(test_page, selector="#nonexistent", timeout=1)
+        assert result["text"] is None
+        assert "error" in result
 
 
 class TestScroll:
