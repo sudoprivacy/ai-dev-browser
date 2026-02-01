@@ -10,7 +10,7 @@ readme = "README.md"
 license = {text = "AGPL-3.0"}
 requires-python = ">=3.10"
 authors = [
-    {name = "elfenlieds7"}
+    {name = "sudoprivacy"}
 ]
 keywords = ["browser", "automation", "nodriver", "pool", "cloudflare", "ai"]
 classifiers = [
@@ -40,8 +40,8 @@ cv = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/elfenlieds7/ai-dev-browser"
-Repository = "https://github.com/elfenlieds7/ai-dev-browser"
+Homepage = "https://github.com/sudoprivacy/ai-dev-browser"
+Repository = "https://github.com/sudoprivacy/ai-dev-browser"
 
 [tool.setuptools.packages.find]
 where = ["."]

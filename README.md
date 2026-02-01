@@ -41,9 +41,9 @@ from ai_dev_browser.core import click
 await click(tab, selector="#btn", human_like=True)
 ```
 
-We maintain SSOT rigorously. See [cli-args-ssot](../../../cli-args-ssot/SKILL.md) for our verification checklist.
+We maintain SSOT rigorously. See [cli-args-ssot](https://github.com/sudoprivacy/cli-args-ssot) for our verification checklist.
 
-**Related**: The [browser-automation-creator](../../SKILL.md) skill uses this library to help AI build custom browser automation tools.
+**Related**: The [browser-automation-creator](https://github.com/sudoprivacy/browser-automation-creator) skill uses this library to help AI build custom browser automation tools.
 
 ## Quick Start
 
