@@ -144,3 +144,80 @@ async def wait_for_url(
             }
 
         await asyncio.sleep(0.3)
+
+
+async def wait_for_url_match(
+    tab: nodriver.Tab,
+    pattern: str | None = None,
+    exact: str | None = None,
+    timeout: float = 30,
+) -> dict:
+    """Wait for URL to match pattern with descriptive message.
+
+    Args:
+        tab: Tab instance
+        pattern: URL pattern (substring or regex)
+        exact: Exact URL to match
+        timeout: Maximum wait time in seconds
+
+    Returns:
+        dict with matched, url, elapsed, message
+    """
+    if not pattern and not exact:
+        return {"error": "Must specify pattern or exact"}
+
+    result = await wait_for_url(tab, pattern=pattern, exact=exact, timeout=timeout)
+
+    # Add timeout message if not matched
+    if not result.get("matched"):
+        result["message"] = f"Timeout after {timeout}s"
+
+    return result
+
+
+async def wait_for_page(
+    tab: nodriver.Tab,
+    idle: bool = False,
+    sleep: float | None = None,
+    timeout: float = 30,
+) -> dict:
+    """Wait for page to be ready.
+
+    Args:
+        tab: Tab instance
+        idle: Wait for network idle (document.readyState == complete)
+        sleep: Just sleep for N seconds
+        timeout: Maximum wait time in seconds
+
+    Returns:
+        dict with ready status, state, elapsed, message
+    """
+    if sleep:
+        await asyncio.sleep(sleep)
+        return {"ready": True, "message": f"Waited {sleep} seconds"}
+
+    if idle:
+        start = time.time()
+        ready = await wait_for_load(tab, timeout=timeout, idle_time=0.5)
+        elapsed = time.time() - start
+
+        if ready:
+            state = await tab.evaluate("document.readyState")
+            return {
+                "ready": True,
+                "state": state,
+                "elapsed": round(elapsed, 2),
+            }
+        return {
+            "ready": False,
+            "message": f"Timeout after {timeout}s",
+        }
+
+    # Default: quick wait for DOM ready (10s max)
+    ready = await wait_for_load(tab, timeout=10, idle_time=0)
+    state = await tab.evaluate("document.readyState")
+
+    return {
+        "ready": ready,
+        "state": state,
+    }

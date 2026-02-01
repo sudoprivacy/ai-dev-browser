@@ -12,12 +12,20 @@ Usage:
     snapshot = await get_snapshot(tab, interactable_only=True)
 """
 
+# CDP
 # Config (shared constants)
 # Human-like behavior
 from . import human
 
+# Browser lifecycle
+from .browser import list_browsers, start_browser, stop_browser
+from .cdp import send_cdp_command
+
 # Chrome detection and launching
 from .chrome import find_chrome, launch_chrome
+
+# Cloudflare
+from .cloudflare import verify_cloudflare
 from .config import (
     DEFAULT_BASE_DIR,
     DEFAULT_COOKIES_DIR,
@@ -33,6 +41,9 @@ from .config import (
 
 # Connection
 from .connection import connect_browser, get_active_tab
+
+# Cookies
+from .cookies import list_cookies, load_cookies, save_cookies
 
 # Dialog
 from .dialog import (
@@ -64,7 +75,16 @@ from .elements import (
 from .mouse import mouse_click, mouse_drag, mouse_move
 
 # Navigation
-from .navigation import back, forward, goto, reload, wait_for_load, wait_for_url
+from .navigation import (
+    back,
+    forward,
+    goto,
+    reload,
+    wait_for_load,
+    wait_for_page,
+    wait_for_url,
+    wait_for_url_match,
+)
 
 # Overlays
 from .overlays import dismiss_overlays
@@ -92,7 +112,7 @@ from .process import get_pid_on_port, get_process_cmdline, kill_process_tree
 from .session import extract_session_id, get_session_id, is_our_session
 
 # Snapshot (AI-friendly accessibility tree)
-from .snapshot import get_snapshot
+from .snapshot import get_accessibility_tree, get_snapshot
 
 # Storage
 from .storage import get_local_storage, set_local_storage
@@ -105,6 +125,10 @@ from .window import focus_window, resize_window, set_focus_emulation, set_window
 
 
 __all__ = [
+    # Browser lifecycle
+    "start_browser",
+    "stop_browser",
+    "list_browsers",
     # Config
     "DEFAULT_BASE_DIR",
     "DEFAULT_PROFILE_DIR",
@@ -119,6 +143,10 @@ __all__ = [
     # Chrome
     "find_chrome",
     "launch_chrome",
+    # Cloudflare
+    "verify_cloudflare",
+    # CDP
+    "send_cdp_command",
     # Port
     "is_port_in_use",
     "is_our_chrome_on_port",
@@ -146,7 +174,9 @@ __all__ = [
     "forward",
     "reload",
     "wait_for_load",
+    "wait_for_page",
     "wait_for_url",
+    "wait_for_url_match",
     # Elements
     "find_element",
     "find_element_info",
@@ -161,6 +191,7 @@ __all__ = [
     "get_element_text",
     # Snapshot
     "get_snapshot",
+    "get_accessibility_tree",
     # Tabs
     "new_tab",
     "list_tabs",
@@ -195,4 +226,8 @@ __all__ = [
     "setup_auto_dialog_handler",
     # Human-like behavior
     "human",
+    # Cookies
+    "load_cookies",
+    "save_cookies",
+    "list_cookies",
 ]

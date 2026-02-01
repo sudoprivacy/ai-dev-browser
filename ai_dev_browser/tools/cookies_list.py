@@ -1,43 +1,11 @@
 """List browser cookies."""
 
-from .._cli import as_cli
+from ai_dev_browser.core import list_cookies
+
+from .._cli import as_cli, wrap_core
 
 
-@as_cli()
-async def cookies_list(tab, domain: str = None) -> dict:
-    """List browser cookies.
-
-    Args:
-        tab: Browser tab
-        domain: Filter by domain (optional)
-    """
-    try:
-        browser = tab.browser
-        cookies = await browser.cookies.get_all()
-
-        # Filter by domain if specified
-        if domain:
-            cookies = [c for c in cookies if domain in (getattr(c, "domain", "") or "")]
-
-        # Simplify output
-        simple_cookies = []
-        for c in cookies:
-            value = getattr(c, "value", "") or ""
-            simple_cookies.append(
-                {
-                    "name": getattr(c, "name", ""),
-                    "domain": getattr(c, "domain", ""),
-                    "path": getattr(c, "path", "/"),
-                    "secure": getattr(c, "secure", False),
-                    "httpOnly": getattr(c, "http_only", False),
-                    "value": value[:50] + "..." if len(value) > 50 else value,
-                }
-            )
-
-        return {"cookies": simple_cookies, "count": len(simple_cookies)}
-    except Exception as e:
-        return {"error": f"List cookies failed: {e}"}
-
+cookies_list = as_cli()(wrap_core(list_cookies, "cookies"))
 
 if __name__ == "__main__":
     cookies_list.cli_main()

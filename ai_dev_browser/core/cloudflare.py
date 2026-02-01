@@ -15,7 +15,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def verify_cloudflare(tab, max_retries: int = 5, initial_wait: float = 2.0, **kwargs) -> bool:
+async def verify_cloudflare(tab, max_retries: int = 5, initial_wait: float = 2.0, **kwargs) -> dict:
     """
     Verify and bypass Cloudflare challenge using nodriver's native verify_cf.
 
@@ -29,7 +29,7 @@ async def verify_cloudflare(tab, max_retries: int = 5, initial_wait: float = 2.0
         **kwargs: Additional arguments (ignored for compatibility)
 
     Returns:
-        True if verification succeeded or no challenge present, False otherwise
+        dict with verified status, attempts, message
 
     Requires:
         pip install opencv-python
@@ -46,20 +46,33 @@ async def verify_cloudflare(tab, max_retries: int = 5, initial_wait: float = 2.0
             logger.debug(f"CF verification attempt {attempt + 1}/{max_retries}")
             await tab.verify_cf()
             logger.info("CF verification succeeded")
-            return True
+            return {
+                "verified": True,
+                "attempts": attempt + 1,
+                "message": "Cloudflare verification succeeded",
+            }
         except Exception as e:
             error_msg = str(e).lower()
             # "no cf was found" means no challenge present - that's success
             if "no cf" in error_msg or "not found" in error_msg:
                 logger.debug("No Cloudflare challenge detected")
-                return True
+                return {
+                    "verified": True,
+                    "attempts": attempt + 1,
+                    "message": "No Cloudflare challenge detected",
+                }
             if attempt < max_retries - 1:
                 logger.debug(f"CF attempt {attempt + 1} failed: {e}, retrying...")
                 # Longer wait between retries to let CF reset
                 await asyncio.sleep(2)
             else:
                 logger.warning(f"Cloudflare verification failed after {max_retries} attempts: {e}")
-    return False
+
+    return {
+        "verified": False,
+        "attempts": max_retries,
+        "error": f"Cloudflare verification failed after {max_retries} attempts",
+    }
 
 
 # Backward compatibility alias

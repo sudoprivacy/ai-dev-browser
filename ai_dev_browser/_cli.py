@@ -272,7 +272,7 @@ def _filter_dict_for_json(d: dict) -> dict:
 
 
 def wrap_core(core_func: Callable, result_key: str = "success") -> Callable:
-    """Wrap a core function for CLI use, preserving its signature (SSOT).
+    """Wrap an async core function for CLI use, preserving its signature (SSOT).
 
     This enables true SSOT: parameters are defined once in core function,
     CLI automatically inherits them.
@@ -282,7 +282,7 @@ def wrap_core(core_func: Callable, result_key: str = "success") -> Callable:
     but CLI will only show serializable values.
 
     Args:
-        core_func: The core function to wrap
+        core_func: The async core function to wrap
         result_key: Key name for successful result (e.g., "clicked", "typed")
 
     Returns:
@@ -300,6 +300,46 @@ def wrap_core(core_func: Callable, result_key: str = "success") -> Callable:
     async def wrapper(*args, **kwargs):
         try:
             result = await core_func(*args, **kwargs)
+            if isinstance(result, bool):
+                if result:
+                    return {result_key: True}
+                else:
+                    return {"error": "Operation failed"}
+            elif isinstance(result, dict):
+                # Filter out non-serializable values for CLI output
+                return _filter_dict_for_json(result)
+            else:
+                return {result_key: result}
+        except Exception as e:
+            return {"error": f"{core_func.__name__} failed: {e}"}
+
+    return wrapper
+
+
+def wrap_core_sync(core_func: Callable, result_key: str = "success") -> Callable:
+    """Wrap a sync core function for CLI use, preserving its signature (SSOT).
+
+    Same as wrap_core but for synchronous functions.
+
+    Args:
+        core_func: The sync core function to wrap
+        result_key: Key name for successful result
+
+    Returns:
+        Wrapped sync function with same signature, JSON-formatted output
+
+    Example:
+        # browser_start.py - True SSOT
+        from ai_dev_browser.core import start_browser
+        from .._cli import as_cli, wrap_core_sync
+
+        browser_start = as_cli(requires_tab=False)(wrap_core_sync(start_browser, "port"))
+    """
+
+    @functools.wraps(core_func)
+    def wrapper(*args, **kwargs):
+        try:
+            result = core_func(*args, **kwargs)
             if isinstance(result, bool):
                 if result:
                     return {result_key: True}

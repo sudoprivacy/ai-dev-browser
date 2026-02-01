@@ -285,3 +285,28 @@ async def get_snapshot(
             pass
 
     return all_nodes
+
+
+async def get_accessibility_tree(
+    tab: nodriver.Tab,
+    interactable_only: bool = False,
+    include_iframes: bool = True,
+) -> dict:
+    """Get accessibility tree with metadata.
+
+    Wrapper around get_snapshot that returns a dict with elements and count.
+
+    Args:
+        tab: Tab instance
+        interactable_only: If True, only return interactable elements
+        include_iframes: If True (default), include iframe content
+
+    Returns:
+        dict with elements list and count
+    """
+    elements = await get_snapshot(
+        tab,
+        interactable_only=interactable_only,
+        include_iframes=include_iframes,
+    )
+    return {"elements": elements, "count": len(elements)}
