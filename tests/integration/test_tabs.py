@@ -1,9 +1,8 @@
 """Integration tests for tab operations."""
 
-import pytest
 import asyncio
 
-from ai_dev_browser.core import new_tab, list_tabs, goto
+from ai_dev_browser.core import list_tabs, new_tab
 
 
 class TestNewTab:
@@ -27,6 +26,7 @@ class TestNewTab:
         """Should create tab and navigate to URL."""
         html = "<html><body><h1>New Tab</h1></body></html>"
         import base64
+
         data_url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
 
         new = await new_tab(browser, url=data_url)

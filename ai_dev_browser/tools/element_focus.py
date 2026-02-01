@@ -1,6 +1,7 @@
 """Focus an element on the page."""
 
 from ai_dev_browser.core import find_element
+
 from .._cli import as_cli
 
 
@@ -17,9 +18,9 @@ async def element_focus(tab, selector: str = None, text: str = None) -> dict:
         return {"error": "Must specify --selector or --text"}
 
     try:
-        element = await find_element(tab, text=text, selector=selector)
-        if element:
-            await element.focus()
+        result = await find_element(tab, text=text, selector=selector)
+        if result["found"] and result["element"]:
+            await result["element"].focus()
             return {"focused": True}
         else:
             return {"error": "Element not found"}

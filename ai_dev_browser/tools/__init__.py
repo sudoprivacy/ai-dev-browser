@@ -9,9 +9,26 @@ Discovery:
 """
 
 # Browser management (no tab required)
+from .ax_select import ax_select
+
+# Accessibility tree
+from .ax_tree import ax_tree
 from .browser_list import browser_list
 from .browser_start import browser_start
 from .browser_stop import browser_stop
+
+# CDP & Cloudflare
+from .cdp_send import cdp_send
+from .cf_verify import cf_verify
+
+# Cookies
+from .cookies_list import cookies_list
+from .cookies_load import cookies_load
+from .cookies_save import cookies_save
+
+# Download
+from .download_file import download_file
+from .download_path import download_path
 
 # Element actions
 from .element_click import element_click
@@ -22,22 +39,6 @@ from .element_type import element_type
 from .element_wait import element_wait
 from .element_xpath import element_xpath
 
-# Page actions
-from .page_eval import page_eval
-from .page_goto import page_goto
-from .page_handle_dialog import page_handle_dialog
-from .page_html import page_html
-from .page_info import page_info
-from .page_reload import page_reload
-from .page_wait import page_wait
-from .page_wait_url import page_wait_url
-from .page_screenshot import page_screenshot
-from .scroll import scroll
-
-# Accessibility tree
-from .ax_tree import ax_tree
-from .ax_select import ax_select
-
 # Session
 from .login_interactive import login_interactive
 
@@ -46,20 +47,27 @@ from .mouse_click import mouse_click
 from .mouse_drag import mouse_drag
 from .mouse_move import mouse_move
 
+# Page actions
+from .page_eval import page_eval
+from .page_goto import page_goto
+from .page_handle_dialog import page_handle_dialog
+from .page_html import page_html
+from .page_info import page_info
+from .page_reload import page_reload
+from .page_screenshot import page_screenshot
+from .page_wait import page_wait
+from .page_wait_url import page_wait_url
+from .scroll import scroll
+
+# Storage
+from .storage_get import storage_get
+from .storage_set import storage_set
+
 # Tab actions
 from .tab_close import tab_close
 from .tab_list import tab_list
 from .tab_new import tab_new
 from .tab_switch import tab_switch
-
-# Cookies
-from .cookies_list import cookies_list
-from .cookies_load import cookies_load
-from .cookies_save import cookies_save
-
-# Storage
-from .storage_get import storage_get
-from .storage_set import storage_set
 
 # Window
 from .window_focus import window_focus
@@ -67,13 +75,6 @@ from .window_focus_emulation import window_focus_emulation
 from .window_resize import window_resize
 from .window_state import window_state
 
-# Download
-from .download_file import download_file
-from .download_path import download_path
-
-# CDP & Cloudflare
-from .cdp_send import cdp_send
-from .cf_verify import cf_verify
 
 __all__ = [
     # Browser

@@ -17,8 +17,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .config import DEFAULT_PROFILE_PREFIX, DEFAULT_DEBUG_PORT
+from .config import DEFAULT_DEBUG_PORT, DEFAULT_PROFILE_PREFIX
 from .session import make_session_arg
+
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +47,7 @@ def find_chrome() -> str | None:
         candidates = [
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
             "/Applications/Chromium.app/Contents/MacOS/Chromium",
-            str(
-                Path.home()
-                / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-            ),
+            str(Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
         ]
     elif system == "Windows":
         candidates = [
@@ -107,7 +105,7 @@ def _ensure_no_session_restore(user_data_dir: Path) -> None:
     if prefs_file.exists():
         try:
             prefs = json.loads(prefs_file.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, IOError):
+        except (OSError, json.JSONDecodeError):
             prefs = {}
 
     # Set restore_on_startup to 5 (open new tab page)
@@ -119,7 +117,7 @@ def _ensure_no_session_restore(user_data_dir: Path) -> None:
     try:
         prefs_file.write_text(json.dumps(prefs), encoding="utf-8")
         logger.debug(f"Set restore_on_startup=5 in {prefs_file}")
-    except IOError as e:
+    except OSError as e:
         logger.warning(f"Failed to write Preferences: {e}")
 
 
@@ -239,7 +237,7 @@ def launch_chrome(
             }
 
         logger.debug(f"Launching Chrome on port {port}")
-        process = subprocess.Popen(args, **popen_kwargs)
+        process = subprocess.Popen(args, **popen_kwargs)  # type: ignore[call-overload]
 
         logger.debug(f"Chrome process created, PID: {process.pid}")
     except Exception as e:

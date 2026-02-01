@@ -1,7 +1,7 @@
 """Wait for URL to match a pattern."""
 
-from ..core.navigation import wait_for_url as core_wait_for_url
 from .._cli import as_cli
+from ..core.navigation import wait_for_url as core_wait_for_url
 
 
 @as_cli()

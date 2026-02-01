@@ -1,11 +1,12 @@
 """Stop browser instance(s)."""
 
 from ai_dev_browser.core import (
-    find_our_chromes,
-    kill_process_tree,
     cleanup_temp_profile,
+    find_our_chromes,
     get_pid_on_port,
+    kill_process_tree,
 )
+
 from .._cli import as_cli
 
 

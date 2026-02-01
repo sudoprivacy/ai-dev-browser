@@ -4,7 +4,7 @@ Handles browser dialogs: alert(), confirm(), prompt(), and beforeunload.
 """
 
 import asyncio
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import nodriver
 import nodriver.cdp.page as page_cdp
@@ -13,7 +13,7 @@ import nodriver.cdp.page as page_cdp
 async def handle_dialog(
     tab: nodriver.Tab,
     accept: bool = True,
-    prompt_text: Optional[str] = None,
+    prompt_text: str | None = None,
 ) -> bool:
     """Handle a JavaScript dialog immediately.
 
@@ -31,9 +31,7 @@ async def handle_dialog(
     try:
         if prompt_text is not None:
             await tab.send(
-                page_cdp.handle_java_script_dialog(
-                    accept=accept, prompt_text=prompt_text
-                )
+                page_cdp.handle_java_script_dialog(accept=accept, prompt_text=prompt_text)
             )
         else:
             await tab.send(page_cdp.handle_java_script_dialog(accept=accept))
@@ -47,7 +45,7 @@ async def handle_dialog(
 async def wait_for_dialog(
     tab: nodriver.Tab,
     accept: bool = True,
-    prompt_text: Optional[str] = None,
+    prompt_text: str | None = None,
     timeout: float = 5.0,
 ) -> bool:
     """Wait for a dialog to appear and handle it.
@@ -76,7 +74,7 @@ async def wait_for_dialog(
 async def setup_auto_dialog_handler(
     tab: nodriver.Tab,
     accept: bool = True,
-    callback: Optional[Callable[[page_cdp.JavascriptDialogOpening], None]] = None,
+    callback: Callable[[page_cdp.JavascriptDialogOpening], None] | None = None,
 ) -> None:
     """Set up automatic dialog handling for a tab.
 

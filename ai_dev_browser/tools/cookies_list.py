@@ -23,14 +23,16 @@ async def cookies_list(tab, domain: str = None) -> dict:
         simple_cookies = []
         for c in cookies:
             value = getattr(c, "value", "") or ""
-            simple_cookies.append({
-                "name": getattr(c, "name", ""),
-                "domain": getattr(c, "domain", ""),
-                "path": getattr(c, "path", "/"),
-                "secure": getattr(c, "secure", False),
-                "httpOnly": getattr(c, "http_only", False),
-                "value": value[:50] + "..." if len(value) > 50 else value,
-            })
+            simple_cookies.append(
+                {
+                    "name": getattr(c, "name", ""),
+                    "domain": getattr(c, "domain", ""),
+                    "path": getattr(c, "path", "/"),
+                    "secure": getattr(c, "secure", False),
+                    "httpOnly": getattr(c, "http_only", False),
+                    "value": value[:50] + "..." if len(value) > 50 else value,
+                }
+            )
 
         return {"cookies": simple_cookies, "count": len(simple_cookies)}
     except Exception as e:

@@ -3,8 +3,8 @@
 import asyncio
 import time
 
-from ..core.navigation import wait_for_load as core_wait_for_load
 from .._cli import as_cli
+from ..core.navigation import wait_for_load as core_wait_for_load
 
 
 @as_cli()

@@ -3,7 +3,7 @@
 # Run manually: pre-commit run --all-files
 
 repos:
-  # Fast file checks
+  # File checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -11,14 +11,38 @@ repos:
       - id: end-of-file-fixer
       - id: check-yaml
       - id: check-toml
+      - id: check-json
       - id: check-added-large-files
+        args: ['--maxkb=500']
       - id: check-merge-conflict
-      - id: debug-statements
+      - id: check-ast  # Python syntax check
+      - id: debug-statements  # No pdb/breakpoint
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
 
   # Ruff - fast Python linter and formatter
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.11
+    rev: v0.9.1
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
+
+  # Type checking (lenient for now, can be stricter later)
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.14.1
+    hooks:
+      - id: mypy
+        args: [--ignore-missing-imports, --no-strict-optional, --allow-untyped-defs]
+        exclude: 'tests/|tools/'
+
+  # Security
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+
+ci:
+  skip: [mypy, detect-secrets]

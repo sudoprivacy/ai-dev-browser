@@ -30,7 +30,8 @@ from .config import (
     DEFAULT_PROFILE_PREFIX,
 )
 from .process import get_pid_on_port, get_process_cmdline
-from .session import is_our_session, SESSION_FLAG
+from .session import SESSION_FLAG, is_our_session
+
 
 logger = logging.getLogger(__name__)
 
@@ -245,7 +246,7 @@ def find_our_chromes(
         is_ours, _ = is_our_chrome_on_port(port)
         return is_ours
 
-    return _scan_ports(port_range, is_our_chrome, exclude_in_use=exclude_in_use)
+    return _scan_ports(port_range, is_our_chrome, exclude_in_use=exclude_in_use)  # type: ignore[return-value]
 
 
 def is_chrome_in_use(port: int, timeout: float = 0.5) -> bool:
@@ -364,7 +365,7 @@ def get_available_port(
             return_first=True,
         )
         if port is not None:
-            return port
+            return port  # type: ignore[return-value]
 
         # Strategy 2: Reuse ANY ai-dev-browser Chrome (not in use)
         def is_ndk_available_chrome(port: int) -> bool:
@@ -384,7 +385,7 @@ def get_available_port(
             return_first=True,
         )
         if port is not None:
-            return port
+            return port  # type: ignore[return-value]
 
     # Strategy 3 (or only strategy when reuse=False): Find unused port
     def is_unused_port(port: int) -> bool:
@@ -392,7 +393,7 @@ def get_available_port(
 
     port = _scan_ports(port_range, is_unused_port, exclude=exclude, return_first=True)
     if port is not None:
-        return port
+        return port  # type: ignore[return-value]
 
     raise RuntimeError(f"No available port found in range {start}-{end}")
 
@@ -419,7 +420,7 @@ def find_ai_dev_browser_chromes(
         is_ndk, _ = is_ai_dev_browser_chrome_on_port(port)
         return is_ndk
 
-    return _scan_ports(port_range, is_ndk_chrome, exclude_in_use=exclude_in_use)
+    return _scan_ports(port_range, is_ndk_chrome, exclude_in_use=exclude_in_use)  # type: ignore[return-value]
 
 
 def find_debug_chromes(

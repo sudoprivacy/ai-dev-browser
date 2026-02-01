@@ -1,12 +1,12 @@
 """List running browser instances."""
 
 from ai_dev_browser.core import (
-    find_our_chromes,
     find_ai_dev_browser_chromes,
-    get_session_id,
+    find_our_chromes,
     get_pid_on_port,
     is_chrome_in_use,
 )
+
 from .._cli import as_cli
 
 
@@ -18,17 +18,18 @@ def browser_list(mine: bool = False) -> dict:
         mine: If True, only show Chromes from this session
     """
     try:
-        session_id = get_session_id()
         my_ports = set(find_our_chromes(exclude_in_use=False))
 
         if mine:
             browsers = []
             for p in my_ports:
-                browsers.append({
-                    "port": p,
-                    "pid": get_pid_on_port(p),
-                    "can_connect": not is_chrome_in_use(p),
-                })
+                browsers.append(
+                    {
+                        "port": p,
+                        "pid": get_pid_on_port(p),
+                        "can_connect": not is_chrome_in_use(p),
+                    }
+                )
             return {"browsers": browsers, "count": len(my_ports)}
 
         all_ports = find_ai_dev_browser_chromes()

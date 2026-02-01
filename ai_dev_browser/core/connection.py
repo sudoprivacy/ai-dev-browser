@@ -25,7 +25,7 @@ async def connect_browser(
         browser = await nodriver.start(host=host, port=port)
         return browser
     except Exception as e:
-        raise ConnectionError(f"Failed to connect to Chrome on {host}:{port}: {e}")
+        raise ConnectionError(f"Failed to connect to Chrome on {host}:{port}: {e}") from e
 
 
 async def get_active_tab(browser: nodriver.Browser) -> nodriver.Tab:

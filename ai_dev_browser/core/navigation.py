@@ -3,7 +3,6 @@
 import asyncio
 import re
 import time
-from typing import Optional
 
 import nodriver
 
@@ -100,8 +99,8 @@ async def wait_for_load(
 
 async def wait_for_url(
     tab: nodriver.Tab,
-    pattern: Optional[str] = None,
-    exact: Optional[str] = None,
+    pattern: str | None = None,
+    exact: str | None = None,
     timeout: float = 30,
 ) -> dict:
     """Wait for URL to match pattern.
@@ -121,9 +120,7 @@ async def wait_for_url(
         elapsed = time.time() - start_time
 
         if elapsed > timeout:
-            current_url = (
-                tab.target.url if hasattr(tab, "target") and tab.target else ""
-            )
+            current_url = tab.target.url if hasattr(tab, "target") and tab.target else ""
             return {
                 "matched": False,
                 "url": current_url,
@@ -139,12 +136,11 @@ async def wait_for_url(
                     "url": current_url,
                     "elapsed": round(elapsed, 2),
                 }
-        elif pattern:
-            if pattern in current_url or re.search(pattern, current_url):
-                return {
-                    "matched": True,
-                    "url": current_url,
-                    "elapsed": round(elapsed, 2),
-                }
+        elif pattern and (pattern in current_url or re.search(pattern, current_url)):
+            return {
+                "matched": True,
+                "url": current_url,
+                "elapsed": round(elapsed, 2),
+            }
 
         await asyncio.sleep(0.3)

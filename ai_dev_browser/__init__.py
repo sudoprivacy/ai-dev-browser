@@ -7,55 +7,40 @@ IMPORTANT: Always import from ai_dev_browser, not directly from nodriver.
 """
 
 # Core operations (all shared code lives here)
+# Core browser operations (shared by tools/ and Python code)
+from . import core
 from .core import (
     # Config
     DEFAULT_BASE_DIR,
-    DEFAULT_PROFILE_DIR,
-    DEFAULT_COOKIES_FILE,
     DEFAULT_COOKIES_DIR,
-    DEFAULT_PROFILE_PREFIX,
+    DEFAULT_COOKIES_FILE,
     DEFAULT_DEBUG_HOST,
     DEFAULT_DEBUG_PORT,
     DEFAULT_PORT_RANGE,
+    DEFAULT_PROFILE_DIR,
+    DEFAULT_PROFILE_PREFIX,
+    cleanup_temp_profile,
+    extract_session_id,
+    find_ai_dev_browser_chromes,
     # Chrome detection and launching
     find_chrome,
-    launch_chrome,
-    # Port management
-    is_port_in_use,
-    is_our_chrome_on_port,
-    is_ai_dev_browser_chrome_on_port,
-    is_chrome_in_use,
-    find_our_chromes,
-    find_ai_dev_browser_chromes,
     find_debug_chromes,
+    find_our_chromes,
     get_available_port,
-    cleanup_temp_profile,
-    # Session management
-    get_session_id,
-    is_our_session,
-    extract_session_id,
     # Process management
     get_pid_on_port,
     get_process_cmdline,
+    # Session management
+    get_session_id,
+    is_ai_dev_browser_chrome_on_port,
+    is_chrome_in_use,
+    is_our_chrome_on_port,
+    is_our_session,
+    # Port management
+    is_port_in_use,
     kill_process_tree,
+    launch_chrome,
 )
-
-# Worker pool
-from .pool import (
-    BrowserPool,
-    Job,
-    JobResult,
-    JobStatus,
-    Worker,
-    WorkerStats,
-    WorkerStatus,
-    PoolState,
-    load_state,
-    save_state,
-)
-
-# Profile management
-from .profile import ProfileManager, ProfileMode
 
 # Cloudflare verification (wraps nodriver's native verify_cf)
 from .core.cloudflare import verify_cloudflare
@@ -63,8 +48,23 @@ from .core.cloudflare import verify_cloudflare
 # Overlay dismissal (generic backdrop/modal handling)
 from .core.overlays import dismiss_overlays
 
-# Core browser operations (shared by tools/ and Python code)
-from . import core
+# Worker pool
+from .pool import (
+    BrowserPool,
+    Job,
+    JobResult,
+    JobStatus,
+    PoolState,
+    Worker,
+    WorkerStats,
+    WorkerStatus,
+    load_state,
+    save_state,
+)
+
+# Profile management
+from .profile import ProfileManager, ProfileMode
+
 
 __version__ = "0.1.0"
 
@@ -132,7 +132,8 @@ __all__ = [
 # Re-export nodriver.cdp for CDP protocol access
 from nodriver import cdp
 
+from .core import connect_browser
+
 # Re-export commonly used tools as functions
 from .tools.browser_start import browser_start
 from .tools.browser_stop import browser_stop
-from .core import connect_browser

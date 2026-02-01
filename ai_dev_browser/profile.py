@@ -31,6 +31,7 @@ from typing import Literal
 
 from .core.config import DEFAULT_COOKIES_DIR, DEFAULT_COOKIES_FILE
 
+
 logger = logging.getLogger(__name__)
 
 ProfileMode = Literal["shared", "per_worker", "temp"]

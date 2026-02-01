@@ -1,13 +1,16 @@
 """Select and click element by accessibility tree ref."""
 
 import asyncio
+import contextlib
 import re
+from typing import Any
 
 import nodriver.cdp.dom as dom
 import nodriver.cdp.input_ as cdp_input
 import nodriver.cdp.page as page
 
 from ai_dev_browser.core import get_snapshot
+
 from .._cli import as_cli
 
 
@@ -86,9 +89,7 @@ async def _wait_for_element(
             elements = await get_snapshot(tab)
             for el in elements:
                 role_match = wait_for_role is None or el.get("role") == wait_for_role
-                name_match = wait_for_name is None or wait_for_name in el.get(
-                    "name", ""
-                )
+                name_match = wait_for_name is None or wait_for_name in el.get("name", "")
                 if role_match and name_match:
                     return el
         except Exception:
@@ -146,7 +147,7 @@ async def ax_select(
     wait_for_name: str = None,
     wait_timeout: float = 5.0,
     wait_interval: float = 0.3,
-) -> dict:
+) -> dict[str, Any]:
     """Select and click element by accessibility tree ref or node_id.
 
     Use ax_tree to get element refs, then ax_select to interact with them.
@@ -175,7 +176,7 @@ async def ax_select(
         if node_id is not None:
             success = await _click_by_node_id(tab, node_id)
             if success:
-                result = {"clicked": True, "node_id": node_id}
+                result: dict[str, Any] = {"clicked": True, "node_id": node_id}
                 # Wait for element if requested
                 waited = await _wait_for_element(
                     tab, wait_for_role, wait_for_name, wait_timeout, wait_interval
@@ -212,9 +213,7 @@ async def ax_select(
                     }
                 return result
             else:
-                return {
-                    "error": f"Failed to click ref '{ref}' (node_id={embedded_node_id})"
-                }
+                return {"error": f"Failed to click ref '{ref}' (node_id={embedded_node_id})"}
 
         # Fallback: re-fetch snapshot and find by ref (less reliable)
         # Get frame ID if this is an iframe ref
@@ -244,10 +243,8 @@ async def ax_select(
         target_ref = target.get("ref", "")
         target_node_id = None
         if "#" in target_ref:
-            try:
+            with contextlib.suppress(ValueError):
                 target_node_id = int(target_ref.split("#")[1])
-            except ValueError:
-                pass
 
         if not target_node_id:
             return {"error": f"Element ref '{ref}' has no nodeId"}

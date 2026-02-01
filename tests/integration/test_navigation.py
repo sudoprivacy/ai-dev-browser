@@ -1,9 +1,8 @@
 """Integration tests for navigation operations."""
 
-import pytest
 import asyncio
 
-from ai_dev_browser.core import goto, reload, wait_for_url, get_page_info
+from ai_dev_browser.core import get_page_info, goto, reload, wait_for_url
 
 
 class TestGoto:
@@ -15,6 +14,7 @@ class TestGoto:
 
         html = "<html><body><h1>Test Page</h1></body></html>"
         import base64
+
         data_url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
 
         await goto(tab, data_url)
@@ -43,6 +43,7 @@ class TestReload:
 
         html = "<html><body><div id='counter'>0</div></body></html>"
         import base64
+
         data_url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
 
         await goto(tab, data_url)
@@ -86,6 +87,7 @@ class TestPageInfo:
 
         html = "<html><head><title>Test Title</title></head><body></body></html>"
         import base64
+
         data_url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
 
         await goto(tab, data_url)

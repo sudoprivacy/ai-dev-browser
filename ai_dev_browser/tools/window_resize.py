@@ -1,6 +1,7 @@
 """Resize browser window."""
 
 from ai_dev_browser.core import resize_window
+
 from .._cli import as_cli
 
 

@@ -2,18 +2,21 @@
 
 import time
 from pathlib import Path
+
 from ai_dev_browser.core import (
-    launch_chrome,
-    get_available_port,
-    find_our_chromes,
+    ReuseStrategy,
     find_ai_dev_browser_chromes,
     find_debug_chromes,
+    find_our_chromes,
+    get_available_port,
+    get_pid_on_port,
     is_chrome_in_use,
     is_port_in_use,
-    get_pid_on_port,
-    ReuseStrategy,
+    launch_chrome,
 )
+
 from .._cli import as_cli
+
 
 DEFAULT_PROFILE_DIR = Path.home() / ".ai-dev-browser" / "profiles"
 
@@ -75,9 +78,9 @@ def browser_start(
 
         # Wait for Chrome to actually start listening on the port
         # Chrome takes time to initialize and bind to the debug port
-        max_wait = 10  # seconds
+        max_wait = 10.0  # seconds
         poll_interval = 0.2
-        elapsed = 0
+        elapsed = 0.0
         while elapsed < max_wait:
             if is_port_in_use(port=port):
                 break

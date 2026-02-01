@@ -7,6 +7,7 @@ Both tools/ and package code should import from this module.
 from pathlib import Path
 from typing import Literal
 
+
 # Base directory for all ai-dev-browser data
 DEFAULT_BASE_DIR = Path("~/.ai-dev-browser").expanduser()
 

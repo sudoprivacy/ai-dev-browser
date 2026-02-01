@@ -25,7 +25,8 @@ import functools
 import inspect
 import json
 import sys
-from typing import Callable, get_type_hints, get_origin, get_args, Literal
+from collections.abc import Callable
+from typing import Any, Literal, get_args, get_origin, get_type_hints
 
 
 def _get_literal_choices(hint) -> list | None:
@@ -52,23 +53,23 @@ def _parse_docstring_args(docstring: str) -> dict[str, str]:
     current_arg = None
     current_desc = []
 
-    for line in docstring.split('\n'):
+    for line in docstring.split("\n"):
         stripped = line.strip()
 
-        if stripped == 'Args:':
+        if stripped == "Args:":
             in_args = True
             continue
-        elif in_args and stripped and not stripped[0].isspace() and stripped.endswith(':'):
+        elif in_args and stripped and not stripped[0].isspace() and stripped.endswith(":"):
             # New section like "Returns:" or "Raises:"
             if current_arg:
-                args_section[current_arg] = ' '.join(current_desc).strip()
+                args_section[current_arg] = " ".join(current_desc).strip()
             break
         elif in_args:
             # Check if this is a new arg definition (name: description)
-            if ': ' in stripped:
+            if ": " in stripped:
                 if current_arg:
-                    args_section[current_arg] = ' '.join(current_desc).strip()
-                parts = stripped.split(': ', 1)
+                    args_section[current_arg] = " ".join(current_desc).strip()
+                parts = stripped.split(": ", 1)
                 current_arg = parts[0].strip()
                 current_desc = [parts[1].strip()] if len(parts) > 1 else []
             elif current_arg and stripped:
@@ -76,12 +77,12 @@ def _parse_docstring_args(docstring: str) -> dict[str, str]:
                 current_desc.append(stripped)
 
     if current_arg:
-        args_section[current_arg] = ' '.join(current_desc).strip()
+        args_section[current_arg] = " ".join(current_desc).strip()
 
     return args_section
 
 
-def _get_param_type(hint) -> type:
+def _get_param_type(hint) -> type | Callable[[str], bool]:
     """Convert type hint to argparse type."""
     if hint is bool:
         return lambda x: x.lower() in ("true", "1", "yes")
@@ -111,7 +112,8 @@ def _generate_parser(
     # Add --port for browser connection (only when requires_tab)
     if requires_tab:
         parser.add_argument(
-            "--port", "-p",
+            "--port",
+            "-p",
             type=int,
             default=9222,
             help="Chrome debugging port (default: 9222)",
@@ -144,7 +146,7 @@ def _generate_parser(
                 help=help_text,
             )
         else:
-            kwargs = {
+            kwargs: dict[str, Any] = {
                 "type": param_type,
                 "help": help_text,
             }
@@ -160,7 +162,7 @@ def _generate_parser(
             parser.add_argument(
                 f"--{name.replace('_', '-')}",
                 required=required,
-                **kwargs,
+                **kwargs,  # type: ignore[arg-type]
             )
 
     return parser
@@ -211,9 +213,7 @@ def as_cli(requires_tab: bool = True):
 
                         # Build kwargs from args, excluding 'port'
                         kwargs = {
-                            k.replace("-", "_"): v
-                            for k, v in vars(args).items()
-                            if k != "port"
+                            k.replace("-", "_"): v for k, v in vars(args).items() if k != "port"
                         }
 
                         result = await func(tab, **kwargs)
@@ -227,15 +227,9 @@ def as_cli(requires_tab: bool = True):
             else:
                 # No browser connection needed
                 try:
-                    kwargs = {
-                        k.replace("-", "_"): v
-                        for k, v in vars(args).items()
-                    }
+                    kwargs = {k.replace("-", "_"): v for k, v in vars(args).items()}
 
-                    if is_async:
-                        result = asyncio.run(func(**kwargs))
-                    else:
-                        result = func(**kwargs)
+                    result = asyncio.run(func(**kwargs)) if is_async else func(**kwargs)
 
                     print(json.dumps(result, ensure_ascii=False, indent=2))
 
@@ -244,8 +238,8 @@ def as_cli(requires_tab: bool = True):
                     sys.exit(1)
 
         # Attach CLI runner to the function
-        wrapper.cli_main = cli_main
-        wrapper.__wrapped__ = func
+        wrapper.cli_main = cli_main  # type: ignore[attr-defined]
+        wrapper.__wrapped__ = func  # type: ignore[attr-defined]
 
         return wrapper
 
@@ -283,6 +277,7 @@ def wrap_core(core_func: Callable, result_key: str = "success") -> Callable:
 
         element_click = as_cli()(wrap_core(click, "clicked"))
     """
+
     @functools.wraps(core_func)
     async def wrapper(*args, **kwargs):
         try:

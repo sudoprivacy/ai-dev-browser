@@ -12,6 +12,7 @@ This is invisible to websites (they cannot see process command line).
 
 import uuid
 
+
 # Generate once per process import
 SESSION_ID: str = str(uuid.uuid4())[:8]  # Short ID for readability
 

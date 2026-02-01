@@ -1,6 +1,7 @@
 """List open tabs."""
 
 from ai_dev_browser.core import list_tabs
+
 from .._cli import as_cli
 
 

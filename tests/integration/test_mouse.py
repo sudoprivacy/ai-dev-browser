@@ -1,9 +1,9 @@
 """Integration tests for mouse operations."""
 
-import pytest
 import time
 
-from ai_dev_browser.core import mouse_move, mouse_click, human
+from ai_dev_browser.core import human, mouse_click, mouse_move
+
 from tests.conftest import eval_json
 
 
@@ -57,13 +57,16 @@ class TestMouseClick:
     async def test_mouse_click_at_coordinates(self, test_page):
         """Click at specific coordinates."""
         # Get button position
-        btn_pos = await eval_json(test_page, """
+        btn_pos = await eval_json(
+            test_page,
+            """
             (() => {
                 const btn = document.getElementById('btn1');
                 const rect = btn.getBoundingClientRect();
                 return { x: rect.x + rect.width/2, y: rect.y + rect.height/2 };
             })()
-        """)
+        """,
+        )
 
         await mouse_click(test_page, btn_pos["x"], btn_pos["y"])
 
@@ -72,13 +75,16 @@ class TestMouseClick:
 
     async def test_mouse_click_triggers_trusted_event(self, test_page):
         """Mouse click should produce trusted events."""
-        btn_pos = await eval_json(test_page, """
+        btn_pos = await eval_json(
+            test_page,
+            """
             (() => {
                 const btn = document.getElementById('btn1');
                 const rect = btn.getBoundingClientRect();
                 return { x: rect.x + rect.width/2, y: rect.y + rect.height/2 };
             })()
-        """)
+        """,
+        )
 
         await mouse_click(test_page, btn_pos["x"], btn_pos["y"])
 
@@ -87,13 +93,16 @@ class TestMouseClick:
 
     async def test_mouse_double_click(self, test_page):
         """Double click should work."""
-        btn_pos = await eval_json(test_page, """
+        btn_pos = await eval_json(
+            test_page,
+            """
             (() => {
                 const btn = document.getElementById('btn1');
                 const rect = btn.getBoundingClientRect();
                 return { x: rect.x + rect.width/2, y: rect.y + rect.height/2 };
             })()
-        """)
+        """,
+        )
 
         await human.mouse_double_click(test_page, btn_pos["x"], btn_pos["y"])
 
@@ -132,13 +141,16 @@ class TestMouseHoldTime:
         """With hold enabled, click should be slightly slower."""
         human.configure(click_hold_enabled=True)
 
-        btn_pos = await eval_json(test_page, """
+        btn_pos = await eval_json(
+            test_page,
+            """
             (() => {
                 const btn = document.getElementById('btn1');
                 const rect = btn.getBoundingClientRect();
                 return { x: rect.x + rect.width/2, y: rect.y + rect.height/2 };
             })()
-        """)
+        """,
+        )
 
         start = time.perf_counter()
         await mouse_click(test_page, btn_pos["x"], btn_pos["y"])
@@ -151,13 +163,16 @@ class TestMouseHoldTime:
         """Without hold, click should be instant."""
         human.configure(click_hold_enabled=False)
 
-        btn_pos = await eval_json(test_page, """
+        btn_pos = await eval_json(
+            test_page,
+            """
             (() => {
                 const btn = document.getElementById('btn1');
                 const rect = btn.getBoundingClientRect();
                 return { x: rect.x + rect.width/2, y: rect.y + rect.height/2 };
             })()
-        """)
+        """,
+        )
 
         start = time.perf_counter()
         for _ in range(5):

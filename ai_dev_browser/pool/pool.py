@@ -38,6 +38,7 @@ from .job import Job, JobResult, JobStatus
 from .persistence import PoolState, load_state, save_state
 from .worker import Worker, WorkerStats, WorkerStatus
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -240,7 +241,9 @@ class BrowserPool(Generic[ClientT]):
                 if chrome_process is not None:
                     actual_pid = get_pid_on_port(worker.port)
                     if actual_pid:
-                        logger.info(f"Killing Chrome (PID: {actual_pid}) for worker {worker.worker_id}")
+                        logger.info(
+                            f"Killing Chrome (PID: {actual_pid}) for worker {worker.worker_id}"
+                        )
                         kill_process_tree(actual_pid)
         except Exception as e:
             logger.warning(f"Error closing worker {worker.worker_id}: {e}")
@@ -539,7 +542,9 @@ class BrowserPool(Generic[ClientT]):
                             )
                             # Wait for jobs in selection phase
                             if self._jobs_in_selection:
-                                logger.info(f"[wait] Waiting for {len(self._jobs_in_selection)} jobs in selection...")
+                                logger.info(
+                                    f"[wait] Waiting for {len(self._jobs_in_selection)} jobs in selection..."
+                                )
                                 while self._jobs_in_selection:
                                     for jid in list(pending_ids):
                                         if jid in self._results:

@@ -1,10 +1,8 @@
 """Integration tests for type_text functionality."""
 
-import pytest
 import time
 
-from ai_dev_browser.core import type_text, human
-from ai_dev_browser.core.elements import find_element
+from ai_dev_browser.core import human, type_text
 
 
 class TestTypeDefault:

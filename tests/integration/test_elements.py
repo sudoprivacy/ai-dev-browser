@@ -1,15 +1,14 @@
 """Integration tests for element operations."""
 
-import pytest
 import asyncio
 
 from ai_dev_browser.core import (
+    find_by_xpath,
     find_element,
     find_elements,
-    find_by_xpath,
-    wait_for_element,
-    scroll,
     goto,
+    scroll,
+    wait_for_element,
 )
 
 
@@ -83,6 +82,7 @@ class TestWaitForElement:
 </html>"""
 
         import base64
+
         data_url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
         await goto(tab, data_url)
 
@@ -118,6 +118,7 @@ class TestScroll:
 </html>"""
 
         import base64
+
         data_url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
         await goto(tab, data_url)
         await asyncio.sleep(0.2)
@@ -141,6 +142,7 @@ class TestScroll:
 </html>"""
 
         import base64
+
         data_url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
         await goto(tab, data_url)
         await asyncio.sleep(0.2)
@@ -161,6 +163,7 @@ class TestScroll:
 </html>"""
 
         import base64
+
         data_url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
         await goto(tab, data_url)
         await asyncio.sleep(0.2)

@@ -15,6 +15,7 @@ from .persistence import PoolState, load_state, save_state
 from .pool import BrowserPool
 from .worker import Worker, WorkerStats, WorkerStatus
 
+
 __all__ = [
     # Main pool class
     "BrowserPool",

@@ -1,6 +1,7 @@
 """Execute JavaScript in the page."""
 
 import json
+
 from .._cli import as_cli
 
 

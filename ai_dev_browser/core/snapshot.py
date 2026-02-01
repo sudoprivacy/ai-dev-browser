@@ -11,9 +11,9 @@ def _format_ax_node(
     max_depth: int,
     current_depth: int = 0,
     interactable_only: bool = False,
-) -> list:
+) -> list[dict]:
     """Format an accessibility node into AI-friendly structure."""
-    results = []
+    results: list[dict] = []
 
     if current_depth > max_depth:
         return results
@@ -23,9 +23,7 @@ def _format_ax_node(
     if hasattr(node, "properties") and node.properties:
         for prop in node.properties:
             if hasattr(prop, "name") and hasattr(prop, "value"):
-                name = (
-                    prop.name.value if hasattr(prop.name, "value") else str(prop.name)
-                )
+                name = prop.name.value if hasattr(prop.name, "value") else str(prop.name)
                 val = prop.value.value if hasattr(prop.value, "value") else prop.value
                 props[name] = val
 
@@ -69,11 +67,7 @@ def _format_ax_node(
     is_interactable = role in interactable_roles or props.get("focusable", False)
 
     # Skip non-interactable if filter is on
-    if (
-        interactable_only
-        and not is_interactable
-        and role not in ("heading", "img", "alert")
-    ):
+    if interactable_only and not is_interactable and role not in ("heading", "img", "alert"):
         if hasattr(node, "children") and node.children:
             for child in node.children:
                 results.extend(
@@ -142,9 +136,7 @@ def _format_ax_node(
     if hasattr(node, "children") and node.children:
         for child in node.children:
             results.extend(
-                _format_ax_node(
-                    child, ref_counter, max_depth, current_depth + 1, interactable_only
-                )
+                _format_ax_node(child, ref_counter, max_depth, current_depth + 1, interactable_only)
             )
 
     return results
@@ -260,14 +252,10 @@ async def get_snapshot(
 
     # If specific frame requested, just get that frame
     if frame_id:
-        return await _get_frame_nodes(
-            tab, frame_id, interactable_only, max_depth, ref_prefix=""
-        )
+        return await _get_frame_nodes(tab, frame_id, interactable_only, max_depth, ref_prefix="")
 
     # Get main frame nodes
-    all_nodes = await _get_frame_nodes(
-        tab, None, interactable_only, max_depth, ref_prefix=""
-    )
+    all_nodes = await _get_frame_nodes(tab, None, interactable_only, max_depth, ref_prefix="")
 
     # If not including iframes, return just main frame
     if not include_iframes:

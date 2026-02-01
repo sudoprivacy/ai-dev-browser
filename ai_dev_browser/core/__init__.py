@@ -13,6 +13,11 @@ Usage:
 """
 
 # Config (shared constants)
+# Human-like behavior
+from . import human
+
+# Chrome detection and launching
+from .chrome import find_chrome, launch_chrome
 from .config import (
     DEFAULT_BASE_DIR,
     DEFAULT_COOKIES_DIR,
@@ -26,74 +31,69 @@ from .config import (
     ReuseStrategy,
 )
 
-# Chrome detection and launching
-from .chrome import find_chrome, launch_chrome
-
-# Port management
-from .port import (
-    cleanup_temp_profile,
-    find_debug_chromes,
-    find_ai_dev_browser_chromes,
-    find_our_chromes,
-    get_available_port,
-    is_chrome_in_use,
-    is_ai_dev_browser_chrome_on_port,
-    is_our_chrome_on_port,
-    is_port_in_use,
-)
-
-# Session management
-from .session import get_session_id, is_our_session, extract_session_id
-
-# Process management
-from .process import get_pid_on_port, get_process_cmdline, kill_process_tree
-
 # Connection
 from .connection import connect_browser, get_active_tab
 
-# Navigation
-from .navigation import goto, back, forward, reload, wait_for_load, wait_for_url
+# Dialog
+from .dialog import handle_dialog, setup_auto_dialog_handler, wait_for_dialog
+
+# Download
+from .download import download_file, set_download_path
 
 # Elements
 from .elements import (
+    click,
+    find_by_xpath,
     find_element,
     find_elements,
-    find_by_xpath,
-    click,
-    type_text,
     scroll,
+    type_text,
     wait_for_element,
 )
 
-# Snapshot (AI-friendly accessibility tree)
-from .snapshot import get_snapshot
-
-# Tabs
-from .tabs import new_tab, list_tabs, switch_tab, close_tab
-
-# Page info
-from .page import get_page_info
-
 # Mouse
-from .mouse import mouse_move, mouse_click, mouse_drag
+from .mouse import mouse_click, mouse_drag, mouse_move
 
-# Window
-from .window import resize_window, set_window_state, set_focus_emulation
-
-# Storage
-from .storage import get_local_storage, set_local_storage
-
-# Download
-from .download import set_download_path, download_file
+# Navigation
+from .navigation import back, forward, goto, reload, wait_for_load, wait_for_url
 
 # Overlays
 from .overlays import dismiss_overlays
 
-# Dialog
-from .dialog import handle_dialog, wait_for_dialog, setup_auto_dialog_handler
+# Page info
+from .page import get_page_info
 
-# Human-like behavior
-from . import human
+# Port management
+from .port import (
+    cleanup_temp_profile,
+    find_ai_dev_browser_chromes,
+    find_debug_chromes,
+    find_our_chromes,
+    get_available_port,
+    is_ai_dev_browser_chrome_on_port,
+    is_chrome_in_use,
+    is_our_chrome_on_port,
+    is_port_in_use,
+)
+
+# Process management
+from .process import get_pid_on_port, get_process_cmdline, kill_process_tree
+
+# Session management
+from .session import extract_session_id, get_session_id, is_our_session
+
+# Snapshot (AI-friendly accessibility tree)
+from .snapshot import get_snapshot
+
+# Storage
+from .storage import get_local_storage, set_local_storage
+
+# Tabs
+from .tabs import close_tab, list_tabs, new_tab, switch_tab
+
+# Window
+from .window import resize_window, set_focus_emulation, set_window_state
+
 
 __all__ = [
     # Config

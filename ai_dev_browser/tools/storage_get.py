@@ -1,6 +1,7 @@
 """Get localStorage value."""
 
 from ai_dev_browser.core import get_local_storage
+
 from .._cli import as_cli
 
 

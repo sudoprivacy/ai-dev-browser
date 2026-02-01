@@ -1,10 +1,9 @@
 """Integration tests for complex multi-step workflows."""
 
-import pytest
 import asyncio
 
-from ai_dev_browser.core import click, type_text, mouse_move, mouse_click, human
-from ai_dev_browser.core.elements import find_element
+from ai_dev_browser.core import click, human, mouse_click, mouse_move, type_text
+
 from tests.conftest import eval_json
 
 
@@ -49,6 +48,7 @@ class TestFormWorkflow:
 </html>"""
 
         import base64
+
         data_url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
         await tab.get(data_url)
         await asyncio.sleep(0.3)
@@ -92,6 +92,7 @@ class TestFormWorkflow:
 </html>"""
 
         import base64
+
         data_url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
         await tab.get(data_url)
         await asyncio.sleep(0.3)
@@ -133,13 +134,16 @@ class TestMouseContinuity:
         assert pos1 == (200, 200)
 
         # Get button position and click
-        btn_pos = await eval_json(test_page, """
+        btn_pos = await eval_json(
+            test_page,
+            """
             (() => {
                 const btn = document.getElementById('btn1');
                 const rect = btn.getBoundingClientRect();
                 return { x: rect.x + rect.width/2, y: rect.y + rect.height/2 };
             })()
-        """)
+        """,
+        )
 
         await mouse_click(test_page, btn_pos["x"], btn_pos["y"])
 
@@ -188,6 +192,7 @@ class TestTrustedEventChain:
 </html>"""
 
         import base64
+
         data_url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
         await tab.get(data_url)
         await asyncio.sleep(0.3)
@@ -233,6 +238,7 @@ class TestDynamicContent:
 </html>"""
 
         import base64
+
         data_url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
         await tab.get(data_url)
 
@@ -279,6 +285,7 @@ class TestRapidOperations:
 </html>"""
 
         import base64
+
         data_url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
         await tab.get(data_url)
         await asyncio.sleep(0.3)

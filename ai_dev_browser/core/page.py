@@ -42,7 +42,5 @@ async def get_html(
         HTML string
     """
     if selector:
-        return await tab.evaluate(
-            f"document.querySelector({repr(selector)})?.outerHTML || ''"
-        )
+        return await tab.evaluate(f"document.querySelector({repr(selector)})?.outerHTML || ''")
     return await tab.get_content()

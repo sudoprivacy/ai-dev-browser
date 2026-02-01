@@ -1,6 +1,7 @@
 """Verify and bypass Cloudflare challenge."""
 
 from ai_dev_browser.core.cloudflare import verify_cloudflare
+
 from .._cli import as_cli
 
 

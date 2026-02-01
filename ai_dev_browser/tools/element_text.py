@@ -1,6 +1,7 @@
 """Get text content of an element."""
 
 from ai_dev_browser.core import find_element
+
 from .._cli import as_cli
 
 
@@ -17,9 +18,9 @@ async def element_text(tab, selector: str = None, text: str = None) -> dict:
         return {"error": "Must specify --selector or --text"}
 
     try:
-        element = await find_element(tab, text=text, selector=selector)
-        if element:
-            content = await element.text
+        result = await find_element(tab, text=text, selector=selector)
+        if result["found"] and result["element"]:
+            content = await result["element"].text
             return {"text": content if content else ""}
         else:
             return {"error": "Element not found"}

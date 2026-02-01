@@ -2,7 +2,6 @@
 
 import asyncio
 import time
-from typing import Optional
 
 import nodriver
 
@@ -11,8 +10,8 @@ from . import human
 
 async def find_element(
     tab: nodriver.Tab,
-    text: Optional[str] = None,
-    selector: Optional[str] = None,
+    text: str | None = None,
+    selector: str | None = None,
     timeout: float = 10,
 ) -> dict:
     """Find single element by text or selector.
@@ -40,8 +39,8 @@ async def find_element(
 
 async def find_elements(
     tab: nodriver.Tab,
-    text: Optional[str] = None,
-    selector: Optional[str] = None,
+    text: str | None = None,
+    selector: str | None = None,
     timeout: float = 10,
 ) -> dict:
     """Find all matching elements.
@@ -91,9 +90,9 @@ async def find_by_xpath(
 
 async def click(
     tab: nodriver.Tab,
-    element: Optional[nodriver.Element] = None,
-    text: Optional[str] = None,
-    selector: Optional[str] = None,
+    element: nodriver.Element | None = None,
+    text: str | None = None,
+    selector: str | None = None,
     timeout: float = 10,
     human_like: bool = True,
 ) -> bool:
@@ -131,8 +130,8 @@ async def click(
 async def type_text(
     tab: nodriver.Tab,
     text: str,
-    element: Optional[nodriver.Element] = None,
-    selector: Optional[str] = None,
+    element: nodriver.Element | None = None,
+    selector: str | None = None,
     clear: bool = False,
     timeout: float = 10,
     human_like: bool = None,
@@ -177,7 +176,7 @@ async def scroll(
     amount: int = 25,
     to_bottom: bool = False,
     to_top: bool = False,
-    to_element: Optional[nodriver.Element] = None,
+    to_element: nodriver.Element | None = None,
 ) -> bool:
     """Scroll the page.
 
@@ -207,8 +206,8 @@ async def scroll(
 
 async def wait_for_element(
     tab: nodriver.Tab,
-    text: Optional[str] = None,
-    selector: Optional[str] = None,
+    text: str | None = None,
+    selector: str | None = None,
     timeout: float = 30,
 ) -> dict:
     """Wait for element to appear.

@@ -1,6 +1,7 @@
 """Find elements by XPath."""
 
 from ai_dev_browser.core import find_by_xpath
+
 from .._cli import as_cli
 
 

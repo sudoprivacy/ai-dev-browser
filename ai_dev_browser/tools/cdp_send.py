@@ -2,13 +2,15 @@
 
 import json as json_module
 import re
+
 import nodriver.cdp as cdp
+
 from .._cli import as_cli
 
 
 def _camel_to_snake(name: str) -> str:
     """Convert camelCase to snake_case."""
-    return re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
 
 
 def _get_cdp_command(method: str, params: dict):
@@ -21,7 +23,7 @@ def _get_cdp_command(method: str, params: dict):
     Returns:
         CDP command generator
     """
-    domain, cmd = method.split('.')
+    domain, cmd = method.split(".")
     domain_snake = _camel_to_snake(domain)
     cmd_snake = _camel_to_snake(cmd)
 

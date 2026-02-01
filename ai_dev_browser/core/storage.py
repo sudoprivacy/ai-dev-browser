@@ -1,13 +1,13 @@
 """Local storage operations."""
 
-from typing import Any, Optional
+from typing import Any
 
 import nodriver
 
 
 async def get_local_storage(
     tab: nodriver.Tab,
-    key: Optional[str] = None,
+    key: str | None = None,
 ) -> Any:
     """Get localStorage data.
 

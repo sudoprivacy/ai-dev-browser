@@ -17,13 +17,14 @@ Usage:
 
 import logging
 
+
 logger = logging.getLogger(__name__)
 
 # Generic selectors that work across most sites
 DEFAULT_OVERLAY_SELECTORS = [
     '[class*="backdrop"]',
     '[class*="overlay"]',
-    '.modal-backdrop',  # Bootstrap
+    ".modal-backdrop",  # Bootstrap
 ]
 
 

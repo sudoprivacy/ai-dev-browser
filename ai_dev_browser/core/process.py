@@ -16,6 +16,7 @@ import logging
 import platform
 import subprocess
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -156,7 +157,7 @@ def kill_process_tree(pid: int) -> bool:
             import signal
 
             with contextlib.suppress(ProcessLookupError):
-                os.killpg(os.getpgid(pid), signal.SIGKILL)
+                os.killpg(os.getpgid(pid), signal.SIGKILL)  # type: ignore[attr-defined]
         return True
     except Exception as e:
         logger.warning(f"Failed to kill process tree for PID {pid}: {e}")

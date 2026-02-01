@@ -1,7 +1,5 @@
 """Tab management operations."""
 
-from typing import Optional
-
 import nodriver
 
 
@@ -14,7 +12,7 @@ def _get_browser(browser_or_tab: nodriver.Browser | nodriver.Tab) -> nodriver.Br
 
 async def new_tab(
     browser_or_tab: nodriver.Browser | nodriver.Tab,
-    url: Optional[str] = None,
+    url: str | None = None,
 ) -> nodriver.Tab:
     """Open a new tab.
 
@@ -81,9 +79,7 @@ async def switch_tab(
     browser = _get_browser(browser_or_tab)
 
     if tab_id < 0 or tab_id >= len(browser.tabs):
-        raise IndexError(
-            f"Invalid tab ID: {tab_id}. Available: 0-{len(browser.tabs) - 1}"
-        )
+        raise IndexError(f"Invalid tab ID: {tab_id}. Available: 0-{len(browser.tabs) - 1}")
 
     tab = browser.tabs[tab_id]
     await tab.activate()
@@ -93,8 +89,8 @@ async def switch_tab(
 
 async def close_tab(
     browser_or_tab: nodriver.Browser | nodriver.Tab,
-    tab_id: Optional[int] = None,
-    tab: Optional[nodriver.Tab] = None,
+    tab_id: int | None = None,
+    tab: nodriver.Tab | None = None,
 ) -> int:
     """Close a tab.
 

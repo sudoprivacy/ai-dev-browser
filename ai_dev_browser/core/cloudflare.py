@@ -11,12 +11,11 @@ Usage:
 
 import logging
 
+
 logger = logging.getLogger(__name__)
 
 
-async def verify_cloudflare(
-    tab, max_retries: int = 5, initial_wait: float = 2.0, **kwargs
-) -> bool:
+async def verify_cloudflare(tab, max_retries: int = 5, initial_wait: float = 2.0, **kwargs) -> bool:
     """
     Verify and bypass Cloudflare challenge using nodriver's native verify_cf.
 
@@ -59,9 +58,7 @@ async def verify_cloudflare(
                 # Longer wait between retries to let CF reset
                 await asyncio.sleep(2)
             else:
-                logger.warning(
-                    f"Cloudflare verification failed after {max_retries} attempts: {e}"
-                )
+                logger.warning(f"Cloudflare verification failed after {max_retries} attempts: {e}")
     return False
 
 

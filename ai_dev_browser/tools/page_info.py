@@ -1,6 +1,7 @@
 """Get page info."""
 
 from ai_dev_browser.core import get_page_info
+
 from .._cli import as_cli
 
 

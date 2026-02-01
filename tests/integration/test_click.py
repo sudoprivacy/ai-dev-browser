@@ -1,9 +1,8 @@
 """Integration tests for click functionality."""
 
-import pytest
-
 from ai_dev_browser.core import click, human
 from ai_dev_browser.core.elements import find_element
+
 from tests.conftest import eval_json
 
 

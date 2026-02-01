@@ -1,6 +1,7 @@
 """Download a file."""
 
 from ai_dev_browser.core import download_file as core_download
+
 from .._cli import as_cli
 
 

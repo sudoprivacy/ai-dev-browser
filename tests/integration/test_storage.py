@@ -1,6 +1,5 @@
 """Integration tests for storage and eval operations."""
 
-import pytest
 import asyncio
 
 from ai_dev_browser.core import goto
@@ -37,6 +36,7 @@ class TestPageEval:
 </html>"""
 
         import base64
+
         data_url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
         await goto(tab, data_url)
         await asyncio.sleep(0.2)
@@ -58,6 +58,7 @@ class TestPageEval:
 </html>"""
 
         import base64
+
         data_url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
         await goto(tab, data_url)
         await asyncio.sleep(0.2)

@@ -58,8 +58,10 @@ async def mouse_click(
     """
     # Check if any human-like features are enabled
     config = human.get_config()
-    use_human = human_like if human_like is not None else (
-        config.use_gaussian_path or config.click_hold_enabled
+    use_human = (
+        human_like
+        if human_like is not None
+        else (config.use_gaussian_path or config.click_hold_enabled)
     )
 
     if use_human:

@@ -1,9 +1,12 @@
 """Interactive login helper - opens browser for manual login."""
 
 import asyncio
+import contextlib
 import sys
 from pathlib import Path
+
 from .._cli import as_cli
+
 
 DEFAULT_PROFILE_DIR = Path.home() / ".ai-dev-browser" / "profiles"
 
@@ -72,10 +75,8 @@ async def _login_async(url: str, profile: str) -> dict:
         return {"success": False, "error": str(e)}
     finally:
         if browser:
-            try:
+            with contextlib.suppress(Exception):
                 browser.stop()
-            except Exception:
-                pass
 
 
 if __name__ == "__main__":

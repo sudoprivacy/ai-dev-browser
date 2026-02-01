@@ -1,6 +1,7 @@
 """Close a tab."""
 
 from ai_dev_browser.core import close_tab
+
 from .._cli import as_cli
 
 

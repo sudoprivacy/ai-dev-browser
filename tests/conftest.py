@@ -1,15 +1,17 @@
 """Pytest fixtures for integration tests."""
 
-import pytest
 import asyncio
+import contextlib
 import json
-import nodriver
-
-from ai_dev_browser.core import human
-
 
 # Skip browser tests if SKIP_BROWSER_TESTS env var is set
 import os
+
+import nodriver
+import pytest
+from ai_dev_browser.core import human
+
+
 SKIP_BROWSER = os.environ.get("SKIP_BROWSER_TESTS", "").lower() in ("1", "true", "yes")
 
 
@@ -36,10 +38,8 @@ async def browser():
         browser_args=["--no-sandbox", "--disable-gpu"],
     )
     yield browser
-    try:
+    with contextlib.suppress(Exception):
         browser.stop()
-    except Exception:
-        pass
 
 
 @pytest.fixture
@@ -90,6 +90,7 @@ async def test_page(browser):
 </html>"""
 
     import base64
+
     data_url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
     await tab.get(data_url)
     await asyncio.sleep(0.3)  # Let page render

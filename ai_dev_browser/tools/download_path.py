@@ -1,6 +1,7 @@
 """Set download path."""
 
 from ai_dev_browser.core import set_download_path
+
 from .._cli import as_cli
 
 

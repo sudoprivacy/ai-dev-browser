@@ -6,9 +6,14 @@ otherwise block automation scripts.
 
 from ai_dev_browser.core import (
     handle_dialog as core_handle_dialog,
-    wait_for_dialog as core_wait_for_dialog,
+)
+from ai_dev_browser.core import (
     setup_auto_dialog_handler as core_setup_auto_dialog_handler,
 )
+from ai_dev_browser.core import (
+    wait_for_dialog as core_wait_for_dialog,
+)
+
 from .._cli import as_cli
 
 
