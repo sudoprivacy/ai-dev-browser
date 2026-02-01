@@ -12,10 +12,12 @@ Usage:
     snapshot = await get_snapshot(tab, interactable_only=True)
 """
 
+# Accessibility tree interactions
 # CDP
 # Config (shared constants)
 # Human-like behavior
 from . import human
+from .ax import click_ax_element, click_by_node_id, wait_for_ax_element
 
 # Browser lifecycle
 from .browser import list_browsers, start_browser, stop_browser
@@ -125,6 +127,10 @@ from .window import focus_window, resize_window, set_focus_emulation, set_window
 
 
 __all__ = [
+    # Accessibility tree interactions
+    "click_ax_element",
+    "click_by_node_id",
+    "wait_for_ax_element",
     # Browser lifecycle
     "start_browser",
     "stop_browser",
