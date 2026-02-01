@@ -83,6 +83,7 @@ async def find_by_xpath(
     """
     elements = await tab.xpath(xpath, timeout=timeout)
     return {
+        "found": len(elements) > 0,
         "count": len(elements),
         "elements": elements,
     }
@@ -252,3 +253,49 @@ async def wait_for_element(
             pass
 
         await asyncio.sleep(0.5)
+
+
+async def focus_element(
+    tab: nodriver.Tab,
+    text: str | None = None,
+    selector: str | None = None,
+    timeout: float = 10,
+) -> dict:
+    """Focus an element by selector or text.
+
+    Args:
+        tab: Tab instance
+        text: Text to find element by
+        selector: CSS selector
+
+    Returns:
+        dict with focused status
+    """
+    result = await find_element(tab, text=text, selector=selector, timeout=timeout)
+    if result["found"] and result["element"]:
+        await result["element"].focus()
+        return {"focused": True}
+    return {"focused": False, "error": "Element not found"}
+
+
+async def get_element_text(
+    tab: nodriver.Tab,
+    text: str | None = None,
+    selector: str | None = None,
+    timeout: float = 10,
+) -> dict:
+    """Get text content of an element.
+
+    Args:
+        tab: Tab instance
+        text: Text to find element by
+        selector: CSS selector
+
+    Returns:
+        dict with text content
+    """
+    result = await find_element(tab, text=text, selector=selector, timeout=timeout)
+    if result["found"] and result["element"]:
+        content = await result["element"].text
+        return {"text": content if content else ""}
+    return {"text": None, "error": "Element not found"}

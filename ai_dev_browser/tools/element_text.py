@@ -1,32 +1,11 @@
 """Get text content of an element."""
 
-from ai_dev_browser.core import find_element
+from ai_dev_browser.core import get_element_text
 
-from .._cli import as_cli
+from .._cli import as_cli, wrap_core
 
 
-@as_cli()
-async def element_text(tab, selector: str = None, text: str = None) -> dict:
-    """Get text content of an element.
-
-    Args:
-        tab: Browser tab
-        selector: CSS selector
-        text: Text to find element by
-    """
-    if not selector and not text:
-        return {"error": "Must specify --selector or --text"}
-
-    try:
-        result = await find_element(tab, text=text, selector=selector)
-        if result["found"] and result["element"]:
-            content = await result["element"].text
-            return {"text": content if content else ""}
-        else:
-            return {"error": "Element not found"}
-    except Exception as e:
-        return {"error": f"element_text failed: {e}"}
-
+element_text = as_cli()(wrap_core(get_element_text, "text"))
 
 if __name__ == "__main__":
     element_text.cli_main()

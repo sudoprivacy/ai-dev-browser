@@ -1,25 +1,11 @@
 """Download a file."""
 
-from ai_dev_browser.core import download_file as core_download
+from ai_dev_browser.core import download_file as core_download_file
 
-from .._cli import as_cli
+from .._cli import as_cli, wrap_core
 
 
-@as_cli()
-async def download_file(tab, url: str, path: str) -> dict:
-    """Download a file.
-
-    Args:
-        tab: Browser tab
-        url: URL to download
-        path: Local path to save
-    """
-    try:
-        await core_download(tab, url=url, output=path)
-        return {"downloaded": True, "url": url, "path": path}
-    except Exception as e:
-        return {"error": f"Download failed: {e}"}
-
+download_file = as_cli()(wrap_core(core_download_file, "downloaded"))
 
 if __name__ == "__main__":
     download_file.cli_main()

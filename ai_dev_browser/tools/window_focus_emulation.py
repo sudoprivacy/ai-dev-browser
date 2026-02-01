@@ -16,18 +16,10 @@ Python:
 
 from ai_dev_browser.core import set_focus_emulation
 
-from .._cli import as_cli
+from .._cli import as_cli, wrap_core
 
 
-@as_cli()
-async def window_focus_emulation(tab, enabled: bool = True) -> dict:
-    """Emulate focus so automation works when window is in background."""
-    try:
-        await set_focus_emulation(tab, enabled=enabled)
-        return {"enabled": enabled}
-    except Exception as e:
-        return {"error": f"window_focus_emulation failed: {e}"}
-
+window_focus_emulation = as_cli()(wrap_core(set_focus_emulation, "enabled"))
 
 if __name__ == "__main__":
     window_focus_emulation.cli_main()

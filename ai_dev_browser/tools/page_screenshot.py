@@ -1,35 +1,11 @@
 """Take a screenshot of the page."""
 
-import tempfile
-from pathlib import Path
+from ai_dev_browser.core import screenshot
 
-from .._cli import as_cli
+from .._cli import as_cli, wrap_core
 
 
-@as_cli()
-async def page_screenshot(tab, path: str = None, full_page: bool = False) -> dict:
-    """Take a screenshot of the page.
-
-    Args:
-        tab: Browser tab
-        path: Path to save screenshot (optional, uses temp file if not provided)
-        full_page: If True, capture full page (not just viewport)
-    """
-    try:
-        if path is None:
-            path = tempfile.mktemp(suffix=".png")
-
-        await tab.save_screenshot(path, full_page=full_page)
-
-        file_size = Path(path).stat().st_size
-        return {
-            "path": path,
-            "size": file_size,
-            "success": True,
-        }
-    except Exception as e:
-        return {"error": f"Screenshot failed: {e}"}
-
+page_screenshot = as_cli()(wrap_core(screenshot, "path"))
 
 if __name__ == "__main__":
     page_screenshot.cli_main()

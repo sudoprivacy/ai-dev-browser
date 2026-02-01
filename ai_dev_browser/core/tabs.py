@@ -13,7 +13,7 @@ def _get_browser(browser_or_tab: nodriver.Browser | nodriver.Tab) -> nodriver.Br
 async def new_tab(
     browser_or_tab: nodriver.Browser | nodriver.Tab,
     url: str | None = None,
-) -> nodriver.Tab:
+) -> dict:
     """Open a new tab.
 
     Args:
@@ -21,7 +21,7 @@ async def new_tab(
         url: URL to open (default: about:blank)
 
     Returns:
-        New tab instance
+        dict with url, title, tab (for programmatic use)
     """
     url = url or "about:blank"
 
@@ -31,17 +31,18 @@ async def new_tab(
         tab = await browser_or_tab.get(url)
 
     await tab.sleep(0.5)
-    return tab
+    title = tab.target.title if tab.target else ""
+    return {"url": url, "title": title, "tab": tab}
 
 
-def list_tabs(browser_or_tab: nodriver.Browser | nodriver.Tab) -> list:
+async def list_tabs(browser_or_tab: nodriver.Browser | nodriver.Tab) -> dict:
     """List all open tabs.
 
     Args:
         browser_or_tab: Browser or Tab instance
 
     Returns:
-        List of tab info dicts
+        dict with tabs list and count
     """
     browser = _get_browser(browser_or_tab)
     tabs_info = []
@@ -57,13 +58,13 @@ def list_tabs(browser_or_tab: nodriver.Browser | nodriver.Tab) -> list:
             }
             tabs_info.append(info)
 
-    return tabs_info
+    return {"tabs": tabs_info, "count": len(tabs_info)}
 
 
 async def switch_tab(
     browser_or_tab: nodriver.Browser | nodriver.Tab,
     tab_id: int,
-) -> nodriver.Tab:
+) -> dict:
     """Switch to a different tab.
 
     Args:
@@ -71,7 +72,7 @@ async def switch_tab(
         tab_id: Tab index to switch to
 
     Returns:
-        The activated tab
+        dict with url, title, tab (for programmatic use)
 
     Raises:
         IndexError: If tab_id is invalid
@@ -84,14 +85,16 @@ async def switch_tab(
     tab = browser.tabs[tab_id]
     await tab.activate()
     await tab.bring_to_front()
-    return tab
+    url = tab.target.url if tab.target else ""
+    title = tab.target.title if tab.target else ""
+    return {"url": url, "title": title, "tab": tab}
 
 
 async def close_tab(
     browser_or_tab: nodriver.Browser | nodriver.Tab,
     tab_id: int | None = None,
     tab: nodriver.Tab | None = None,
-) -> int:
+) -> dict:
     """Close a tab.
 
     Args:
@@ -100,7 +103,7 @@ async def close_tab(
         tab: Tab instance to close
 
     Returns:
-        Number of remaining tabs
+        dict with remaining tab count
 
     Raises:
         ValueError: If trying to close the last tab
@@ -116,4 +119,4 @@ async def close_tab(
         tab = browser.main_tab
 
     await tab.close()
-    return len(browser.tabs)
+    return {"remaining": len(browser.tabs)}

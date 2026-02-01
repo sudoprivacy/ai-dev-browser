@@ -257,11 +257,29 @@ def error(message: str, code: int = 1) -> None:
     sys.exit(code)
 
 
+def _json_serializable(obj: Any) -> bool:
+    """Check if object is JSON serializable."""
+    try:
+        json.dumps(obj)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _filter_dict_for_json(d: dict) -> dict:
+    """Filter dict to only JSON-serializable values."""
+    return {k: v for k, v in d.items() if _json_serializable(v)}
+
+
 def wrap_core(core_func: Callable, result_key: str = "success") -> Callable:
     """Wrap a core function for CLI use, preserving its signature (SSOT).
 
     This enables true SSOT: parameters are defined once in core function,
     CLI automatically inherits them.
+
+    Non-JSON-serializable values (like Tab objects) are automatically filtered
+    from the output. Core functions can return them for programmatic use,
+    but CLI will only show serializable values.
 
     Args:
         core_func: The core function to wrap
@@ -288,7 +306,8 @@ def wrap_core(core_func: Callable, result_key: str = "success") -> Callable:
                 else:
                     return {"error": "Operation failed"}
             elif isinstance(result, dict):
-                return result
+                # Filter out non-serializable values for CLI output
+                return _filter_dict_for_json(result)
             else:
                 return {result_key: result}
         except Exception as e:

@@ -8,7 +8,7 @@ import nodriver
 async def set_download_path(
     tab: nodriver.Tab,
     path: str | Path,
-) -> Path:
+) -> dict:
     """Set download directory.
 
     Args:
@@ -16,32 +16,34 @@ async def set_download_path(
         path: Download directory path
 
     Returns:
-        Resolved path
+        dict with resolved path
     """
     resolved = Path(path).expanduser().resolve()
     resolved.mkdir(parents=True, exist_ok=True)
     await tab.set_download_path(str(resolved))
-    return resolved
+    return {"path": str(resolved)}
 
 
 async def download_file(
     tab: nodriver.Tab,
     url: str,
-    output: str | Path | None = None,
-) -> Path | None:
+    path: str | Path | None = None,
+) -> dict:
     """Download a file.
 
     Args:
         tab: Tab instance
         url: URL to download
-        output: Output file path (default: auto)
+        path: Output file path (default: auto)
 
     Returns:
-        Path to downloaded file
+        dict with path and success status
     """
     output_path = None
-    if output:
-        output_path = Path(output).expanduser().resolve()
+    if path:
+        output_path = Path(path).expanduser().resolve()
 
     result = await tab.download_file(url, output_path)
-    return Path(result) if result else None
+    if result:
+        return {"path": str(result), "success": True}
+    return {"path": None, "success": False}

@@ -1,29 +1,11 @@
 """Execute JavaScript in the page."""
 
-import json
+from ai_dev_browser.core import eval_js
 
-from .._cli import as_cli
+from .._cli import as_cli, wrap_core
 
 
-@as_cli()
-async def page_eval(tab, js: str) -> dict:
-    """Execute JavaScript in the page.
-
-    Args:
-        tab: Browser tab
-        js: JavaScript code to execute
-    """
-    try:
-        result = await tab.evaluate(js)
-        # Try to serialize result
-        try:
-            json.dumps(result)
-            return {"result": result}
-        except (TypeError, ValueError):
-            return {"result": str(result)}
-    except Exception as e:
-        return {"error": f"page_eval failed: {e}"}
-
+page_eval = as_cli()(wrap_core(eval_js, "result"))
 
 if __name__ == "__main__":
     page_eval.cli_main()

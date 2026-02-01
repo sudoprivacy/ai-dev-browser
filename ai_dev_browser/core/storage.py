@@ -1,14 +1,12 @@
 """Local storage operations."""
 
-from typing import Any
-
 import nodriver
 
 
 async def get_local_storage(
     tab: nodriver.Tab,
     key: str | None = None,
-) -> Any:
+) -> dict:
     """Get localStorage data.
 
     Args:
@@ -16,23 +14,37 @@ async def get_local_storage(
         key: Specific key to get (default: all)
 
     Returns:
-        Value for key, or dict of all items
+        dict with value (single key) or items (all keys)
     """
     storage = await tab.get_local_storage()
 
     if key is not None:
-        return storage.get(key)
-    return storage
+        return {"key": key, "value": storage.get(key)}
+    return {"items": storage, "count": len(storage)}
 
 
 async def set_local_storage(
     tab: nodriver.Tab,
-    items: dict,
-) -> None:
+    items: dict | None = None,
+    key: str | None = None,
+    value: str | None = None,
+) -> dict:
     """Set localStorage data.
 
     Args:
         tab: Tab instance
-        items: dict of key-value pairs to set
+        items: dict of key-value pairs to set (batch mode)
+        key: Single key to set (simple mode)
+        value: Value for single key (simple mode)
+
+    Returns:
+        dict with set count or key/value
     """
-    await tab.set_local_storage(items)
+    if key is not None and value is not None:
+        await tab.set_local_storage({key: value})
+        return {"key": key, "value": value}
+    elif items:
+        await tab.set_local_storage(items)
+        return {"set": len(items)}
+    else:
+        return {"error": "Must specify items dict or key/value pair"}

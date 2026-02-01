@@ -2,25 +2,10 @@
 
 from ai_dev_browser.core import list_tabs
 
-from .._cli import as_cli
+from .._cli import as_cli, wrap_core
 
 
-@as_cli()
-async def tab_list(tab) -> dict:
-    """List all open tabs.
-
-    Args:
-        tab: Browser tab
-    """
-    try:
-        tabs = list_tabs(tab)
-        return {
-            "tabs": tabs,
-            "count": len(tabs),
-        }
-    except Exception as e:
-        return {"error": f"List tabs failed: {e}"}
-
+tab_list = as_cli()(wrap_core(list_tabs, "tabs"))
 
 if __name__ == "__main__":
     tab_list.cli_main()

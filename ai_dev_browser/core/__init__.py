@@ -46,6 +46,8 @@ from .elements import (
     find_by_xpath,
     find_element,
     find_elements,
+    focus_element,
+    get_element_text,
     scroll,
     type_text,
     wait_for_element,
@@ -61,7 +63,7 @@ from .navigation import back, forward, goto, reload, wait_for_load, wait_for_url
 from .overlays import dismiss_overlays
 
 # Page info
-from .page import get_page_info
+from .page import eval_js, get_page_info, screenshot
 
 # Port management
 from .port import (
@@ -92,7 +94,7 @@ from .storage import get_local_storage, set_local_storage
 from .tabs import close_tab, list_tabs, new_tab, switch_tab
 
 # Window
-from .window import resize_window, set_focus_emulation, set_window_state
+from .window import focus_window, resize_window, set_focus_emulation, set_window_state
 
 
 __all__ = [
@@ -146,6 +148,8 @@ __all__ = [
     "type_text",
     "scroll",
     "wait_for_element",
+    "focus_element",
+    "get_element_text",
     # Snapshot
     "get_snapshot",
     # Tabs
@@ -155,6 +159,8 @@ __all__ = [
     "close_tab",
     # Page
     "get_page_info",
+    "eval_js",
+    "screenshot",
     # Mouse
     "mouse_move",
     "mouse_click",
@@ -163,6 +169,7 @@ __all__ = [
     "resize_window",
     "set_window_state",
     "set_focus_emulation",
+    "focus_window",
     # Storage
     "get_local_storage",
     "set_local_storage",
