@@ -11,7 +11,7 @@ async def mouse_move(
     y: float,
     steps: int = 10,
     human_like: bool = None,
-) -> None:
+) -> bool:
     """Move mouse to coordinates.
 
     Args:
@@ -20,6 +20,9 @@ async def mouse_move(
         y: Y coordinate
         steps: Number of steps for smooth movement (native mode)
         human_like: Use gaussian path (default: from config)
+
+    Returns:
+        True on success
     """
     use_human = human_like if human_like is not None else human.get_config().use_gaussian_path
 
@@ -29,6 +32,7 @@ async def mouse_move(
         await tab.mouse_move(x, y, steps=steps)
         # Track position for human module
         human.set_last_mouse_pos(tab, x, y)
+    return True
 
 
 async def mouse_click(
@@ -38,7 +42,7 @@ async def mouse_click(
     button: str = "left",
     double: bool = False,
     human_like: bool = None,
-) -> None:
+) -> bool:
     """Click at coordinates.
 
     Args:
@@ -48,6 +52,9 @@ async def mouse_click(
         button: "left", "right", or "middle"
         double: If True, double click
         human_like: Use human-like timing (default: from config)
+
+    Returns:
+        True on success
     """
     # Check if any human-like features are enabled
     config = human.get_config()
@@ -66,6 +73,7 @@ async def mouse_click(
         if double:
             await tab.mouse_click(x, y, button=button)
         human.set_last_mouse_pos(tab, x, y)
+    return True
 
 
 async def mouse_drag(
@@ -75,7 +83,7 @@ async def mouse_drag(
     to_x: float,
     to_y: float,
     steps: int = 10,
-) -> None:
+) -> bool:
     """Drag from one point to another.
 
     Args:
@@ -85,6 +93,10 @@ async def mouse_drag(
         to_x: End X coordinate
         to_y: End Y coordinate
         steps: Number of steps for smooth drag
+
+    Returns:
+        True on success
     """
     await tab.mouse_drag((from_x, from_y), (to_x, to_y), steps=steps)
     human.set_last_mouse_pos(tab, to_x, to_y)
+    return True

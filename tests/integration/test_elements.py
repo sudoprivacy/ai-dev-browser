@@ -18,18 +18,21 @@ class TestFindElement:
 
     async def test_find_by_selector(self, test_page):
         """Should find element by CSS selector."""
-        element = await find_element(test_page, selector="#btn1")
-        assert element is not None
+        result = await find_element(test_page, selector="#btn1")
+        assert result["found"] is True
+        assert result["element"] is not None
 
     async def test_find_by_text(self, test_page):
         """Should find element by text content."""
-        element = await find_element(test_page, text="Button 2")
-        assert element is not None
+        result = await find_element(test_page, text="Button 2")
+        assert result["found"] is True
+        assert result["element"] is not None
 
     async def test_find_returns_none_for_missing(self, test_page):
-        """Should return None for non-existent element."""
-        element = await find_element(test_page, selector="#nonexistent", timeout=1)
-        assert element is None
+        """Should return found=False for non-existent element."""
+        result = await find_element(test_page, selector="#nonexistent", timeout=1)
+        assert result["found"] is False
+        assert result["element"] is None
 
 
 class TestFindElements:
@@ -37,9 +40,9 @@ class TestFindElements:
 
     async def test_find_all_matching(self, test_page):
         """Should find all matching elements."""
-        elements = await find_elements(test_page, selector=".btn")
-        assert isinstance(elements, list)
-        assert len(elements) >= 2  # btn1 and btn2
+        result = await find_elements(test_page, selector=".btn")
+        assert result["count"] >= 2  # btn1 and btn2
+        assert isinstance(result["elements"], list)
 
 
 class TestFindByXpath:
@@ -47,8 +50,8 @@ class TestFindByXpath:
 
     async def test_xpath_finds_element(self, test_page):
         """Should find element by XPath."""
-        elements = await find_by_xpath(test_page, "//button")
-        assert len(elements) >= 2
+        result = await find_by_xpath(test_page, "//button")
+        assert result["count"] >= 2
 
 
 class TestWaitForElement:

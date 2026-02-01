@@ -99,7 +99,8 @@ class TestClickOffset:
         human.configure(click_offset_enabled=False)
 
         # Get button position
-        btn = await find_element(test_page, selector="#btn1")
+        result = await find_element(test_page, selector="#btn1")
+        btn = result["element"]
         pos = await btn.get_position()
         center_x, center_y = pos.center
 
@@ -116,7 +117,8 @@ class TestClickOffset:
 
         # Click multiple times
         offsets = []
-        btn = await find_element(test_page, selector="#btn1")
+        result = await find_element(test_page, selector="#btn1")
+        btn = result["element"]
         pos = await btn.get_position()
         center_x, center_y = pos.center
 

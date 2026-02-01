@@ -19,13 +19,14 @@ async def element_find(tab, selector: str = None, text: str = None, all: bool = 
 
     try:
         if all:
-            elements = await find_elements(tab, text=text, selector=selector)
+            result = await find_elements(tab, text=text, selector=selector)
             return {
-                "found": len(elements) > 0,
-                "count": len(elements),
+                "found": result["count"] > 0,
+                "count": result["count"],
             }
         else:
-            element = await find_element(tab, text=text, selector=selector)
+            result = await find_element(tab, text=text, selector=selector)
+            element = result.get("element")
             if element:
                 # Get element info
                 tag = await element.apply("(el) => el.tagName.toLowerCase()")

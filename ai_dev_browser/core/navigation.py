@@ -13,7 +13,7 @@ async def goto(
     url: str,
     new_tab: bool = False,
     wait: bool = True,
-) -> nodriver.Tab:
+) -> dict:
     """Navigate to URL.
 
     Args:
@@ -23,34 +23,49 @@ async def goto(
         wait: If True, wait for page load
 
     Returns:
-        Tab instance (may be new tab if new_tab=True)
+        dict with url, title, success
     """
     result_tab = await tab.get(url, new_tab=new_tab)
 
     if wait:
         await wait_for_load(result_tab)
 
-    return result_tab
+    try:
+        title = await result_tab.evaluate("document.title")
+    except Exception:
+        title = ""
+
+    return {
+        "url": result_tab.target.url if result_tab.target else url,
+        "title": title,
+        "success": True,
+    }
 
 
-async def back(tab: nodriver.Tab) -> None:
+async def back(tab: nodriver.Tab) -> bool:
     """Go back in history."""
     await tab.back()
+    return True
 
 
-async def forward(tab: nodriver.Tab) -> None:
+async def forward(tab: nodriver.Tab) -> bool:
     """Go forward in history."""
     await tab.forward()
+    return True
 
 
-async def reload(tab: nodriver.Tab, ignore_cache: bool = True) -> None:
+async def reload(tab: nodriver.Tab, ignore_cache: bool = True) -> bool:
     """Reload the page.
 
     Args:
         tab: Tab instance
         ignore_cache: If True, ignore browser cache
+
+    Returns:
+        True on success
     """
     await tab.reload(ignore_cache=ignore_cache)
+    return True
 
 
 async def wait_for_load(

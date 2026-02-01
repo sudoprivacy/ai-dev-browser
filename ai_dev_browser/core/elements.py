@@ -14,7 +14,7 @@ async def find_element(
     text: Optional[str] = None,
     selector: Optional[str] = None,
     timeout: float = 10,
-) -> Optional[nodriver.Element]:
+) -> dict:
     """Find single element by text or selector.
 
     Args:
@@ -24,13 +24,18 @@ async def find_element(
         timeout: Search timeout in seconds
 
     Returns:
-        Element if found, None otherwise
+        dict with found, element (for programmatic use)
     """
+    element = None
     if text:
-        return await tab.find(text, timeout=timeout)
+        element = await tab.find(text, timeout=timeout)
     elif selector:
-        return await tab.select(selector, timeout=timeout)
-    return None
+        element = await tab.select(selector, timeout=timeout)
+
+    return {
+        "found": element is not None,
+        "element": element,
+    }
 
 
 async def find_elements(
@@ -38,7 +43,7 @@ async def find_elements(
     text: Optional[str] = None,
     selector: Optional[str] = None,
     timeout: float = 10,
-) -> list:
+) -> dict:
     """Find all matching elements.
 
     Args:
@@ -48,20 +53,25 @@ async def find_elements(
         timeout: Search timeout in seconds
 
     Returns:
-        List of elements
+        dict with count, elements (for programmatic use)
     """
+    elements = []
     if text:
-        return await tab.find_all(text, timeout=timeout)
+        elements = await tab.find_all(text, timeout=timeout)
     elif selector:
-        return await tab.select_all(selector, timeout=timeout)
-    return []
+        elements = await tab.select_all(selector, timeout=timeout)
+
+    return {
+        "count": len(elements),
+        "elements": elements,
+    }
 
 
 async def find_by_xpath(
     tab: nodriver.Tab,
     xpath: str,
     timeout: float = 2.5,
-) -> list:
+) -> dict:
     """Find elements by XPath.
 
     Args:
@@ -70,9 +80,13 @@ async def find_by_xpath(
         timeout: Search timeout in seconds
 
     Returns:
-        List of elements
+        dict with count, elements (for programmatic use)
     """
-    return await tab.xpath(xpath, timeout=timeout)
+    elements = await tab.xpath(xpath, timeout=timeout)
+    return {
+        "count": len(elements),
+        "elements": elements,
+    }
 
 
 async def click(
@@ -100,7 +114,8 @@ async def click(
         True if clicked successfully
     """
     if element is None:
-        element = await find_element(tab, text=text, selector=selector, timeout=timeout)
+        result = await find_element(tab, text=text, selector=selector, timeout=timeout)
+        element = result.get("element")
 
     if element:
         if human_like:
@@ -137,7 +152,8 @@ async def type_text(
         True if typed successfully
     """
     if element is None and selector:
-        element = await find_element(tab, selector=selector, timeout=timeout)
+        result = await find_element(tab, selector=selector, timeout=timeout)
+        element = result.get("element")
 
     if element is None:
         return False
@@ -162,7 +178,7 @@ async def scroll(
     to_bottom: bool = False,
     to_top: bool = False,
     to_element: Optional[nodriver.Element] = None,
-) -> None:
+) -> bool:
     """Scroll the page.
 
     Args:
@@ -172,6 +188,9 @@ async def scroll(
         to_bottom: Scroll to bottom of page
         to_top: Scroll to top of page
         to_element: Scroll element into view
+
+    Returns:
+        True on success
     """
     if to_element:
         await to_element.scroll_into_view()
@@ -183,6 +202,7 @@ async def scroll(
         await tab.scroll_up(amount)
     else:
         await tab.scroll_down(amount)
+    return True
 
 
 async def wait_for_element(
