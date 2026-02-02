@@ -82,6 +82,14 @@ def start_browser(
     # No reusable Chrome found, start new one
     if port is None:
         port = get_available_port(reuse=(reuse != "none"))
+    else:
+        # User specified a port - check if it's available
+        if is_port_in_use(port=port):
+            pid = get_pid_on_port(port)
+            return {
+                "error": f"Port {port} is already in use (PID: {pid}). "
+                f"Use a different port or stop the existing process."
+            }
 
     # Determine user data directory
     if temp:

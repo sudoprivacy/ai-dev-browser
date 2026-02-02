@@ -6,6 +6,13 @@ from pathlib import Path
 
 import nodriver
 
+# Optional PIL for image resizing
+try:
+    from PIL import Image
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+
 
 async def eval_js(tab: nodriver.Tab, expression: str) -> dict:
     """Execute JavaScript in the page.
@@ -30,6 +37,7 @@ async def screenshot(
     tab: nodriver.Tab,
     path: str | None = None,
     full_page: bool = False,
+    css_scale: bool = True,
 ) -> dict:
     """Take a screenshot of the page.
 
@@ -37,19 +45,60 @@ async def screenshot(
         tab: Tab instance
         path: Path to save screenshot (optional, uses temp file if not provided)
         full_page: If True, capture full page (not just viewport)
+        css_scale: If True (default), resize screenshot to CSS pixel dimensions.
+                   This makes screenshot coordinates directly usable for clicking.
+                   If False, return original device pixel resolution.
 
     Returns:
-        dict with path, size, success
+        dict with path, size, width, height, device_pixel_ratio
+
+    Note:
+        When css_scale=True (default), screenshot coordinates can be used directly
+        for mouse clicks without conversion. This matches how Claude in Chrome works.
+
+        When css_scale=False, to convert screenshot pixel coordinates to click coordinates:
+            click_x = pixel_x / device_pixel_ratio
+            click_y = pixel_y / device_pixel_ratio
     """
     if path is None:
         path = tempfile.mktemp(suffix=".png")
 
+    # Get viewport info and device pixel ratio for coordinate mapping
+    viewport_info = await tab.evaluate(
+        "JSON.stringify({width: window.innerWidth, height: window.innerHeight, "
+        "devicePixelRatio: window.devicePixelRatio})"
+    )
+    vp = json.loads(viewport_info)
+    dpr = vp["devicePixelRatio"]
+
     await tab.save_screenshot(path, full_page=full_page)
+
+    # Resize to CSS dimensions if requested and PIL is available
+    if css_scale and HAS_PIL and dpr > 1:
+        with Image.open(path) as img:
+            orig_width, orig_height = img.size
+            new_width = int(orig_width / dpr)
+            new_height = int(orig_height / dpr)
+            resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            resized.save(path)
+            width, height = new_width, new_height
+    else:
+        # Return original dimensions
+        if HAS_PIL:
+            with Image.open(path) as img:
+                width, height = img.size
+        else:
+            width = int(vp["width"] * dpr)
+            height = int(vp["height"] * dpr)
 
     file_size = Path(path).stat().st_size
     return {
         "path": path,
         "size": file_size,
+        "width": width,
+        "height": height,
+        "device_pixel_ratio": dpr,
+        "css_scaled": css_scale and HAS_PIL and dpr > 1,
     }
 
 

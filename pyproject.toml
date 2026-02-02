@@ -28,6 +28,7 @@ classifiers = [
 dependencies = [
     "nodriver>=0.38,<1.0",
     "websocket-client>=1.0",  # For CDP in-use detection
+    "Pillow>=10.0",  # For screenshot CSS scaling
 ]
 
 [project.optional-dependencies]
