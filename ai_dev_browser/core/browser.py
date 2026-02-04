@@ -14,7 +14,44 @@ from .port import (
     is_chrome_in_use,
     is_port_in_use,
 )
-from .process import kill_process_tree
+from .process import get_process_cmdline, kill_process_tree
+
+
+def _is_profile_locked(profile_dir: Path) -> bool:
+    """Check if a Chrome profile is locked by another process.
+
+    Chrome creates a 'SingletonLock' symlink when using a profile.
+    Note: We check both exists() and is_symlink() because:
+    - exists() returns False for broken symlinks
+    - Chrome's SingletonLock is a symlink that may be broken but still indicates lock
+    """
+    singleton_lock = profile_dir / "SingletonLock"
+    return singleton_lock.exists() or singleton_lock.is_symlink()
+
+
+def _find_chrome_using_profile(profile_dir: Path) -> tuple[int, int] | None:
+    """Find an ai-dev-browser Chrome instance using the specified profile.
+
+    Only scans ai-dev-browser's port range (9350-9450) to avoid conflicts
+    with other tools that may use ports like 9222.
+
+    Returns:
+        (port, pid) tuple if found, None otherwise
+    """
+    profile_str = str(profile_dir)
+
+    # Only scan ai-dev-browser Chromes, not all debug Chromes
+    for port in find_ai_dev_browser_chromes():
+        pid = get_pid_on_port(port)
+        if pid:
+            try:
+                cmdline = get_process_cmdline(pid)
+                if cmdline and profile_str in cmdline:
+                    return (port, pid)
+            except Exception:
+                pass
+
+    return None
 
 
 def _find_reusable_chrome(reuse: str) -> int | None:
@@ -100,6 +137,31 @@ def start_browser(
         user_data_dir = Path(DEFAULT_PROFILE_DIR) / profile_name
         user_data_dir.mkdir(parents=True, exist_ok=True)
 
+        # Always check for existing Chrome using this profile
+        # Lock file may be missing even when Chrome is running (e.g., on macOS)
+        existing = _find_chrome_using_profile(user_data_dir)
+        if existing:
+            existing_port, existing_pid = existing
+            # Auto-reuse the existing Chrome with this profile
+            return {
+                "port": existing_port,
+                "pid": existing_pid,
+                "profile": profile_name,
+                "reused": True,
+                "message": f"Profile '{profile_name}' already in use. Reusing Chrome on port {existing_port}.",
+            }
+
+        # Check for stale lock file (lock exists but no Chrome found)
+        if _is_profile_locked(user_data_dir):
+            # Try to remove the stale lock and continue
+            try:
+                (user_data_dir / "SingletonLock").unlink()
+            except Exception:
+                return {
+                    "error": f"Profile '{profile_name}' is locked but no Chrome found. "
+                    f"Try manually removing: {user_data_dir / 'SingletonLock'}"
+                }
+
     # Launch Chrome
     start_url = url or "about:blank"
     process = launch_chrome(
@@ -118,6 +180,14 @@ def start_browser(
             break
         if process.poll() is not None:
             stderr = process.stderr.read() if process.stderr else ""
+            # Provide more helpful error message
+            if not stderr:
+                stderr = (
+                    "Chrome exited silently. Possible causes:\n"
+                    "  - Another Chrome is using this profile\n"
+                    "  - Profile directory is corrupted\n"
+                    "  - Insufficient permissions"
+                )
             return {"error": f"Chrome process exited unexpectedly: {stderr}"}
         time.sleep(poll_interval)
         elapsed += poll_interval
