@@ -13,7 +13,6 @@ from ai_dev_browser.core import (
     back,
     click,
     click_ax_element,
-    eval_js,
     focus_window,
     forward,
     get_accessibility_tree,
@@ -24,6 +23,7 @@ from ai_dev_browser.core import (
     goto,
     handle_dialog_action,
     human,
+    js_exec,
     mouse_click,
     mouse_drag,
     mouse_move,
@@ -54,7 +54,7 @@ async def eval_json(tab, js_expr):
 class TestFormWorkflow:
     """Form interaction: navigate → find fields → type → submit → verify.
 
-    Covers: navigation, elements, type_text, click, wait_for_element, eval_js
+    Covers: navigation, elements, type_text, click, wait_for_element, js_exec
     """
 
     async def test_complete_form_submission(self, browser):
@@ -483,7 +483,7 @@ class TestDialogWorkflow:
 class TestPageOperationsWorkflow:
     """Page operations: screenshot, HTML, eval, scroll.
 
-    Covers: screenshot, get_page_html, eval_js, scroll, get_element_text
+    Covers: screenshot, get_page_html, js_exec, scroll, get_element_text
     """
 
     async def test_page_capture_workflow(self, browser):
@@ -576,15 +576,15 @@ class TestPageOperationsWorkflow:
         await asyncio.sleep(0.2)
 
         # Eval simple expression
-        result = await eval_js(tab, "1 + 1")
+        result = await js_exec(tab, "1 + 1")
         assert result.get("result") == 2
 
         # Eval complex object access
-        result = await eval_js(tab, "window.data.users.length")
+        result = await js_exec(tab, "window.data.users.length")
         assert result.get("result") == 2
 
         # Eval with DOM
-        result = await eval_js(tab, "document.body.tagName")
+        result = await js_exec(tab, "document.body.tagName")
         assert result.get("result") == "BODY"
 
 

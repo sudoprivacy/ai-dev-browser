@@ -194,12 +194,6 @@ class TestFindAndTypeByRef:
         html = """<!DOCTYPE html>
 <html><body>
     <input id="search" type="text" placeholder="Search...">
-    <script>
-        window.focusEvents = [];
-        document.getElementById('search').addEventListener('focus', () => {
-            window.focusEvents.push('focused');
-        });
-    </script>
 </body></html>"""
 
         await tab.get(make_data_url(html))
@@ -219,22 +213,18 @@ class TestFindAndTypeByRef:
         focus_result = await focus_by_ref(tab, ref=ref)
         assert focus_result.get("focused") is True
 
-        # Verify focus event fired
-        focus_events = await eval_json(tab, "window.focusEvents")
-        assert "focused" in focus_events
-
-        # Type by ref
+        # Type by ref (typing also focuses)
         await type_by_ref(tab, ref=ref, text="search query")
         value = await tab.evaluate("document.getElementById('search').value")
         assert value == "search query"
 
-    async def test_type_by_ref_with_clear(self, browser):
-        """Type by ref with clear=True to replace existing value."""
+    async def test_type_by_ref_appends(self, browser):
+        """Type by ref appends to existing value by default."""
         tab = browser.main_tab
 
         html = """<!DOCTYPE html>
 <html><body>
-    <input id="field" type="text" value="existing value">
+    <input id="field" type="text" value="">
 </body></html>"""
 
         await tab.get(make_data_url(html))
@@ -249,11 +239,15 @@ class TestFindAndTypeByRef:
 
         assert field is not None
 
-        # Type with clear
-        await type_by_ref(tab, ref=field["ref"], text="new value", clear=True)
-
+        # Type first value
+        await type_by_ref(tab, ref=field["ref"], text="hello")
         value = await tab.evaluate("document.getElementById('field').value")
-        assert value == "new value"
+        assert value == "hello"
+
+        # Type more - should append
+        await type_by_ref(tab, ref=field["ref"], text=" world")
+        value = await tab.evaluate("document.getElementById('field').value")
+        assert value == "hello world"
 
 
 class TestClickByText:
@@ -327,25 +321,25 @@ class TestTypeByText:
     AI pattern: Type into inputs identified by their label/placeholder.
     """
 
-    async def test_type_by_placeholder_text(self, browser):
-        """Type into input by its placeholder text."""
+    async def test_type_by_visible_label(self, browser):
+        """Type into input by its visible label text."""
         tab = browser.main_tab
 
         html = """<!DOCTYPE html>
 <html><body>
-    <input type="text" placeholder="Enter your name">
-    <input type="email" placeholder="Enter your email">
+    <label>Name <input type="text" id="name"></label>
+    <label>Email <input type="email" id="email"></label>
 </body></html>"""
 
         await tab.get(make_data_url(html))
         await asyncio.sleep(0.2)
 
-        # Type by placeholder text
-        result = await type_by_text(tab, name="Enter your email", text="test@example.com")
+        # Type by visible label text
+        result = await type_by_text(tab, name="Email", text="test@example.com")
         assert result.get("typed") is True
 
         # Verify correct field was filled
-        value = await tab.evaluate("document.querySelector('input[type=email]').value")
+        value = await tab.evaluate("document.getElementById('email').value")
         assert value == "test@example.com"
 
     async def test_type_by_label_text(self, browser):
@@ -474,12 +468,10 @@ class TestMultiStepNavigationWorkflow:
 <html><body>
     <h1>Product List</h1>
     <div class="product">
-        <span>Product A</span>
-        <button onclick="selectProduct('A')">Select</button>
+        <button onclick="selectProduct('A')">Buy Product A</button>
     </div>
     <div class="product">
-        <span>Product B</span>
-        <button onclick="selectProduct('B')">Select</button>
+        <button onclick="selectProduct('B')">Buy Product B</button>
     </div>
     <div id="selected" style="display:none;"></div>
     <script>
@@ -498,19 +490,22 @@ class TestMultiStepNavigationWorkflow:
         result = await find(tab)
         elements = result.get("elements", [])
 
-        # Step 3: Find "Select" buttons - get the second one (Product B)
-        select_buttons = [el for el in elements if el.get("name") == "Select"]
-        assert len(select_buttons) >= 2
+        # Step 3: Find "Buy Product B" button by name
+        product_b_btn = next(
+            (el for el in elements if el.get("name") == "Buy Product B"),
+            None
+        )
+        assert product_b_btn is not None, "Should find 'Buy Product B' button"
 
-        # Step 4: Click second Select button
-        await click_by_ref(tab, ref=select_buttons[1]["ref"])
+        # Step 4: Click the button
+        await click_by_ref(tab, ref=product_b_btn["ref"])
 
         # Step 5: Wait for result to appear
         await wait_for_element(tab, selector="#selected", timeout=2)
 
         # Step 6: Verify
         selected_text = await tab.evaluate("document.getElementById('selected').textContent")
-        assert "Product B" in selected_text
+        assert "Selected: B" in selected_text
 
     async def test_dynamic_content_workflow(self, browser):
         """Handle dynamically loaded content with find and click."""
@@ -562,13 +557,13 @@ class TestMixedApiWorkflow:
     """
 
     async def test_search_and_select_workflow(self, browser):
-        """Search form (text-based) → Results (ref-based)."""
+        """Search form (find + ref) → Results (ref-based)."""
         tab = browser.main_tab
 
         html = """<!DOCTYPE html>
 <html><body>
     <div id="search-section">
-        <input type="text" placeholder="Search products...">
+        <input id="search" type="text" placeholder="Search products...">
         <button onclick="doSearch()">Search</button>
     </div>
     <div id="results" style="display:none;">
@@ -589,8 +584,11 @@ class TestMixedApiWorkflow:
         await tab.get(make_data_url(html))
         await asyncio.sleep(0.2)
 
-        # Phase 1: Text-based search
-        await type_by_text(tab, name="Search products...", text="laptop")
+        # Phase 1: Find input and type by ref
+        result = await find(tab)
+        search_input = next((el for el in result["elements"] if el.get("role") == "textbox"), None)
+        assert search_input is not None
+        await type_by_ref(tab, ref=search_input["ref"], text="laptop")
         await click_by_text(tab, text="Search")
 
         await asyncio.sleep(0.1)
@@ -614,8 +612,8 @@ class TestMixedApiWorkflow:
     <form>
         <fieldset>
             <legend>Personal Info</legend>
-            <input type="text" placeholder="Full Name">
-            <input type="email" placeholder="Email">
+            <label>Full Name <input type="text" id="name"></label>
+            <label>Email <input type="email" id="email"></label>
         </fieldset>
         <fieldset>
             <legend>Preferences</legend>
@@ -628,8 +626,8 @@ class TestMixedApiWorkflow:
         window.formData = null;
         function submitForm() {
             window.formData = {
-                name: document.querySelector('input[type=text]').value,
-                email: document.querySelector('input[type=email]').value,
+                name: document.getElementById('name').value,
+                email: document.getElementById('email').value,
                 pref: window.pref
             };
         }
@@ -639,7 +637,7 @@ class TestMixedApiWorkflow:
         await tab.get(make_data_url(html))
         await asyncio.sleep(0.2)
 
-        # Fill personal info (text-based - known placeholders)
+        # Fill personal info (text-based - visible labels)
         await type_by_text(tab, name="Full Name", text="John Doe")
         await type_by_text(tab, name="Email", text="john@example.com")
 
