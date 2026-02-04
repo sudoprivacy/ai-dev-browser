@@ -14,12 +14,12 @@ except ImportError:
     HAS_PIL = False
 
 
-async def eval_js(tab: nodriver.Tab, expression: str) -> dict:
-    """Execute JavaScript in the page.
+async def js_exec(tab: nodriver.Tab, expression: str) -> dict:
+    """Execute JavaScript in the page context.
 
     Args:
         tab: Tab instance
-        expression: JavaScript code to execute
+        expression: JavaScript code to execute. Result of last expression is returned.
 
     Returns:
         dict with result (serializable) or error

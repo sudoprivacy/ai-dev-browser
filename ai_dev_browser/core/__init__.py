@@ -17,7 +17,7 @@ Usage:
 # Config (shared constants)
 # Human-like behavior
 from . import human
-from .ax import click_ax_element, click_by_node_id, wait_for_ax_element
+from .ax import click_ax_element, click_by_node_id, click_ref, wait_for_ax_element
 
 # Browser lifecycle
 from .browser import list_browsers, start_browser, stop_browser
@@ -61,6 +61,7 @@ from .download import download_file, set_download_path
 # Elements
 from .elements import (
     click,
+    click_text,
     find_by_xpath,
     find_element,
     find_element_info,
@@ -92,7 +93,7 @@ from .navigation import (
 from .overlays import dismiss_overlays
 
 # Page info
-from .page import eval_js, get_page_html, get_page_info, screenshot
+from .page import get_page_html, get_page_info, js_exec, screenshot
 
 # Port management
 from .port import (
@@ -114,7 +115,7 @@ from .process import get_pid_on_port, get_process_cmdline, kill_process_tree
 from .session import extract_session_id, get_session_id, is_our_session
 
 # Snapshot (AI-friendly accessibility tree)
-from .snapshot import get_accessibility_tree, get_snapshot
+from .snapshot import find, get_accessibility_tree, get_snapshot
 
 # Storage
 from .storage import get_local_storage, set_local_storage
@@ -130,6 +131,7 @@ __all__ = [
     # Accessibility tree interactions
     "click_ax_element",
     "click_by_node_id",
+    "click_ref",
     "wait_for_ax_element",
     # Browser lifecycle
     "start_browser",
@@ -189,6 +191,7 @@ __all__ = [
     "find_elements",
     "find_by_xpath",
     "click",
+    "click_text",
     "type_text",
     "scroll",
     "wait_for_element",
@@ -196,6 +199,7 @@ __all__ = [
     "focus_element",
     "get_element_text",
     # Snapshot
+    "find",
     "get_snapshot",
     "get_accessibility_tree",
     # Tabs
@@ -206,7 +210,7 @@ __all__ = [
     # Page
     "get_page_info",
     "get_page_html",
-    "eval_js",
+    "js_exec",
     "screenshot",
     # Mouse
     "mouse_move",

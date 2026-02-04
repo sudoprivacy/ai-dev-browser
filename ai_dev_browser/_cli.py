@@ -149,12 +149,25 @@ def _generate_parser(
                 help_text = "(str)"
 
         if hint is bool:
-            # For bool, use store_true/store_false action
-            parser.add_argument(
-                f"--{name.replace('_', '-')}",
-                action="store_true" if param.default is False else "store_false",
-                help=help_text,
-            )
+            # For bool, use intuitive flag names:
+            # - default False: --flag to enable (store_true)
+            # - default True: --no-flag to disable (store_false)
+            if param.default is False or param.default is inspect.Parameter.empty:
+                parser.add_argument(
+                    f"--{name.replace('_', '-')}",
+                    action="store_true",
+                    default=False,
+                    help=help_text,
+                )
+            else:
+                # Default is True, use --no-xxx to disable
+                parser.add_argument(
+                    f"--no-{name.replace('_', '-')}",
+                    dest=name.replace("-", "_"),
+                    action="store_false",
+                    default=True,
+                    help=f"Disable: {help_text}",
+                )
         else:
             kwargs: dict[str, Any] = {
                 "type": param_type,

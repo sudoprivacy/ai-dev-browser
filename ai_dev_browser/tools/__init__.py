@@ -9,10 +9,6 @@ Discovery:
 """
 
 # Browser management (no tab required)
-from .ax_select import ax_select
-
-# Accessibility tree
-from .ax_tree import ax_tree
 from .browser_list import browser_list
 from .browser_start import browser_start
 from .browser_stop import browser_stop
@@ -20,6 +16,10 @@ from .browser_stop import browser_stop
 # CDP & Cloudflare
 from .cdp_send import cdp_send
 from .cf_verify import cf_verify
+
+# Click actions (primary for AI)
+from .click_ref import click_ref
+from .click_text import click_text
 
 # Cookies
 from .cookies_list import cookies_list
@@ -31,13 +31,16 @@ from .download_file import download_file
 from .download_path import download_path
 
 # Element actions
-from .element_click import element_click
-from .element_find import element_find
 from .element_focus import element_focus
 from .element_text import element_text
 from .element_type import element_type
 from .element_wait import element_wait
-from .element_xpath import element_xpath
+
+# Find (main discovery tool for AI)
+from .find import find
+
+# JavaScript execution
+from .js_exec import js_exec
 
 # Session
 from .login_interactive import login_interactive
@@ -48,7 +51,6 @@ from .mouse_drag import mouse_drag
 from .mouse_move import mouse_move
 
 # Page actions
-from .page_eval import page_eval
 from .page_goto import page_goto
 from .page_handle_dialog import page_handle_dialog
 from .page_html import page_html
@@ -81,16 +83,19 @@ __all__ = [
     "browser_list",
     "browser_start",
     "browser_stop",
+    # Click (primary for AI)
+    "click_ref",
+    "click_text",
     # Element
-    "element_click",
-    "element_find",
     "element_focus",
     "element_text",
     "element_type",
     "element_wait",
-    "element_xpath",
+    # Find (main discovery tool for AI)
+    "find",
+    # JavaScript
+    "js_exec",
     # Page
-    "page_eval",
     "page_goto",
     "page_handle_dialog",
     "page_html",
@@ -100,9 +105,6 @@ __all__ = [
     "page_wait_url",
     "page_screenshot",
     "scroll",
-    # Accessibility tree
-    "ax_tree",
-    "ax_select",
     # Session
     "login_interactive",
     # Mouse

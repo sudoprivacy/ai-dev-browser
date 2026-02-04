@@ -4,8 +4,10 @@ import asyncio
 import time
 
 import nodriver
+import nodriver.cdp.dom as dom
 
 from . import human
+from .snapshot import get_snapshot
 
 
 async def find_element(
@@ -371,3 +373,32 @@ async def wait_for_element_with_info(
         result["message"] = f"Timeout after {timeout}s"
 
     return result
+
+
+async def click_text(
+    tab: nodriver.Tab,
+    text: str,
+    timeout: float = 10,
+    human_like: bool = True,
+) -> dict:
+    """Click element by text content.
+
+    This is the primary way for AI to click elements. Use find() first to
+    see available elements, then click_text with the exact text.
+
+    Args:
+        tab: Tab instance
+        text: Text content of the element to click
+        timeout: Search timeout in seconds
+        human_like: Use CDP events (default True, recommended)
+
+    Returns:
+        dict with clicked status
+
+    Example:
+        click_text("登录")
+        click_text("Sign in")
+        click_text("Submit", timeout=5)
+    """
+    result = await click(tab, text=text, timeout=timeout, human_like=human_like)
+    return {"clicked": result, "text": text}

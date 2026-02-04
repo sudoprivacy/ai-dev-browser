@@ -310,3 +310,95 @@ async def get_accessibility_tree(
         include_iframes=include_iframes,
     )
     return {"elements": elements, "count": len(elements)}
+
+
+async def find(
+    tab: nodriver.Tab,
+    text: str | None = None,
+    interactable_only: bool = True,
+    include_coordinates: bool = True,
+    include_iframes: bool = True,
+) -> dict:
+    """Find elements on the page - the main discovery tool for AI.
+
+    Returns interactive elements with their refs (for click_ref) and
+    coordinates (for mouse_click). Use this to discover what's on the page
+    before clicking.
+
+    Args:
+        tab: Tab instance
+        text: Optional text filter (case-insensitive substring match)
+        interactable_only: If True (default), only return interactive elements
+        include_coordinates: If True (default), include x/y coordinates
+        include_iframes: If True (default), include iframe content
+
+    Returns:
+        dict with elements list, each containing:
+        - ref: reference for click_ref (e.g., "5#214")
+        - role: element role (button, link, textbox, etc.)
+        - name: accessible name
+        - x, y: center coordinates (if include_coordinates=True)
+        - box: {left, top, right, bottom} (if include_coordinates=True)
+
+    Example:
+        find()                    # All interactive elements
+        find(text="登录")         # Filter by text
+        find(text="Sign")         # Case-insensitive match
+    """
+    import nodriver.cdp.dom as dom
+
+    # Get accessibility tree
+    elements = await get_snapshot(
+        tab,
+        interactable_only=interactable_only,
+        include_iframes=include_iframes,
+    )
+
+    # Filter by text if specified
+    if text:
+        text_lower = text.lower()
+        elements = [
+            el for el in elements
+            if text_lower in (el.get("name") or "").lower()
+        ]
+
+    # Add coordinates if requested
+    if include_coordinates:
+        for el in elements:
+            ref = el.get("ref", "")
+            # Extract node_id from ref (format: "5#214" or "FRAME_xxx:5#214")
+            node_id = None
+            if "#" in ref:
+                try:
+                    node_id_str = ref.split("#")[-1]
+                    node_id = int(node_id_str)
+                except (ValueError, IndexError):
+                    pass
+
+            if node_id:
+                try:
+                    backend_node_id = dom.BackendNodeId(node_id)
+                    box = await tab.send(dom.get_box_model(backend_node_id=backend_node_id))
+                    if box and box.content:
+                        quad = box.content
+                        # Calculate center
+                        x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4
+                        y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4
+                        el["x"] = round(x)
+                        el["y"] = round(y)
+                        # Calculate bounding box
+                        left = min(quad[0], quad[2], quad[4], quad[6])
+                        top = min(quad[1], quad[3], quad[5], quad[7])
+                        right = max(quad[0], quad[2], quad[4], quad[6])
+                        bottom = max(quad[1], quad[3], quad[5], quad[7])
+                        el["box"] = {
+                            "left": round(left),
+                            "top": round(top),
+                            "right": round(right),
+                            "bottom": round(bottom),
+                        }
+                except Exception:
+                    # Skip coordinates for this element if we can't get them
+                    pass
+
+    return {"elements": elements, "count": len(elements)}

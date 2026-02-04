@@ -277,3 +277,28 @@ async def click_ax_element(
                 result["wait_timeout"] = True
 
     return result
+
+
+async def click_ref(
+    tab: nodriver.Tab,
+    ref: str,
+) -> dict:
+    """Click element by ref from find().
+
+    This is the primary way for AI to click elements by ref. Use find() first
+    to get element refs, then click_ref with the ref string.
+
+    Args:
+        tab: Tab instance
+        ref: Element ref from find() (e.g., "5#214" or "FRAME_ABC123:5#214")
+
+    Returns:
+        dict with clicked status and element info
+
+    Example:
+        # First find elements
+        result = find()
+        # Then click by ref
+        click_ref("5#214")
+    """
+    return await click_ax_element(tab, ref=ref)
