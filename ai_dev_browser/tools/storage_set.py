@@ -1,11 +1,14 @@
-"""Set localStorage value."""
+"""AUTO-GENERATED from ai_dev_browser.core.storage.set_local_storage
+DO NOT EDIT - modify the core function instead, then run:
+    python -m ai_dev_browser.tools._generate
+"""
 
-from ai_dev_browser.core import set_local_storage
+from ai_dev_browser.core.storage import set_local_storage as _core_func
 
 from .._cli import as_cli, wrap_core
 
 
-storage_set = as_cli()(wrap_core(set_local_storage, "set"))
+storage_set = as_cli()(wrap_core(_core_func, "set"))
 
 if __name__ == "__main__":
     storage_set.cli_main()

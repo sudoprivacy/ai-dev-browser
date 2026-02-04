@@ -1,11 +1,14 @@
-"""List browser cookies."""
+"""AUTO-GENERATED from ai_dev_browser.core.cookies.list_cookies
+DO NOT EDIT - modify the core function instead, then run:
+    python -m ai_dev_browser.tools._generate
+"""
 
-from ai_dev_browser.core import list_cookies
+from ai_dev_browser.core.cookies import list_cookies as _core_func
 
 from .._cli import as_cli, wrap_core
 
 
-cookies_list = as_cli()(wrap_core(list_cookies, "cookies"))
+cookies_list = as_cli()(wrap_core(_core_func, "cookies"))
 
 if __name__ == "__main__":
     cookies_list.cli_main()

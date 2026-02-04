@@ -20,7 +20,7 @@ from . import human
 from .ax import (
     click_ax_element,
     click_by_node_id,
-    click_ref,
+    click_by_ref,
     focus_by_ref,
     type_by_ref,
     wait_for_ax_element,
@@ -68,7 +68,7 @@ from .download import download_file, set_download_path
 # Elements
 from .elements import (
     click,
-    click_text,
+    click_by_text,
     find_by_xpath,
     find_element,
     find_element_info,
@@ -139,7 +139,7 @@ __all__ = [
     # Accessibility tree interactions
     "click_ax_element",
     "click_by_node_id",
-    "click_ref",
+    "click_by_ref",
     "focus_by_ref",
     "type_by_ref",
     "wait_for_ax_element",
@@ -201,7 +201,7 @@ __all__ = [
     "find_elements",
     "find_by_xpath",
     "click",
-    "click_text",
+    "click_by_text",
     "type_by_text",
     "type_text",
     "scroll",

@@ -1,11 +1,14 @@
-"""Bring browser window to front."""
+"""AUTO-GENERATED from ai_dev_browser.core.window.focus_window
+DO NOT EDIT - modify the core function instead, then run:
+    python -m ai_dev_browser.tools._generate
+"""
 
-from ai_dev_browser.core import focus_window
+from ai_dev_browser.core.window import focus_window as _core_func
 
 from .._cli import as_cli, wrap_core
 
 
-window_focus = as_cli()(wrap_core(focus_window, "focused"))
+window_focus = as_cli()(wrap_core(_core_func, "focused"))
 
 if __name__ == "__main__":
     window_focus.cli_main()

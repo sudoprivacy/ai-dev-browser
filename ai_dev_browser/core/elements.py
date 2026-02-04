@@ -375,7 +375,7 @@ async def wait_for_element_with_info(
     return result
 
 
-async def click_text(
+async def click_by_text(
     tab: nodriver.Tab,
     text: str,
     timeout: float = 10,
@@ -384,7 +384,7 @@ async def click_text(
     """Click element by text content.
 
     This is the primary way for AI to click elements. Use find() first to
-    see available elements, then click_text with the exact text.
+    see available elements, then click_by_text with the exact text.
 
     Args:
         tab: Tab instance
@@ -396,9 +396,9 @@ async def click_text(
         dict with clicked status
 
     Example:
-        click_text("登录")
-        click_text("Sign in")
-        click_text("Submit", timeout=5)
+        click_by_text("登录")
+        click_by_text("Sign in")
+        click_by_text("Submit", timeout=5)
     """
     result = await click(tab, text=text, timeout=timeout, human_like=human_like)
     return {"clicked": result, "text": text}

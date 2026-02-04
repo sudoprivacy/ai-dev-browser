@@ -1,12 +1,14 @@
-"""Scroll the page."""
+"""AUTO-GENERATED from ai_dev_browser.core.elements.scroll
+DO NOT EDIT - modify the core function instead, then run:
+    python -m ai_dev_browser.tools._generate
+"""
 
-from ai_dev_browser.core import scroll as core_scroll
+from ai_dev_browser.core.elements import scroll as _core_func
 
 from .._cli import as_cli, wrap_core
 
 
-# True SSOT: parameters defined once in core.scroll, CLI inherits automatically
-scroll = as_cli()(wrap_core(core_scroll, "scrolled"))
+scroll = as_cli()(wrap_core(_core_func, "scrolled"))
 
 if __name__ == "__main__":
     scroll.cli_main()

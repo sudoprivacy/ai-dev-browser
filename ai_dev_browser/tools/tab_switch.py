@@ -1,11 +1,14 @@
-"""Switch to a tab."""
+"""AUTO-GENERATED from ai_dev_browser.core.tabs.switch_tab
+DO NOT EDIT - modify the core function instead, then run:
+    python -m ai_dev_browser.tools._generate
+"""
 
-from ai_dev_browser.core import switch_tab
+from ai_dev_browser.core.tabs import switch_tab as _core_func
 
 from .._cli import as_cli, wrap_core
 
 
-tab_switch = as_cli()(wrap_core(switch_tab, "switched"))
+tab_switch = as_cli()(wrap_core(_core_func, "switched"))
 
 if __name__ == "__main__":
     tab_switch.cli_main()

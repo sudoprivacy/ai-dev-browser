@@ -279,14 +279,14 @@ async def click_ax_element(
     return result
 
 
-async def click_ref(
+async def click_by_ref(
     tab: nodriver.Tab,
     ref: str,
 ) -> dict:
     """Click element by ref from find().
 
     This is the primary way for AI to click elements by ref. Use find() first
-    to get element refs, then click_ref with the ref string.
+    to get element refs, then click_by_ref with the ref string.
 
     Args:
         tab: Tab instance
@@ -299,7 +299,7 @@ async def click_ref(
         # First find elements
         result = find()
         # Then click by ref
-        click_ref("5#214")
+        click_by_ref("5#214")
     """
     return await click_ax_element(tab, ref=ref)
 

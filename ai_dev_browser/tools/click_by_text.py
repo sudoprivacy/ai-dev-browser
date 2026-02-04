@@ -1,11 +1,14 @@
-"""Click element by text content."""
+"""AUTO-GENERATED from ai_dev_browser.core.elements.click_by_text
+DO NOT EDIT - modify the core function instead, then run:
+    python -m ai_dev_browser.tools._generate
+"""
 
-from ai_dev_browser.core.elements import click_text as core_click_text
+from ai_dev_browser.core.elements import click_by_text as _core_func
 
 from .._cli import as_cli, wrap_core
 
 
-click_by_text = as_cli()(wrap_core(core_click_text, "clicked"))
+click_by_text = as_cli()(wrap_core(_core_func, "clicked"))
 
 if __name__ == "__main__":
     click_by_text.cli_main()

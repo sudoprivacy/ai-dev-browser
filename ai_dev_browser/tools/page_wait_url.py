@@ -1,11 +1,14 @@
-"""Wait for URL to match a pattern."""
+"""AUTO-GENERATED from ai_dev_browser.core.navigation.wait_for_url
+DO NOT EDIT - modify the core function instead, then run:
+    python -m ai_dev_browser.tools._generate
+"""
 
-from ai_dev_browser.core import wait_for_url_match
+from ai_dev_browser.core.navigation import wait_for_url as _core_func
 
 from .._cli import as_cli, wrap_core
 
 
-page_wait_url = as_cli()(wrap_core(wait_for_url_match, "matched"))
+page_wait_url = as_cli()(wrap_core(_core_func, "matched"))
 
 if __name__ == "__main__":
     page_wait_url.cli_main()

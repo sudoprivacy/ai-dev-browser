@@ -1,13 +1,14 @@
-"""Drag mouse from one point to another."""
+"""AUTO-GENERATED from ai_dev_browser.core.mouse.mouse_drag
+DO NOT EDIT - modify the core function instead, then run:
+    python -m ai_dev_browser.tools._generate
+"""
 
-from ai_dev_browser.core import mouse_drag as core_mouse_drag
+from ai_dev_browser.core.mouse import mouse_drag as _core_func
 
 from .._cli import as_cli, wrap_core
 
 
-# True SSOT: parameters defined once in core.mouse_drag, CLI inherits automatically
-# Note: CLI params are from_x/from_y/to_x/to_y (matching core)
-mouse_drag = as_cli()(wrap_core(core_mouse_drag, "dragged"))
+mouse_drag = as_cli()(wrap_core(_core_func, "dragged"))
 
 if __name__ == "__main__":
     mouse_drag.cli_main()
