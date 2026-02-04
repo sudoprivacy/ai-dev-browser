@@ -17,7 +17,14 @@ Usage:
 # Config (shared constants)
 # Human-like behavior
 from . import human
-from .ax import click_ax_element, click_by_node_id, click_ref, wait_for_ax_element
+from .ax import (
+    click_ax_element,
+    click_by_node_id,
+    click_ref,
+    focus_by_ref,
+    type_by_ref,
+    wait_for_ax_element,
+)
 
 # Browser lifecycle
 from .browser import list_browsers, start_browser, stop_browser
@@ -69,6 +76,7 @@ from .elements import (
     focus_element,
     get_element_text,
     scroll,
+    type_by_text,
     type_text,
     wait_for_element,
     wait_for_element_with_info,
@@ -132,6 +140,8 @@ __all__ = [
     "click_ax_element",
     "click_by_node_id",
     "click_ref",
+    "focus_by_ref",
+    "type_by_ref",
     "wait_for_ax_element",
     # Browser lifecycle
     "start_browser",
@@ -192,6 +202,7 @@ __all__ = [
     "find_by_xpath",
     "click",
     "click_text",
+    "type_by_text",
     "type_text",
     "scroll",
     "wait_for_element",

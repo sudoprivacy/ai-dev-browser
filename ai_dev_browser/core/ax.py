@@ -302,3 +302,108 @@ async def click_ref(
         click_ref("5#214")
     """
     return await click_ax_element(tab, ref=ref)
+
+
+async def focus_by_ref(
+    tab: nodriver.Tab,
+    ref: str,
+) -> dict:
+    """Focus element by ref from find().
+
+    Use find() first to get element refs, then focus_by_ref.
+    Useful when you need to focus without clicking (e.g., to avoid
+    triggering click handlers).
+
+    Args:
+        tab: Tab instance
+        ref: Element ref from find() (e.g., "5#214")
+
+    Returns:
+        dict with focused status
+
+    Example:
+        focus_by_ref("5#214")
+    """
+    # Parse ref to extract node_id
+    _, _, node_id = _parse_ref(ref)
+
+    if node_id is None:
+        return {"focused": False, "error": f"Invalid ref format: {ref}"}
+
+    try:
+        backend_node_id = dom.BackendNodeId(node_id)
+        await tab.send(dom.focus(backend_node_id=backend_node_id))
+        return {"focused": True, "ref": ref}
+    except Exception as e:
+        return {"focused": False, "error": str(e)}
+
+
+async def type_by_ref(
+    tab: nodriver.Tab,
+    ref: str,
+    text: str,
+    clear: bool = False,
+) -> dict:
+    """Type text into element by ref from find().
+
+    Use find() first to get element refs, then type_by_ref.
+
+    Args:
+        tab: Tab instance
+        ref: Element ref from find() (e.g., "5#214")
+        text: Text to type into the element
+        clear: If True, clear existing content first
+
+    Returns:
+        dict with typed status
+
+    Example:
+        type_by_ref("5#214", "myusername")
+        type_by_ref("5#214", "newvalue", clear=True)
+    """
+    # First focus the element
+    focus_result = await focus_by_ref(tab, ref)
+    if not focus_result.get("focused"):
+        return {"typed": False, "error": focus_result.get("error", "Focus failed")}
+
+    # Clear if requested (select all + delete)
+    if clear:
+        # Select all
+        await tab.send(
+            cdp_input.dispatch_key_event(
+                type_="keyDown",
+                modifiers=2,  # Ctrl/Cmd
+                key="a",
+                code="KeyA",
+            )
+        )
+        await tab.send(
+            cdp_input.dispatch_key_event(
+                type_="keyUp",
+                modifiers=2,
+                key="a",
+                code="KeyA",
+            )
+        )
+        # Delete
+        await tab.send(
+            cdp_input.dispatch_key_event(
+                type_="keyDown",
+                key="Backspace",
+                code="Backspace",
+            )
+        )
+        await tab.send(
+            cdp_input.dispatch_key_event(
+                type_="keyUp",
+                key="Backspace",
+                code="Backspace",
+            )
+        )
+
+    # Type text using insertText (most reliable for input fields)
+    await tab.send(
+        cdp_input.insert_text(text=text)
+    )
+
+    return {"typed": True, "ref": ref, "text": text}

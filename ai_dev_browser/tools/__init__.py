@@ -18,8 +18,8 @@ from .cdp_send import cdp_send
 from .cf_verify import cf_verify
 
 # Click actions (primary for AI)
-from .click_ref import click_ref
-from .click_text import click_text
+from .click_by_ref import click_by_ref
+from .click_by_text import click_by_text
 
 # Cookies
 from .cookies_list import cookies_list
@@ -30,14 +30,14 @@ from .cookies_save import cookies_save
 from .download_file import download_file
 from .download_path import download_path
 
-# Element actions
-from .element_focus import element_focus
-from .element_text import element_text
-from .element_type import element_type
+# Element wait
 from .element_wait import element_wait
 
 # Find (main discovery tool for AI)
 from .find import find
+
+# Focus
+from .focus_by_ref import focus_by_ref
 
 # JavaScript execution
 from .js_exec import js_exec
@@ -71,6 +71,10 @@ from .tab_list import tab_list
 from .tab_new import tab_new
 from .tab_switch import tab_switch
 
+# Type actions (primary for AI)
+from .type_by_ref import type_by_ref
+from .type_by_text import type_by_text
+
 # Window
 from .window_focus import window_focus
 from .window_focus_emulation import window_focus_emulation
@@ -84,15 +88,14 @@ __all__ = [
     "browser_start",
     "browser_stop",
     # Click (primary for AI)
-    "click_ref",
-    "click_text",
+    "click_by_ref",
+    "click_by_text",
     # Element
-    "element_focus",
-    "element_text",
-    "element_type",
     "element_wait",
     # Find (main discovery tool for AI)
     "find",
+    # Focus
+    "focus_by_ref",
     # JavaScript
     "js_exec",
     # Page
@@ -116,6 +119,9 @@ __all__ = [
     "tab_list",
     "tab_new",
     "tab_switch",
+    # Type (primary for AI)
+    "type_by_ref",
+    "type_by_text",
     # Cookies
     "cookies_list",
     "cookies_load",

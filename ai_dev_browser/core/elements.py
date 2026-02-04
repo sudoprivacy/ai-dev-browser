@@ -402,3 +402,50 @@ async def click_text(
     """
     result = await click(tab, text=text, timeout=timeout, human_like=human_like)
     return {"clicked": result, "text": text}
+
+
+async def type_by_text(
+    tab: nodriver.Tab,
+    name: str,
+    text: str,
+    clear: bool = False,
+    timeout: float = 10,
+    human_like: bool = None,
+) -> dict:
+    """Type text into element located by its accessible name.
+
+    Use find() first to see element names (placeholder, label, etc.),
+    then type_by_text with the name.
+
+    Args:
+        tab: Tab instance
+        name: Accessible name to find element (placeholder, label, etc.)
+        text: Text to type into the element
+        clear: If True, clear existing content first
+        timeout: Search timeout in seconds
+        human_like: Add delays between keystrokes (default: from config)
+
+    Returns:
+        dict with typed status
+
+    Example:
+        type_by_text(name="用户名", text="myusername")
+        type_by_text(name="Search", text="query", clear=True)
+    """
+    result = await find_element(tab, text=name, timeout=timeout)
+    element = result.get("element")
+
+    if element is None:
+        return {"typed": False, "error": f"Element with name '{name}' not found"}
+
+    if clear:
+        await element.clear_input()
+
+    use_human = human_like if human_like is not None else human.get_config().type_humanize
+
+    if use_human:
+        await human.type_text(tab, text, element, humanize=True)
+    else:
+        await element.send_keys(text)
+
+    return {"typed": True, "name": name}
