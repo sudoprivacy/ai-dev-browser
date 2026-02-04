@@ -1,12 +1,12 @@
-"""Integration tests for new SSOT APIs.
+"""Find-and-interact workflows: discover elements, then click/type.
 
-Tests the verb_by_locator pattern APIs:
-- find: Discover elements with refs
-- click_by_text / click_by_ref: Click by text or ref
-- type_by_text / type_by_ref: Type by text locator or ref
-- focus_by_ref: Focus element by ref
+AI pattern: Use find() to discover page elements, then interact by ref or text.
 
-Each test class covers a realistic multi-step workflow.
+Workflows covered:
+- find → click_by_ref: Discover button, click by ref
+- find → type_by_ref: Discover input, type by ref
+- click_by_text / type_by_text: Direct text-based interaction
+- Login forms, multi-step navigation, mixed patterns
 """
 
 import asyncio
