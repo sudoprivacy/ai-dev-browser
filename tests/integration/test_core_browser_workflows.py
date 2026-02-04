@@ -1,6 +1,7 @@
-"""Integration tests using realistic workflow scenarios.
+"""Core browser workflows: low-level operations.
 
-Each workflow tests multiple modules working together, mimicking real AI usage patterns.
+Covers: navigation, mouse, page operations, window, dialog, forms (selector-based).
+For AI-style find-and-interact workflows, see test_find_and_interact_workflows.py.
 """
 
 import asyncio
@@ -12,14 +13,11 @@ from pathlib import Path
 from ai_dev_browser.core import (
     back,
     click,
-    click_ax_element,
     focus_window,
     forward,
-    get_accessibility_tree,
     get_element_text,
     get_page_html,
     get_page_info,
-    get_snapshot,
     goto,
     handle_dialog_action,
     human,
@@ -244,81 +242,6 @@ class TestNavigationWorkflow:
 
         # loadTime should be different after reload
         assert load_time2 > load_time1
-
-
-class TestAccessibilityWorkflow:
-    """Accessibility tree operations: snapshot → find → click → verify.
-
-    Covers: get_snapshot, get_accessibility_tree, click_ax_element, wait_for_ax_element
-    """
-
-    async def test_ax_tree_navigation(self, browser):
-        """Use accessibility tree to find and click elements."""
-        tab = browser.main_tab
-
-        html = """<!DOCTYPE html>
-<html><body>
-    <button id="action-btn">Click Me</button>
-    <script>
-        window.clicked = false;
-        document.getElementById('action-btn').onclick = () => {
-            window.clicked = true;
-        };
-    </script>
-</body></html>"""
-
-        await tab.get(make_data_url(html))
-        await asyncio.sleep(0.2)
-
-        # Get accessibility tree
-        result = await get_accessibility_tree(tab)
-        assert "elements" in result
-        elements = result["elements"]
-        assert len(elements) > 0
-
-        # Find button in snapshot
-        snapshot = await get_snapshot(tab)
-        button = None
-        for el in snapshot:
-            if el.get("role") == "button":
-                button = el
-                break
-
-        assert button is not None, "Should find button in AX tree"
-        assert button.get("ref") is not None, "Button should have ref"
-
-        # Click using ax_element (by ref)
-        result = await click_ax_element(tab, ref=button["ref"])
-        assert result.get("clicked") is True
-
-        clicked = await tab.evaluate("window.clicked")
-        assert clicked is True
-
-    async def test_ax_snapshot_element_types(self, browser):
-        """Verify different element types appear in accessibility tree."""
-        tab = browser.main_tab
-
-        html = """<!DOCTYPE html>
-<html><body>
-    <h1>Heading</h1>
-    <p>Paragraph text</p>
-    <a href="#">Link</a>
-    <button>Button</button>
-    <input type="text" placeholder="Text input">
-    <input type="checkbox" id="cb"><label for="cb">Checkbox</label>
-    <select><option>Option 1</option></select>
-</body></html>"""
-
-        await tab.get(make_data_url(html))
-        await asyncio.sleep(0.2)
-
-        snapshot = await get_snapshot(tab)
-        roles = {el.get("role") for el in snapshot if el.get("role")}
-
-        # Should have various roles
-        expected_roles = {"heading", "button", "link", "textbox"}
-        found = expected_roles.intersection(roles)
-        assert len(found) >= 3, f"Expected common roles, found: {roles}"
 
 
 class TestMouseWorkflow:
@@ -694,52 +617,3 @@ class TestDynamicContentWorkflow:
         # Verify content
         text = await get_element_text(tab, selector="#loaded")
         assert "loaded" in text.get("text", "").lower()
-
-
-class TestTrustedEventsWorkflow:
-    """Verify all interactions produce trusted events (anti-bot detection).
-
-    Covers: click, type_text, mouse operations - all should have isTrusted=true
-    """
-
-    async def test_all_events_trusted(self, browser):
-        """All user interactions should produce trusted events."""
-        tab = browser.main_tab
-
-        html = """<!DOCTYPE html>
-<html><body>
-    <button id="btn">Click</button>
-    <input id="input" type="text">
-    <script>
-        window.events = [];
-        document.addEventListener('click', e => {
-            if (e.target.id) window.events.push({type:'click', target:e.target.id, trusted:e.isTrusted});
-        });
-        document.getElementById('input').addEventListener('input', e => {
-            window.events.push({type:'input', trusted:e.isTrusted});
-        });
-        document.addEventListener('mousemove', e => {
-            window.events.push({type:'mousemove', trusted:e.isTrusted});
-        }, {once: true});
-    </script>
-</body></html>"""
-
-        await tab.get(make_data_url(html))
-        await asyncio.sleep(0.2)
-
-        # Mouse move
-        await mouse_move(tab, 100, 100)
-
-        # Click button
-        await click(tab, selector="#btn")
-
-        # Type in input
-        await click(tab, selector="#input")
-        await type_text(tab, "test", selector="#input")
-
-        # Verify all events are trusted
-        events = await eval_json(tab, "window.events")
-        assert len(events) >= 3
-
-        for event in events:
-            assert event["trusted"] is True, f"Event {event['type']} should be trusted"
