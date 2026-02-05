@@ -457,7 +457,7 @@ async def type_by_text(
 # ---------------------------------------------------------------------------
 
 
-async def fuzzy_find(
+async def _fuzzy_find(
     tab: nodriver.Tab,
     query: str,
     threshold: float = 0.4,
@@ -498,7 +498,7 @@ async def fuzzy_find(
     }
 
 
-async def fuzzy_find_all(
+async def _fuzzy_find_all(
     tab: nodriver.Tab,
     query: str,
     threshold: float = 0.4,
@@ -536,7 +536,7 @@ async def fuzzy_find_all(
     ]
 
 
-async def fuzzy_click(
+async def _fuzzy_click(
     tab: nodriver.Tab,
     query: str,
     threshold: float = 0.4,
@@ -566,7 +566,7 @@ async def fuzzy_click(
     """
     from .ax import _click_by_node_id
 
-    match = await fuzzy_find(
+    match = await _fuzzy_find(
         tab, query, threshold=threshold, interactable_only=interactable_only,
     )
     if match is None:
