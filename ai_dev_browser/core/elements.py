@@ -7,11 +7,11 @@ import nodriver
 import nodriver.cdp.dom as dom
 
 from . import human
-from .snapshot import get_snapshot
-from .text_match import best_match
+from .snapshot import _get_snapshot
+from .text_match import _best_match
 
 
-async def find_element(
+async def _find_element(
     tab: nodriver.Tab,
     text: str | None = None,
     selector: str | None = None,
@@ -40,7 +40,7 @@ async def find_element(
     }
 
 
-async def find_elements(
+async def _find_elements(
     tab: nodriver.Tab,
     text: str | None = None,
     selector: str | None = None,
@@ -69,7 +69,7 @@ async def find_elements(
     }
 
 
-async def find_by_xpath(
+async def _find_by_xpath(
     tab: nodriver.Tab,
     xpath: str,
     timeout: float = 2.5,
@@ -92,7 +92,7 @@ async def find_by_xpath(
     }
 
 
-async def click(
+async def _click(
     tab: nodriver.Tab,
     element: nodriver.Element | None = None,
     text: str | None = None,
@@ -117,7 +117,7 @@ async def click(
         True if clicked successfully
     """
     if element is None:
-        result = await find_element(tab, text=text, selector=selector, timeout=timeout)
+        result = await _find_element(tab, text=text, selector=selector, timeout=timeout)
         element = result.get("element")
 
     if element:
@@ -131,7 +131,7 @@ async def click(
     return False
 
 
-async def type_text(
+async def _type_text(
     tab: nodriver.Tab,
     text: str,
     element: nodriver.Element | None = None,
@@ -155,7 +155,7 @@ async def type_text(
         True if typed successfully
     """
     if element is None and selector:
-        result = await find_element(tab, selector=selector, timeout=timeout)
+        result = await _find_element(tab, selector=selector, timeout=timeout)
         element = result.get("element")
 
     if element is None:
@@ -208,7 +208,7 @@ async def scroll(
     return True
 
 
-async def wait_for_element(
+async def _wait_for_element(
     tab: nodriver.Tab,
     text: str | None = None,
     selector: str | None = None,
@@ -258,7 +258,7 @@ async def wait_for_element(
         await asyncio.sleep(0.5)
 
 
-async def focus_element(
+async def _focus_element(
     tab: nodriver.Tab,
     text: str | None = None,
     selector: str | None = None,
@@ -274,14 +274,14 @@ async def focus_element(
     Returns:
         dict with focused status
     """
-    result = await find_element(tab, text=text, selector=selector, timeout=timeout)
+    result = await _find_element(tab, text=text, selector=selector, timeout=timeout)
     if result["found"] and result["element"]:
         await result["element"].focus()
         return {"focused": True}
     return {"focused": False, "error": "Element not found"}
 
 
-async def get_element_text(
+async def _get_element_text(
     tab: nodriver.Tab,
     text: str | None = None,
     selector: str | None = None,
@@ -297,7 +297,7 @@ async def get_element_text(
     Returns:
         dict with text content
     """
-    result = await find_element(tab, text=text, selector=selector, timeout=timeout)
+    result = await _find_element(tab, text=text, selector=selector, timeout=timeout)
     if result["found"] and result["element"]:
         # Use text_all property which is synchronous
         content = result["element"].text_all
@@ -305,7 +305,7 @@ async def get_element_text(
     return {"text": None, "error": "Element not found"}
 
 
-async def find_element_info(
+async def _find_element_info(
     tab: nodriver.Tab,
     text: str | None = None,
     selector: str | None = None,
@@ -325,13 +325,13 @@ async def find_element_info(
         dict with found, count (if all), tag, text (for single element)
     """
     if all_elements:
-        result = await find_elements(tab, text=text, selector=selector, timeout=timeout)
+        result = await _find_elements(tab, text=text, selector=selector, timeout=timeout)
         return {
             "found": result["count"] > 0,
             "count": result["count"],
         }
     else:
-        result = await find_element(tab, text=text, selector=selector, timeout=timeout)
+        result = await _find_element(tab, text=text, selector=selector, timeout=timeout)
         element = result.get("element")
         if element:
             # Get element info
@@ -362,7 +362,7 @@ async def wait_for_element_with_info(
     Returns:
         dict with found, elapsed, message
     """
-    result = await wait_for_element(tab, text=text, selector=selector, timeout=timeout)
+    result = await _wait_for_element(tab, text=text, selector=selector, timeout=timeout)
 
     # Add descriptive message
     if result.get("found"):
@@ -401,7 +401,7 @@ async def click_by_text(
         click_by_text("Sign in")
         click_by_text("Submit", timeout=5)
     """
-    result = await click(tab, text=text, timeout=timeout, human_like=human_like)
+    result = await _click(tab, text=text, timeout=timeout, human_like=human_like)
     return {"clicked": result, "text": text}
 
 
@@ -433,7 +433,7 @@ async def type_by_text(
         type_by_text(name="用户名", text="myusername")
         type_by_text(name="Search", text="query", clear=True)
     """
-    result = await find_element(tab, text=name, timeout=timeout)
+    result = await _find_element(tab, text=name, timeout=timeout)
     element = result.get("element")
 
     if element is None:
@@ -479,13 +479,13 @@ async def _fuzzy_find(
         Dict with element info and match details, or None if not found.
         Keys: ref, role, name, _nodeId, match_score, match_strategy
     """
-    elements = await get_snapshot(tab, interactable_only=interactable_only)
+    elements = await _get_snapshot(tab, interactable_only=interactable_only)
     if not elements:
         return None
 
     # Build candidates list from element names
     names = [el.get("name", "") for el in elements]
-    result = best_match(query, names, threshold=threshold)
+    result = _best_match(query, names, threshold=threshold)
 
     if result is None:
         return None
@@ -517,14 +517,14 @@ async def _fuzzy_find_all(
     Returns:
         List of element dicts sorted by match score descending
     """
-    from .text_match import all_matches
+    from .text_match import _all_matches
 
-    elements = await get_snapshot(tab, interactable_only=interactable_only)
+    elements = await _get_snapshot(tab, interactable_only=interactable_only)
     if not elements:
         return []
 
     names = [el.get("name", "") for el in elements]
-    matches = all_matches(query, names, threshold=threshold, limit=limit)
+    matches = _all_matches(query, names, threshold=threshold, limit=limit)
 
     return [
         {

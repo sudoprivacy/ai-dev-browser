@@ -28,7 +28,7 @@ DEFAULT_OVERLAY_SELECTORS = [
 ]
 
 
-async def dismiss_overlays(
+async def _dismiss_overlays(
     tab,
     extra_selectors: list[str] | None = None,
     press_escape: bool = True,

@@ -34,4 +34,4 @@ DEFAULT_PORT_RANGE = (9350, 9450)
 # - ai_dev_browser: Reuse any ai-dev-browser Chrome (including from previous runs)
 # - any: Reuse any debugging Chrome
 ReuseStrategy = Literal["none", "this_session", "ai_dev_browser", "any"]
-DEFAULT_REUSE_STRATEGY: ReuseStrategy = "none"
+DEFAULT_REUSE_STRATEGY: ReuseStrategy = "ai_dev_browser"

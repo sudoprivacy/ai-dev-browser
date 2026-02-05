@@ -9,7 +9,7 @@ import nodriver.cdp.dom as dom
 import nodriver.cdp.input_ as cdp_input
 import nodriver.cdp.page as page
 
-from .snapshot import get_snapshot
+from .snapshot import _get_snapshot
 
 
 def _parse_ref(ref: str) -> tuple[str | None, str, int | None]:
@@ -143,7 +143,7 @@ async def _wait_for_ax_element(
         elapsed += interval
 
         try:
-            elements = await get_snapshot(tab)
+            elements = await _get_snapshot(tab)
             for el in elements:
                 role_match = wait_for_role is None or el.get("role") == wait_for_role
                 name_match = wait_for_name is None or wait_for_name in el.get("name", "")
@@ -234,7 +234,7 @@ async def _click_ax_element(
             return {"error": f"Frame '{frame_prefix}' not found"}
 
     # Get accessibility tree for the appropriate frame
-    elements = await get_snapshot(tab, frame_id=frame_id)
+    elements = await _get_snapshot(tab, frame_id=frame_id)
 
     # Find element by local ref (without frame prefix or node_id suffix)
     target = None

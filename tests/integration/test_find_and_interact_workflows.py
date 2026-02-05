@@ -21,8 +21,8 @@ from ai_dev_browser.core import (
     goto,
     type_by_ref,
     type_by_text,
-    wait_for_element,
 )
+from ai_dev_browser.core.elements import _wait_for_element
 
 
 def make_data_url(html: str) -> str:
@@ -501,7 +501,7 @@ class TestMultiStepNavigationWorkflow:
         await click_by_ref(tab, ref=product_b_btn["ref"])
 
         # Step 5: Wait for result to appear
-        await wait_for_element(tab, selector="#selected", timeout=2)
+        await _wait_for_element(tab, selector="#selected", timeout=2)
 
         # Step 6: Verify
         selected_text = await tab.evaluate("document.getElementById('selected').textContent")

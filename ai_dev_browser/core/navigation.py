@@ -41,13 +41,13 @@ async def goto(
     }
 
 
-async def back(tab: nodriver.Tab) -> bool:
+async def _back(tab: nodriver.Tab) -> bool:
     """Go back in history."""
     await tab.back()
     return True
 
 
-async def forward(tab: nodriver.Tab) -> bool:
+async def _forward(tab: nodriver.Tab) -> bool:
     """Go forward in history."""
     await tab.forward()
     return True
@@ -146,7 +146,7 @@ async def wait_for_url(
         await asyncio.sleep(0.3)
 
 
-async def wait_for_url_match(
+async def _wait_for_url_match(
     tab: nodriver.Tab,
     pattern: str | None = None,
     exact: str | None = None,
@@ -175,7 +175,7 @@ async def wait_for_url_match(
     return result
 
 
-async def wait_for_page(
+async def _wait_for_page(
     tab: nodriver.Tab,
     idle: bool = False,
     sleep: float | None = None,

@@ -32,7 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Generic, Literal, Protocol, TypeVar
 
-from ..core import get_available_port, get_pid_on_port, kill_process_tree
+from ..core import get_available_port, get_pid_on_port
+from ..core.process import _kill_process_tree
 from ..profile import ProfileManager, ProfileMode
 from .job import Job, JobResult, JobStatus
 from .persistence import PoolState, load_state, save_state
@@ -244,7 +245,7 @@ class BrowserPool(Generic[ClientT]):
                         logger.info(
                             f"Killing Chrome (PID: {actual_pid}) for worker {worker.worker_id}"
                         )
-                        kill_process_tree(actual_pid)
+                        _kill_process_tree(actual_pid)
         except Exception as e:
             logger.warning(f"Error closing worker {worker.worker_id}: {e}")
 

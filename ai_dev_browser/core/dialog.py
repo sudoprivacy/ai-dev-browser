@@ -10,7 +10,7 @@ import nodriver
 import nodriver.cdp.page as page_cdp
 
 
-async def handle_dialog(
+async def _handle_dialog(
     tab: nodriver.Tab,
     accept: bool = True,
     prompt_text: str | None = None,
@@ -42,7 +42,7 @@ async def handle_dialog(
         raise
 
 
-async def wait_for_dialog(
+async def _wait_for_dialog(
     tab: nodriver.Tab,
     accept: bool = True,
     prompt_text: str | None = None,
@@ -63,7 +63,7 @@ async def wait_for_dialog(
     interval = 0.2
 
     while elapsed < timeout:
-        if await handle_dialog(tab, accept=accept, prompt_text=prompt_text):
+        if await _handle_dialog(tab, accept=accept, prompt_text=prompt_text):
             return True
         await asyncio.sleep(interval)
         elapsed += interval
@@ -71,7 +71,7 @@ async def wait_for_dialog(
     return False
 
 
-async def setup_auto_dialog_handler(
+async def _setup_auto_dialog_handler(
     tab: nodriver.Tab,
     accept: bool = True,
     callback: Callable[[page_cdp.JavascriptDialogOpening], None] | None = None,
@@ -124,7 +124,7 @@ async def handle_dialog_action(
     # Set up auto-handler if requested
     if auto_handle:
         try:
-            await setup_auto_dialog_handler(tab, accept=accept)
+            await _setup_auto_dialog_handler(tab, accept=accept)
             return {"success": True, "action": "auto_handler_enabled"}
         except Exception as e:
             return {"success": False, "error": "setup_failed", "message": str(e)}
@@ -132,7 +132,7 @@ async def handle_dialog_action(
     # If wait_timeout specified, wait for dialog
     if wait_timeout > 0:
         try:
-            handled = await wait_for_dialog(
+            handled = await _wait_for_dialog(
                 tab, accept=accept, prompt_text=prompt_text, timeout=wait_timeout
             )
             if handled:
@@ -150,7 +150,7 @@ async def handle_dialog_action(
 
     # Immediate handling
     try:
-        handled = await handle_dialog(tab, accept=accept, prompt_text=prompt_text)
+        handled = await _handle_dialog(tab, accept=accept, prompt_text=prompt_text)
         if handled:
             return {"success": True, "action": "accepted" if accept else "dismissed"}
         return {

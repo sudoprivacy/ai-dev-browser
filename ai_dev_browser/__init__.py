@@ -19,7 +19,6 @@ from .core import (
     DEFAULT_PORT_RANGE,
     DEFAULT_PROFILE_DIR,
     DEFAULT_PROFILE_PREFIX,
-    cleanup_temp_profile,
     extract_session_id,
     find_ai_dev_browser_chromes,
     # Chrome detection and launching
@@ -38,15 +37,11 @@ from .core import (
     is_our_session,
     # Port management
     is_port_in_use,
-    kill_process_tree,
     launch_chrome,
 )
 
 # Cloudflare verification (wraps nodriver's native verify_cf)
 from .core.cloudflare import verify_cloudflare
-
-# Overlay dismissal (generic backdrop/modal handling)
-from .core.overlays import dismiss_overlays
 
 # Worker pool
 from .pool import (
@@ -92,7 +87,6 @@ __all__ = [
     "find_ai_dev_browser_chromes",
     "find_debug_chromes",
     "get_available_port",
-    "cleanup_temp_profile",
     # Session
     "get_session_id",
     "is_our_session",
@@ -100,7 +94,6 @@ __all__ = [
     # Process
     "get_pid_on_port",
     "get_process_cmdline",
-    "kill_process_tree",
     # Worker pool
     "BrowserPool",
     "Job",
@@ -117,8 +110,6 @@ __all__ = [
     "ProfileMode",
     # Cloudflare verification
     "verify_cloudflare",
-    # Overlay dismissal
-    "dismiss_overlays",
     # Core operations module
     "core",
     # Re-exported from nodriver (use these instead of importing nodriver directly)

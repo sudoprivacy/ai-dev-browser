@@ -52,7 +52,7 @@ class MatchResult:
     index: int  # Index in the original candidates list
 
 
-def match_score(query: str, target: str, case_sensitive: bool = False) -> tuple[float, str]:
+def _match_score(query: str, target: str, case_sensitive: bool = False) -> tuple[float, str]:
     """Score how well query matches target.
 
     Uses parallel scoring: all strategies run independently,
@@ -109,7 +109,7 @@ def match_score(query: str, target: str, case_sensitive: bool = False) -> tuple[
     return (best_score, best_strategy)
 
 
-def best_match(
+def _best_match(
     query: str,
     candidates: Sequence[str],
     threshold: float = 0.4,
@@ -134,7 +134,7 @@ def best_match(
     for i, candidate in enumerate(candidates):
         if not candidate:
             continue
-        score, strategy = match_score(query, candidate, case_sensitive)
+        score, strategy = _match_score(query, candidate, case_sensitive)
         if score >= threshold and (best is None or score > best.score):
             best = MatchResult(
                 text=candidate,
@@ -146,7 +146,7 @@ def best_match(
     return best
 
 
-def all_matches(
+def _all_matches(
     query: str,
     candidates: Sequence[str],
     threshold: float = 0.4,
@@ -172,7 +172,7 @@ def all_matches(
     for i, candidate in enumerate(candidates):
         if not candidate:
             continue
-        score, strategy = match_score(query, candidate, case_sensitive)
+        score, strategy = _match_score(query, candidate, case_sensitive)
         if score >= threshold:
             results.append(MatchResult(
                 text=candidate,
@@ -185,7 +185,7 @@ def all_matches(
     return results[:limit]
 
 
-def semantic_match(
+def _semantic_match(
     query: str,
     candidates: Sequence[str],
     threshold: float = 0.5,

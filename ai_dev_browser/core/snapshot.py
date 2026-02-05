@@ -215,7 +215,7 @@ async def _get_frame_nodes(
     return unique_nodes
 
 
-async def get_snapshot(
+async def _get_snapshot(
     tab: nodriver.Tab,
     interactable_only: bool = False,
     max_depth: int = 10,
@@ -287,7 +287,7 @@ async def get_snapshot(
     return all_nodes
 
 
-async def get_accessibility_tree(
+async def _get_accessibility_tree(
     tab: nodriver.Tab,
     interactable_only: bool = False,
     include_iframes: bool = True,
@@ -304,7 +304,7 @@ async def get_accessibility_tree(
     Returns:
         dict with elements list and count
     """
-    elements = await get_snapshot(
+    elements = await _get_snapshot(
         tab,
         interactable_only=interactable_only,
         include_iframes=include_iframes,
@@ -348,7 +348,7 @@ async def find(
     import nodriver.cdp.dom as dom
 
     # Get accessibility tree
-    elements = await get_snapshot(
+    elements = await _get_snapshot(
         tab,
         interactable_only=interactable_only,
         include_iframes=include_iframes,

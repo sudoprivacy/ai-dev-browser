@@ -11,16 +11,11 @@ import tempfile
 from pathlib import Path
 
 from ai_dev_browser.core import (
-    back,
-    click,
     focus_window,
-    forward,
-    get_element_text,
     get_page_html,
     get_page_info,
     goto,
     handle_dialog_action,
-    human,
     js_exec,
     mouse_click,
     mouse_drag,
@@ -30,10 +25,11 @@ from ai_dev_browser.core import (
     resize_window,
     screenshot,
     scroll,
-    setup_auto_dialog_handler,
-    type_text,
-    wait_for_element,
 )
+from ai_dev_browser.core import human
+from ai_dev_browser.core.dialog import _setup_auto_dialog_handler
+from ai_dev_browser.core.elements import _click, _get_element_text, _type_text, _wait_for_element
+from ai_dev_browser.core.navigation import _back, _forward
 
 
 def make_data_url(html: str) -> str:
@@ -92,21 +88,21 @@ class TestFormWorkflow:
         await asyncio.sleep(0.2)
 
         # Fill form fields
-        await click(tab, selector="#name")
-        await type_text(tab, "John Doe", selector="#name")
+        await _click(tab, selector="#name")
+        await _type_text(tab, "John Doe", selector="#name")
 
-        await click(tab, selector="#email")
-        await type_text(tab, "john@example.com", selector="#email")
+        await _click(tab, selector="#email")
+        await _type_text(tab, "john@example.com", selector="#email")
 
-        await click(tab, selector="#message")
-        await type_text(tab, "This is a test message.", selector="#message")
+        await _click(tab, selector="#message")
+        await _type_text(tab, "This is a test message.", selector="#message")
 
         # Select dropdown
-        await click(tab, selector="#category")
+        await _click(tab, selector="#category")
         await tab.evaluate("document.getElementById('category').value = 'feature'")
 
         # Submit
-        await click(tab, selector="#submit")
+        await _click(tab, selector="#submit")
         await asyncio.sleep(0.1)
 
         # Verify submission
@@ -130,8 +126,8 @@ class TestFormWorkflow:
         await asyncio.sleep(0.2)
 
         # Clear and type new value
-        await click(tab, selector="#input")
-        await type_text(tab, "new value", selector="#input", clear=True)
+        await _click(tab, selector="#input")
+        await _type_text(tab, "new value", selector="#input", clear=True)
 
         value = await tab.evaluate("document.getElementById('input').value")
         assert value == "new value"
@@ -160,14 +156,14 @@ class TestFormWorkflow:
         await asyncio.sleep(0.2)
 
         # Type invalid email
-        await type_text(tab, "notanemail", selector="#email")
-        await click(tab, selector="#validate")
+        await _type_text(tab, "notanemail", selector="#email")
+        await _click(tab, selector="#validate")
         is_valid = await tab.evaluate("window.isValid")
         assert is_valid is False
 
         # Clear and type valid email
-        await type_text(tab, "valid@email.com", selector="#email", clear=True)
-        await click(tab, selector="#validate")
+        await _type_text(tab, "valid@email.com", selector="#email", clear=True)
+        await _click(tab, selector="#validate")
         is_valid = await tab.evaluate("window.isValid")
         assert is_valid is True
 
@@ -199,13 +195,13 @@ class TestNavigationWorkflow:
         await asyncio.sleep(0.2)
 
         # Go back
-        await back(tab)
+        await _back(tab)
         await asyncio.sleep(0.2)
         content = await tab.evaluate("document.body.innerText")
         assert "Page 1" in content
 
         # Go forward
-        await forward(tab)
+        await _forward(tab)
         await asyncio.sleep(0.2)
         content = await tab.evaluate("document.body.innerText")
         assert "Page 2" in content
@@ -377,10 +373,10 @@ class TestDialogWorkflow:
         await asyncio.sleep(0.2)
 
         # Setup auto handler (accept=True is default)
-        await setup_auto_dialog_handler(tab, accept=True)
+        await _setup_auto_dialog_handler(tab, accept=True)
 
         # Trigger alert
-        await click(tab, selector="#alert-btn")
+        await _click(tab, selector="#alert-btn")
         await asyncio.sleep(0.3)
 
         # Verify alert was shown and dismissed
@@ -439,7 +435,7 @@ class TestPageOperationsWorkflow:
         assert "Test Page" in info.get("title", "")
 
         # Get element text
-        text_result = await get_element_text(tab, selector="#content")
+        text_result = await _get_element_text(tab, selector="#content")
         assert "test content" in text_result.get("text", "").lower()
 
     async def test_scroll_workflow(self, browser):
@@ -581,11 +577,11 @@ class TestDynamicContentWorkflow:
         await tab.get(make_data_url(html))
 
         # Wait for element to appear
-        result = await wait_for_element(tab, selector="#delayed-btn", timeout=5)
+        result = await _wait_for_element(tab, selector="#delayed-btn", timeout=5)
         assert result.get("found") is True
 
         # Click the dynamically added button
-        await click(tab, selector="#delayed-btn")
+        await _click(tab, selector="#delayed-btn")
         clicked = await tab.evaluate("window.clicked")
         assert clicked is True
 
@@ -608,12 +604,12 @@ class TestDynamicContentWorkflow:
         await asyncio.sleep(0.2)
 
         # Click to load content
-        await click(tab, selector="#load-btn")
+        await _click(tab, selector="#load-btn")
 
         # Wait for new content
-        result = await wait_for_element(tab, selector="#loaded", timeout=2)
+        result = await _wait_for_element(tab, selector="#loaded", timeout=2)
         assert result.get("found") is True
 
         # Verify content
-        text = await get_element_text(tab, selector="#loaded")
+        text = await _get_element_text(tab, selector="#loaded")
         assert "loaded" in text.get("text", "").lower()

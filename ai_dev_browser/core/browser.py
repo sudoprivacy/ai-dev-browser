@@ -4,9 +4,9 @@ import time
 from pathlib import Path
 
 from .chrome import launch_chrome
-from .config import DEFAULT_PROFILE_DIR, ReuseStrategy
+from .config import DEFAULT_PROFILE_DIR, DEFAULT_REUSE_STRATEGY, ReuseStrategy
 from .port import (
-    cleanup_temp_profile,
+    _cleanup_temp_profile,
     find_ai_dev_browser_chromes,
     find_our_chromes,
     get_available_port,
@@ -14,7 +14,7 @@ from .port import (
     is_chrome_in_use,
     is_port_in_use,
 )
-from .process import get_process_cmdline, kill_process_tree
+from .process import get_process_cmdline, _kill_process_tree
 
 
 def _is_profile_locked(profile_dir: Path) -> bool:
@@ -89,7 +89,7 @@ def start_browser(
     url: str | None = None,
     profile: str | None = None,
     temp: bool = False,
-    reuse: ReuseStrategy = "none",
+    reuse: ReuseStrategy = DEFAULT_REUSE_STRATEGY,
 ) -> dict:
     """Start or reuse a browser instance.
 
@@ -100,6 +100,7 @@ def start_browser(
         profile: Profile name (default: "default")
         temp: Use temporary profile instead
         reuse: Reuse strategy - none/this_session/ai_dev_browser/any
+               (default: ai_dev_browser - reuses existing idle Chrome)
 
     Returns:
         dict with port, pid, headless, url, profile, reused, message
@@ -232,15 +233,15 @@ def stop_browser(
             try:
                 pid = get_pid_on_port(p)
                 if pid:
-                    kill_process_tree(pid)
-                    cleanup_temp_profile(p)
+                    _kill_process_tree(pid)
+                    _cleanup_temp_profile(p)
                     stopped.append({"port": p, "pid": pid})
             except Exception:
                 pass
     else:
         pid = get_pid_on_port(port)
         if pid:
-            kill_process_tree(pid)
+            _kill_process_tree(pid)
             stopped.append({"port": port, "pid": pid})
 
     return {

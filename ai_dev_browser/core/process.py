@@ -122,7 +122,7 @@ def get_process_cmdline(pid: int) -> str | None:
     return None
 
 
-def kill_process_tree(pid: int) -> bool:
+def _kill_process_tree(pid: int) -> bool:
     """
     Kill a process and all its children (process tree).
 

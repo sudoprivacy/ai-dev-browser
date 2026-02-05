@@ -450,7 +450,7 @@ def find_debug_chromes(
     return chromes
 
 
-def cleanup_temp_profile(
+def _cleanup_temp_profile(
     port: int,
     profile_prefix: str = DEFAULT_PROFILE_PREFIX,
 ) -> bool:
