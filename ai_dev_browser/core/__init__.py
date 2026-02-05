@@ -18,12 +18,9 @@ Usage:
 # Human-like behavior
 from . import human
 from .ax import (
-    click_ax_element,
-    click_by_node_id,
     click_by_ref,
     focus_by_ref,
     type_by_ref,
-    wait_for_ax_element,
 )
 
 # Browser lifecycle
@@ -143,12 +140,9 @@ from .window import focus_window, resize_window, set_focus_emulation, set_window
 
 __all__ = [
     # Accessibility tree interactions
-    "click_ax_element",
-    "click_by_node_id",
     "click_by_ref",
     "focus_by_ref",
     "type_by_ref",
-    "wait_for_ax_element",
     # Browser lifecycle
     "start_browser",
     "stop_browser",

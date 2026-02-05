@@ -64,7 +64,7 @@ async def _get_frame_id_by_prefix(tab: nodriver.Tab, prefix: str) -> str | None:
         return None
 
 
-async def click_by_node_id(
+async def _click_by_node_id(
     tab: nodriver.Tab,
     node_id: int,
 ) -> dict:
@@ -115,7 +115,7 @@ async def click_by_node_id(
         return {"clicked": False, "error": str(e)}
 
 
-async def wait_for_ax_element(
+async def _wait_for_ax_element(
     tab: nodriver.Tab,
     wait_for_role: str | None = None,
     wait_for_name: str | None = None,
@@ -162,7 +162,7 @@ async def wait_for_ax_element(
     return {"found": False, "timeout": True}
 
 
-async def click_ax_element(
+async def _click_ax_element(
     tab: nodriver.Tab,
     ref: str | None = None,
     node_id: int | None = None,
@@ -196,9 +196,9 @@ async def click_ax_element(
 
     # If node_id provided directly, use it (stable, no re-fetch)
     if node_id is not None:
-        result = await click_by_node_id(tab, node_id)
+        result = await _click_by_node_id(tab, node_id)
         if result.get("clicked") and (wait_for_role or wait_for_name):
-            waited = await wait_for_ax_element(
+            waited = await _wait_for_ax_element(
                 tab, wait_for_role, wait_for_name, wait_timeout, wait_interval
             )
             if waited.get("found") and not waited.get("skipped"):
@@ -212,11 +212,11 @@ async def click_ax_element(
 
     # If ref contains embedded node_id, use it directly (most reliable)
     if embedded_node_id is not None:
-        result = await click_by_node_id(tab, embedded_node_id)
+        result = await _click_by_node_id(tab, embedded_node_id)
         if result.get("clicked"):
             result["ref"] = ref
             if wait_for_role or wait_for_name:
-                waited = await wait_for_ax_element(
+                waited = await _wait_for_ax_element(
                     tab, wait_for_role, wait_for_name, wait_timeout, wait_interval
                 )
                 if waited.get("found") and not waited.get("skipped"):
@@ -260,7 +260,7 @@ async def click_ax_element(
         return {"error": f"Element ref '{ref}' has no nodeId"}
 
     # Click the element
-    result = await click_by_node_id(tab, target_node_id)
+    result = await _click_by_node_id(tab, target_node_id)
     if result.get("clicked"):
         result["ref"] = ref
         result["element"] = {
@@ -268,7 +268,7 @@ async def click_ax_element(
             "name": target.get("name"),
         }
         if wait_for_role or wait_for_name:
-            waited = await wait_for_ax_element(
+            waited = await _wait_for_ax_element(
                 tab, wait_for_role, wait_for_name, wait_timeout, wait_interval
             )
             if waited.get("found") and not waited.get("skipped"):
@@ -301,7 +301,7 @@ async def click_by_ref(
         # Then click by ref
         click_by_ref("5#214")
     """
-    return await click_ax_element(tab, ref=ref)
+    return await _click_ax_element(tab, ref=ref)
 
 
 async def focus_by_ref(

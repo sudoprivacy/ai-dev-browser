@@ -564,7 +564,7 @@ async def fuzzy_click(
         await fuzzy_click(tab, "Sign in")
         await fuzzy_click(tab, "Submit")
     """
-    from .ax import click_by_node_id
+    from .ax import _click_by_node_id
 
     match = await fuzzy_find(
         tab, query, threshold=threshold, interactable_only=interactable_only,
@@ -576,7 +576,7 @@ async def fuzzy_click(
     if not node_id:
         return None
 
-    result = await click_by_node_id(tab, node_id)
+    result = await _click_by_node_id(tab, node_id)
     if result.get("clicked"):
         return {
             "clicked": True,
