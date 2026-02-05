@@ -1,6 +1,11 @@
 """Browser connection utilities."""
 
+import logging
+
 import nodriver
+from nodriver import cdp
+
+logger = logging.getLogger(__name__)
 
 
 async def connect_browser(
@@ -23,9 +28,41 @@ async def connect_browser(
         # Pass host AND port directly to nodriver.start()
         # When both are provided, nodriver connects to existing browser instead of starting new one
         browser = await nodriver.start(host=host, port=port)
+
+        # Explicitly attach to all page targets via CDP.
+        # nodriver connects directly to target WebSocket URLs, bypassing
+        # Target.attachToTarget(). This means Chrome doesn't know there's
+        # a client attached, and is_chrome_in_use() can't detect it.
+        # By calling attachToTarget explicitly, Chrome marks these targets
+        # as attached, making in-use detection reliable.
+        await _attach_to_page_targets(browser)
+
         return browser
     except Exception as e:
         raise ConnectionError(f"Failed to connect to Chrome on {host}:{port}: {e}") from e
+
+
+async def _attach_to_page_targets(browser: nodriver.Browser) -> None:
+    """Explicitly attach to page targets so Chrome tracks our connection.
+
+    This makes is_chrome_in_use() work reliably: attached=True while
+    connected, attached=False when our process exits (WebSocket closes).
+    """
+    targets = getattr(browser, "targets", None) or []
+    for target in targets:
+        if getattr(target, "type_", "") != "page":
+            continue
+        target_id = getattr(target, "target", None)
+        if target_id is None:
+            continue
+        tid = getattr(target_id, "target_id", None)
+        if tid is None:
+            continue
+        try:
+            await browser.connection.send(cdp.target.attach_to_target(tid, flatten=True))
+            logger.debug(f"Attached to page target {tid}")
+        except Exception as e:
+            logger.debug(f"Could not attach to target {tid}: {e}")
 
 
 async def get_active_tab(browser: nodriver.Browser) -> nodriver.Tab:

@@ -125,8 +125,8 @@ def _generate_parser(
             "--port",
             "-p",
             type=int,
-            default=9222,
-            help="Chrome debugging port (default: 9222)",
+            default=None,
+            help="Chrome debugging port (auto-detects running Chrome if not specified)",
         )
 
     # Add arguments from function signature (skip 'tab' parameter)
@@ -231,7 +231,31 @@ def as_cli(requires_tab: bool = True):
 
                 async def run():
                     try:
-                        browser = await connect_browser(port=args.port)
+                        port = args.port
+                        if port is None:
+                            # Auto-detect: find a running ai-dev-browser Chrome
+                            from ai_dev_browser.core.port import find_ai_dev_browser_chromes
+                            from ai_dev_browser.core.port import is_chrome_in_use
+
+                            for candidate in find_ai_dev_browser_chromes():
+                                if not is_chrome_in_use(candidate):
+                                    port = candidate
+                                    break
+
+                            if port is None:
+                                print(
+                                    json.dumps(
+                                        {
+                                            "error": "No available Chrome found. "
+                                            "Run browser-start first, or specify --port."
+                                        },
+                                        ensure_ascii=False,
+                                        indent=2,
+                                    )
+                                )
+                                sys.exit(1)
+
+                        browser = await connect_browser(port=port)
                         tab = await get_active_tab(browser)
 
                         # Build kwargs from args, excluding 'port'
