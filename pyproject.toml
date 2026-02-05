@@ -39,6 +39,9 @@ dev = [
 cv = [
     "opencv-python>=4.8",  # For nodriver's verify_cf() template matching
 ]
+fuzzy = [
+    "rapidfuzz>=3.0",  # Fast C-based Levenshtein for fuzzy_find/fuzzy_click
+]
 
 [project.urls]
 Homepage = "https://github.com/sudoprivacy/ai-dev-browser"

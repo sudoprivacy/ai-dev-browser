@@ -8,6 +8,7 @@ import nodriver.cdp.dom as dom
 
 from . import human
 from .snapshot import get_snapshot
+from .text_match import best_match
 
 
 async def find_element(
@@ -449,3 +450,140 @@ async def type_by_text(
         await element.send_keys(text)
 
     return {"typed": True, "name": name}
+
+
+# ---------------------------------------------------------------------------
+# Fuzzy matching functions (accessibility tree + text_match scoring)
+# ---------------------------------------------------------------------------
+
+
+async def fuzzy_find(
+    tab: nodriver.Tab,
+    query: str,
+    threshold: float = 0.4,
+    interactable_only: bool = False,
+) -> dict | None:
+    """Find element by fuzzy text matching against accessibility tree.
+
+    Uses exact > contains > edit distance scoring to find the best
+    matching element. Works with aria-labels, button text, and other
+    accessible names - stable identifiers ideal for scripting.
+
+    Args:
+        tab: Tab instance
+        query: Text to search for (supports fuzzy matching)
+        threshold: Minimum match score (0.0-1.0)
+        interactable_only: Only match interactive elements (buttons, links, inputs)
+
+    Returns:
+        Dict with element info and match details, or None if not found.
+        Keys: ref, role, name, _nodeId, match_score, match_strategy
+    """
+    elements = await get_snapshot(tab, interactable_only=interactable_only)
+    if not elements:
+        return None
+
+    # Build candidates list from element names
+    names = [el.get("name", "") for el in elements]
+    result = best_match(query, names, threshold=threshold)
+
+    if result is None:
+        return None
+
+    matched_element = elements[result.index]
+    return {
+        **matched_element,
+        "match_score": round(result.score, 3),
+        "match_strategy": result.strategy,
+    }
+
+
+async def fuzzy_find_all(
+    tab: nodriver.Tab,
+    query: str,
+    threshold: float = 0.4,
+    interactable_only: bool = False,
+    limit: int = 10,
+) -> list[dict]:
+    """Find all elements matching query by fuzzy text matching.
+
+    Args:
+        tab: Tab instance
+        query: Text to search for
+        threshold: Minimum match score (0.0-1.0)
+        interactable_only: Only match interactive elements
+        limit: Maximum number of results
+
+    Returns:
+        List of element dicts sorted by match score descending
+    """
+    from .text_match import all_matches
+
+    elements = await get_snapshot(tab, interactable_only=interactable_only)
+    if not elements:
+        return []
+
+    names = [el.get("name", "") for el in elements]
+    matches = all_matches(query, names, threshold=threshold, limit=limit)
+
+    return [
+        {
+            **elements[m.index],
+            "match_score": round(m.score, 3),
+            "match_strategy": m.strategy,
+        }
+        for m in matches
+    ]
+
+
+async def fuzzy_click(
+    tab: nodriver.Tab,
+    query: str,
+    threshold: float = 0.4,
+    interactable_only: bool = True,
+    human_like: bool = True,
+) -> dict | None:
+    """Click element by fuzzy text matching against accessibility tree.
+
+    Combines fuzzy_find + click. The primary API for programmatic
+    browser automation scripts that need tolerance for text variations.
+
+    Args:
+        tab: Tab instance
+        query: Text to match (e.g., "Upload files", "Sign in")
+        threshold: Minimum match score (0.0-1.0)
+        interactable_only: Only match interactive elements (default: True)
+        human_like: Use CDP events (default True, recommended)
+
+    Returns:
+        Dict with clicked element info, or None if not found/click failed.
+
+    Example:
+        # Stable scripting - no AI needed
+        await fuzzy_click(tab, "Upload files")
+        await fuzzy_click(tab, "Sign in")
+        await fuzzy_click(tab, "Submit")
+    """
+    from .ax import click_by_node_id
+
+    match = await fuzzy_find(
+        tab, query, threshold=threshold, interactable_only=interactable_only,
+    )
+    if match is None:
+        return None
+
+    node_id = match.get("_nodeId")
+    if not node_id:
+        return None
+
+    result = await click_by_node_id(tab, node_id)
+    if result.get("clicked"):
+        return {
+            "clicked": True,
+            "ref": match.get("ref"),
+            "role": match.get("role"),
+            "name": match.get("name"),
+            "match_score": match.get("match_score"),
+            "match_strategy": match.get("match_strategy"),
+        }
+    return None

@@ -74,6 +74,9 @@ from .elements import (
     find_element_info,
     find_elements,
     focus_element,
+    fuzzy_click,
+    fuzzy_find,
+    fuzzy_find_all,
     get_element_text,
     scroll,
     type_by_text,
@@ -121,6 +124,9 @@ from .process import get_pid_on_port, get_process_cmdline, kill_process_tree
 
 # Session management
 from .session import extract_session_id, get_session_id, is_our_session
+
+# Text matching
+from .text_match import match_score, best_match, all_matches, MatchResult
 
 # Snapshot (AI-friendly accessibility tree)
 from .snapshot import find, get_accessibility_tree, get_snapshot
@@ -209,6 +215,14 @@ __all__ = [
     "wait_for_element_with_info",
     "focus_element",
     "get_element_text",
+    "fuzzy_find",
+    "fuzzy_find_all",
+    "fuzzy_click",
+    # Text matching
+    "match_score",
+    "best_match",
+    "all_matches",
+    "MatchResult",
     # Snapshot
     "find",
     "get_snapshot",
