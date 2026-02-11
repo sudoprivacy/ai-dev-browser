@@ -77,7 +77,7 @@ def get_process_cmdline(pid: int) -> str | None:
     """
     Get the command line arguments of a process.
 
-    Cross-platform: uses ps on Unix, wmic on Windows.
+    Cross-platform: uses ps on Unix, PowerShell Get-CimInstance on Windows.
 
     Args:
         pid: Process ID
@@ -106,22 +106,83 @@ def get_process_cmdline(pid: int) -> str | None:
             pass
     elif system == "Windows":
         try:
+            # Use PowerShell Get-CimInstance (wmic is deprecated on Windows 11)
+            ps_cmd = (
+                f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine"
+            )
             result = subprocess.run(
-                ["wmic", "process", "where", f"ProcessId={pid}", "get", "CommandLine"],
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
                 capture_output=True,
                 text=True,
                 timeout=5,
             )
-            if result.returncode == 0:
-                lines = [
-                    line.strip() for line in result.stdout.split("\n") if line.strip()
-                ]
-                if len(lines) > 1:
-                    return lines[1]  # Skip header
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
 
     return None
+
+
+def _find_chrome_processes() -> list[tuple[int, str]]:
+    """Find all running Chrome processes with their command lines.
+
+    Process-based discovery that works even when Chrome failed to bind
+    its debug port (zombie Chromes). Complements port-based scanning.
+
+    Returns:
+        List of (pid, cmdline) tuples for Chrome processes.
+    """
+    results = []
+    system = platform.system()
+
+    try:
+        if system == "Windows":
+            # Use PowerShell Get-CimInstance (wmic is deprecated on Windows 11)
+            ps_cmd = (
+                "Get-CimInstance Win32_Process -Filter 'name=\"chrome.exe\"' "
+                '| ForEach-Object { "$($_.ProcessId)`t$($_.CommandLine)" }'
+            )
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                for line in result.stdout.split("\n"):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split("\t", 1)
+                    if len(parts) == 2:
+                        try:
+                            results.append((int(parts[0]), parts[1]))
+                        except ValueError:
+                            pass
+        else:
+            # Unix: ps with all processes
+            result = subprocess.run(
+                ["ps", "-e", "-o", "pid,args"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                for line in result.stdout.split("\n")[1:]:  # Skip header
+                    line = line.strip()
+                    if not line or "chrome" not in line.lower():
+                        continue
+                    parts = line.split(None, 1)
+                    if len(parts) == 2:
+                        try:
+                            results.append((int(parts[0]), parts[1]))
+                        except ValueError:
+                            pass
+    except (subprocess.TimeoutExpired, FileNotFoundError, ValueError):
+        logger.debug("Failed to enumerate Chrome processes")
+
+    return results
 
 
 def _kill_process_tree(pid: int) -> bool:

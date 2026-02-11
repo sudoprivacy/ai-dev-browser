@@ -14,7 +14,7 @@ from .port import (
     is_chrome_in_use,
     is_port_in_use,
 )
-from .process import get_process_cmdline, _kill_process_tree
+from .process import _find_chrome_processes, _kill_process_tree, get_process_cmdline
 
 
 def _is_profile_locked(profile_dir: Path) -> bool:
@@ -209,6 +209,38 @@ def start_browser(
     }
 
 
+def _find_zombie_chromes(
+    known_pids: set[int] | None = None,
+) -> list[dict]:
+    """Find ai-dev-browser Chromes not visible via port scanning.
+
+    These are Chrome processes that launched but failed to bind their debug
+    port (e.g., due to Hyper-V reserved ports). They still have our session
+    flag in their command line.
+
+    Args:
+        known_pids: PIDs already found via port scanning (to deduplicate)
+
+    Returns:
+        List of {"pid": int, "session_id": str} dicts for zombie Chromes.
+    """
+    from .session import SESSION_FLAG, extract_session_id
+
+    known_pids = known_pids or set()
+    zombies = []
+
+    for pid, cmdline in _find_chrome_processes():
+        if pid in known_pids:
+            continue
+        if SESSION_FLAG not in cmdline:
+            continue
+        session_id = extract_session_id(cmdline)
+        if session_id:
+            zombies.append({"pid": pid, "session_id": session_id})
+
+    return zombies
+
+
 def stop_browser(
     port: int | None = None,
     stop_all: bool = False,
@@ -217,7 +249,7 @@ def stop_browser(
 
     Args:
         port: Port of browser to stop
-        stop_all: Stop all our browser instances
+        stop_all: Stop all our browser instances (including zombies)
 
     Returns:
         dict with stopped status, count, browsers list
@@ -228,16 +260,23 @@ def stop_browser(
     stopped = []
 
     if stop_all:
+        known_pids = set()
         ports = find_our_chromes(exclude_in_use=False)
         for p in ports:
             try:
                 pid = get_pid_on_port(p)
                 if pid:
+                    known_pids.add(pid)
                     _kill_process_tree(pid)
                     _cleanup_temp_profile(p)
                     stopped.append({"port": p, "pid": pid})
             except Exception:
                 pass
+
+        # Also kill zombie Chromes (no port bound but process exists)
+        for zombie in _find_zombie_chromes(known_pids):
+            _kill_process_tree(zombie["pid"])
+            stopped.append({"port": None, "pid": zombie["pid"], "zombie": True})
     else:
         pid = get_pid_on_port(port)
         if pid:
@@ -256,34 +295,61 @@ def list_browsers(
 ) -> dict:
     """List running ai-dev-browser Chrome instances.
 
+    Combines port-based discovery (working Chromes) with process-based
+    discovery (zombie Chromes that failed to bind their debug port).
+
     Args:
         mine: If True, only show Chromes from this session
 
     Returns:
         dict with browsers list and count
     """
+    from .session import is_our_session
+
     my_ports = set(find_our_chromes(exclude_in_use=False))
 
     if mine:
         browsers = []
+        known_pids = set()
         for p in my_ports:
+            pid = get_pid_on_port(p)
+            if pid:
+                known_pids.add(pid)
             browsers.append(
                 {
                     "port": p,
-                    "pid": get_pid_on_port(p),
+                    "pid": pid,
                     "can_connect": not is_chrome_in_use(p),
                 }
             )
-        return {"browsers": browsers, "count": len(my_ports)}
+
+        # Add zombies from this session
+        for zombie in _find_zombie_chromes(known_pids):
+            cmdline = get_process_cmdline(zombie["pid"])
+            if cmdline and is_our_session(cmdline):
+                browsers.append(
+                    {
+                        "port": None,
+                        "pid": zombie["pid"],
+                        "can_connect": False,
+                        "zombie": True,
+                    }
+                )
+
+        return {"browsers": browsers, "count": len(browsers)}
 
     all_ports = find_ai_dev_browser_chromes()
     this_session = []
     other_sessions = []
+    known_pids = set()
 
     for p in all_ports:
+        pid = get_pid_on_port(p)
+        if pid:
+            known_pids.add(pid)
         entry = {
             "port": p,
-            "pid": get_pid_on_port(p),
+            "pid": pid,
             "can_connect": not is_chrome_in_use(p),
         }
         if p in my_ports:
@@ -291,8 +357,24 @@ def list_browsers(
         else:
             other_sessions.append(entry)
 
+    # Add zombies (no port bound but process exists)
+    zombies = _find_zombie_chromes(known_pids)
+    for zombie in zombies:
+        entry = {
+            "port": None,
+            "pid": zombie["pid"],
+            "can_connect": False,
+            "zombie": True,
+        }
+        cmdline = get_process_cmdline(zombie["pid"])
+        if cmdline and is_our_session(cmdline):
+            this_session.append(entry)
+        else:
+            other_sessions.append(entry)
+
+    total = len(all_ports) + len(zombies)
     return {
         "this_session": this_session,
         "other_sessions": other_sessions,
-        "count": len(all_ports),
+        "count": total,
     }
