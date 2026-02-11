@@ -59,7 +59,12 @@ def _parse_docstring_args(docstring: str) -> dict[str, str]:
         if stripped == "Args:":
             in_args = True
             continue
-        elif in_args and stripped and not stripped[0].isspace() and stripped.endswith(":"):
+        elif (
+            in_args
+            and stripped
+            and not stripped[0].isspace()
+            and stripped.endswith(":")
+        ):
             # New section like "Returns:" or "Raises:"
             if current_arg:
                 args_section[current_arg] = " ".join(current_desc).strip()
@@ -234,10 +239,10 @@ def as_cli(requires_tab: bool = True):
                         port = args.port
                         if port is None:
                             # Auto-detect: find a running ai-dev-browser Chrome
-                            from ai_dev_browser.core.port import find_ai_dev_browser_chromes
+                            from ai_dev_browser.core.port import find_debug_chromes
                             from ai_dev_browser.core.port import is_chrome_in_use
 
-                            for candidate in find_ai_dev_browser_chromes():
+                            for candidate, _pid in find_debug_chromes():
                                 if not is_chrome_in_use(candidate):
                                     port = candidate
                                     break
@@ -260,14 +265,18 @@ def as_cli(requires_tab: bool = True):
 
                         # Build kwargs from args, excluding 'port'
                         kwargs = {
-                            k.replace("-", "_"): v for k, v in vars(args).items() if k != "port"
+                            k.replace("-", "_"): v
+                            for k, v in vars(args).items()
+                            if k != "port"
                         }
 
                         result = await func(tab, **kwargs)
                         print(json.dumps(result, ensure_ascii=False, indent=2))
 
                     except Exception as e:
-                        print(json.dumps({"error": str(e)}, ensure_ascii=False, indent=2))
+                        print(
+                            json.dumps({"error": str(e)}, ensure_ascii=False, indent=2)
+                        )
                         sys.exit(1)
 
                 asyncio.run(run())

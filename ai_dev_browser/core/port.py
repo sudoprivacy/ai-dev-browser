@@ -3,11 +3,8 @@
 This module provides port scanning and availability detection:
 - is_port_in_use: Check if a port is occupied
 - get_available_port: Find an available debugging port
-- is_our_chrome_on_port: Check if Chrome was started by this session
-- find_our_chromes: Find Chrome instances started by this session
-
-The port management uses session ID tagging to identify which Chrome instances
-were started by this ai-dev-browser process.
+- find_debug_chromes: Find all debugging Chrome instances
+- is_chrome_in_use: Check if a Chrome is being used via CDP
 
 Example:
     port = get_available_port()
@@ -30,7 +27,6 @@ from .config import (
     DEFAULT_PROFILE_PREFIX,
 )
 from .process import get_pid_on_port, get_process_cmdline
-from .session import SESSION_FLAG, is_our_session
 
 
 logger = logging.getLogger(__name__)
@@ -179,100 +175,6 @@ def is_port_in_use(
     return False
 
 
-def is_our_chrome_on_port(port: int) -> tuple[bool, int | None]:
-    """
-    Check if the Chrome on a port was started by THIS ai-dev-browser session.
-
-    Uses session ID tagging (more reliable than profile prefix matching).
-    Each ai-dev-browser process gets a unique session ID injected into Chrome's
-    command line as --ai-dev-browser-session=<id>.
-
-    Args:
-        port: Port to check
-
-    Returns:
-        Tuple of (is_our_chrome, pid). If not our Chrome or no Chrome, returns (False, None).
-
-    Example:
-        is_ours, pid = is_our_chrome_on_port(9350)
-        if is_ours:
-            print(f"This Chrome was started by us, PID: {pid}")
-    """
-    pid, cmdline = _get_chrome_info_on_port(port)
-    if pid is None:
-        return False, None
-    if not _is_chrome_process(cmdline):
-        return False, pid
-
-    # Check if it's our session
-    if is_our_session(cmdline):
-        return True, pid
-
-    return False, pid
-
-
-def is_ai_dev_browser_chrome_on_port(port: int) -> tuple[bool, int | None]:
-    """
-    Check if the Chrome on a port was started by ANY ai-dev-browser process.
-
-    Unlike is_our_chrome_on_port(), this checks for the session flag presence
-    (not matching value), so it finds Chromes from previous runs too.
-
-    Args:
-        port: Port to check
-
-    Returns:
-        Tuple of (is_ai_dev_browser_chrome, pid). If not ai-dev-browser Chrome, returns (False, None).
-
-    Example:
-        is_ndk, pid = is_ai_dev_browser_chrome_on_port(9350)
-        if is_ndk:
-            print(f"This Chrome was started by ai-dev-browser, PID: {pid}")
-    """
-    pid, cmdline = _get_chrome_info_on_port(port)
-    if pid is None:
-        return False, None
-    if not _is_chrome_process(cmdline):
-        return False, pid
-
-    # Check for ai-dev-browser session flag (any session)
-    if SESSION_FLAG in cmdline:
-        return True, pid
-
-    return False, pid
-
-
-def find_our_chromes(
-    port_range: tuple[int, int] = DEFAULT_PORT_RANGE,
-    exclude_in_use: bool = True,
-) -> list[int]:
-    """
-    Find all Chrome instances started by THIS ai-dev-browser session.
-
-    Uses session ID tagging to identify our Chromes. More reliable than
-    profile prefix matching because it distinguishes between different
-    ai-dev-browser processes running simultaneously.
-
-    Args:
-        port_range: Tuple of (start_port, end_port) to scan
-        exclude_in_use: If True (default), skip ports where Chrome has attached
-                       debugger sessions (detected via CDP).
-
-    Returns:
-        List of ports with our Chrome instances.
-
-    Example:
-        ports = find_our_chromes()
-        print(f"Found {len(ports)} Chrome instances from this session")
-    """
-
-    def is_our_chrome(port: int) -> bool:
-        is_ours, _ = is_our_chrome_on_port(port)
-        return is_ours
-
-    return _scan_ports(port_range, is_our_chrome, exclude_in_use=exclude_in_use)  # type: ignore[return-value]
-
-
 def is_chrome_in_use(port: int, timeout: float = 0.5) -> bool:
     """
     Check if Chrome on this port is being used by another script via CDP.
@@ -342,9 +244,8 @@ def get_available_port(
     Find an available port for Chrome.
 
     Port selection strategy (when reuse=True):
-    1. First, look for existing Chrome from THIS session not in use
-    2. Then, look for ANY ai-dev-browser Chrome (from previous runs) not in use
-    3. If none found, find an unused port for launching new Chrome
+    1. First, look for any idle debugging Chrome (not in use via CDP)
+    2. If none found, find an unused port for launching new Chrome
 
     When reuse=False, skips directly to finding an unused port.
 
@@ -373,17 +274,17 @@ def get_available_port(
     port_range = (start, end)
 
     if reuse:
-        # Strategy 1: Reuse Chrome from our session (not in use)
-        def is_our_available_chrome(port: int) -> bool:
-            is_ours, _ = is_our_chrome_on_port(port)
-            if is_ours and not is_chrome_in_use(port):
-                logger.debug(f"Found reusable Chrome from our session on port {port}")
+        # Reuse any idle debugging Chrome (not in use via CDP)
+        def is_idle_debug_chrome(port: int) -> bool:
+            pid, cmdline = _get_chrome_info_on_port(port)
+            if pid and _is_chrome_process(cmdline) and not is_chrome_in_use(port):
+                logger.debug(f"Found reusable idle Chrome on port {port}")
                 return True
             return False
 
         port = _scan_ports(
             port_range,
-            is_our_available_chrome,
+            is_idle_debug_chrome,
             exclude=exclude,
             check_in_use=True,
             return_first=True,
@@ -391,27 +292,7 @@ def get_available_port(
         if port is not None:
             return port  # type: ignore[return-value]
 
-        # Strategy 2: Reuse ANY ai-dev-browser Chrome (not in use)
-        def is_ndk_available_chrome(port: int) -> bool:
-            is_ndk, _ = is_ai_dev_browser_chrome_on_port(port)
-            if is_ndk and not is_chrome_in_use(port):
-                logger.debug(
-                    f"Found reusable ai-dev-browser Chrome (from previous run) on port {port}"
-                )
-                return True
-            return False
-
-        port = _scan_ports(
-            port_range,
-            is_ndk_available_chrome,
-            exclude=exclude,
-            check_in_use=True,
-            return_first=True,
-        )
-        if port is not None:
-            return port  # type: ignore[return-value]
-
-    # Strategy 3 (or only strategy when reuse=False): Find unused port
+    # Find unused port (or only strategy when reuse=False)
     # Must also verify bindability: on Windows, Hyper-V reserves dynamic port
     # ranges that appear "unused" but reject bind() with WSAEACCES (0x271D).
     def is_unused_port(port: int) -> bool:
@@ -426,39 +307,13 @@ def get_available_port(
     raise RuntimeError(f"No available port found in range {start}-{end}")
 
 
-def find_ai_dev_browser_chromes(
-    port_range: tuple[int, int] = DEFAULT_PORT_RANGE,
-    exclude_in_use: bool = False,
-) -> list[int]:
-    """
-    Find all Chrome instances started by ANY ai-dev-browser process.
-
-    Unlike find_our_chromes() which only finds current session's Chromes,
-    this finds Chromes from all ai-dev-browser sessions (but NOT user-started Chromes).
-
-    Args:
-        port_range: Tuple of (start_port, end_port) to scan
-        exclude_in_use: If True, skip ports with attached debugger sessions
-
-    Returns:
-        List of ports with ai-dev-browser Chrome instances
-    """
-
-    def is_ndk_chrome(port: int) -> bool:
-        is_ndk, _ = is_ai_dev_browser_chrome_on_port(port)
-        return is_ndk
-
-    return _scan_ports(port_range, is_ndk_chrome, exclude_in_use=exclude_in_use)  # type: ignore[return-value]
-
-
 def find_debug_chromes(
     port_range: tuple[int, int] = DEFAULT_PORT_RANGE,
 ) -> list[tuple[int, int]]:
     """
     Find all Chrome instances listening on debug ports.
 
-    This finds ALL Chromes regardless of who started them.
-    Useful for browser_stop --all to clean up any debug Chrome.
+    Any Chrome on a debug port is a debugging Chrome created by automation.
 
     Args:
         port_range: Tuple of (start_port, end_port) to scan

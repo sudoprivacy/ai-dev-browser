@@ -10,7 +10,6 @@ Usage:
 After modifying core functions, run this script to regenerate tool files.
 """
 
-import os
 from pathlib import Path
 
 # =============================================================================
@@ -77,8 +76,6 @@ TOOLS = [
     # CDP & Cloudflare
     ("cdp", "send_cdp_command", "result", "cdp_send"),
     ("cloudflare", "verify_cloudflare", "verified", "cf_verify"),
-    # Session
-    ("session", "get_session_id", "session_id", "login_interactive"),
 ]
 
 # Tools that don't require a browser tab
@@ -121,7 +118,9 @@ if __name__ == "__main__":
 '''
 
 
-def generate_tool_file(module: str, func_name: str, result_key: str, tool_name: str = None) -> str:
+def generate_tool_file(
+    module: str, func_name: str, result_key: str, tool_name: str = None
+) -> str:
     """Generate tool file content."""
     if tool_name is None:
         tool_name = func_name

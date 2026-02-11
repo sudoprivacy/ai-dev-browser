@@ -7,8 +7,7 @@ from .chrome import launch_chrome
 from .config import DEFAULT_PROFILE_DIR, DEFAULT_REUSE_STRATEGY, ReuseStrategy
 from .port import (
     _cleanup_temp_profile,
-    find_ai_dev_browser_chromes,
-    find_our_chromes,
+    find_debug_chromes,
     get_available_port,
     get_pid_on_port,
     is_chrome_in_use,
@@ -30,56 +29,35 @@ def _is_profile_locked(profile_dir: Path) -> bool:
 
 
 def _find_chrome_using_profile(profile_dir: Path) -> tuple[int, int] | None:
-    """Find an ai-dev-browser Chrome instance using the specified profile.
+    """Find a debugging Chrome using the specified profile.
 
-    Only scans ai-dev-browser's port range (9350-9450) to avoid conflicts
-    with other tools that may use ports like 9222.
+    Scans debug port range (9350-9450) for Chrome with matching profile dir.
 
     Returns:
         (port, pid) tuple if found, None otherwise
     """
     profile_str = str(profile_dir)
 
-    # Only scan ai-dev-browser Chromes, not all debug Chromes
-    for port in find_ai_dev_browser_chromes():
-        pid = get_pid_on_port(port)
-        if pid:
-            try:
-                cmdline = get_process_cmdline(pid)
-                if cmdline and profile_str in cmdline:
-                    return (port, pid)
-            except Exception:
-                pass
+    for port, pid in find_debug_chromes():
+        try:
+            cmdline = get_process_cmdline(pid)
+            if cmdline and profile_str in cmdline:
+                return (port, pid)
+        except Exception:
+            pass
 
     return None
 
 
-def _find_reusable_chrome(reuse: str) -> int | None:
-    """Find a reusable Chrome based on reuse strategy.
-
-    Args:
-        reuse: "this_session", "ai_dev_browser", or "any"
+def _find_reusable_chrome() -> int | None:
+    """Find an idle debugging Chrome to reuse.
 
     Returns:
         Port number if found, None otherwise
     """
-    from .port import find_debug_chromes
-
-    if reuse == "this_session":
-        for port in find_our_chromes(exclude_in_use=False):
-            if not is_chrome_in_use(port):
-                return port
-
-    elif reuse == "ai_dev_browser":
-        for port in find_ai_dev_browser_chromes():
-            if not is_chrome_in_use(port):
-                return port
-
-    elif reuse == "any":
-        for port, _pid in find_debug_chromes():
-            if not is_chrome_in_use(port):
-                return port
-
+    for port, _pid in find_debug_chromes():
+        if not is_chrome_in_use(port):
+            return port
     return None
 
 
@@ -99,15 +77,14 @@ def start_browser(
         url: Initial URL to open (default: about:blank)
         profile: Profile name (default: "default")
         temp: Use temporary profile instead
-        reuse: Reuse strategy - none/this_session/ai_dev_browser/any
-               (default: ai_dev_browser - reuses existing idle Chrome)
+        reuse: "none" (always new) or "any" (reuse idle Chrome, default)
 
     Returns:
         dict with port, pid, headless, url, profile, reused, message
     """
-    # Try to reuse existing Chrome based on reuse strategy
+    # Try to reuse existing Chrome
     if reuse != "none":
-        reused_port = _find_reusable_chrome(reuse)
+        reused_port = _find_reusable_chrome()
         if reused_port:
             pid = get_pid_on_port(reused_port)
             return {
@@ -257,8 +234,6 @@ def stop_browser(
     Returns:
         dict with stopped status, count, browsers list
     """
-    from .port import find_debug_chromes
-
     if not port and not stop_all:
         return {"error": "Please specify port or stop_all"}
 
@@ -293,9 +268,7 @@ def stop_browser(
     }
 
 
-def list_browsers(
-    mine: bool = False,
-) -> dict:
+def list_browsers() -> dict:
     """List all debugging Chrome instances.
 
     Combines port-based discovery (working Chromes) with process-based
@@ -304,82 +277,35 @@ def list_browsers(
     Any Chrome with --remote-debugging-port is a debugging Chrome created
     by automation — regular user Chromes never have this flag.
 
-    Args:
-        mine: If True, only show Chromes from this session
-
     Returns:
         dict with browsers list and count
     """
-    from .port import find_debug_chromes
-    from .session import is_our_session
-
-    my_ports = set(find_our_chromes(exclude_in_use=False))
-
-    if mine:
-        browsers = []
-        known_pids = set()
-        for p in my_ports:
-            pid = get_pid_on_port(p)
-            if pid:
-                known_pids.add(pid)
-            browsers.append(
-                {
-                    "port": p,
-                    "pid": pid,
-                    "can_connect": not is_chrome_in_use(p),
-                }
-            )
-
-        # Add zombies from this session
-        for zombie in _find_zombie_chromes(known_pids):
-            cmdline = get_process_cmdline(zombie["pid"])
-            if cmdline and is_our_session(cmdline):
-                browsers.append(
-                    {
-                        "port": None,
-                        "pid": zombie["pid"],
-                        "can_connect": False,
-                        "zombie": True,
-                    }
-                )
-
-        return {"browsers": browsers, "count": len(browsers)}
-
-    # Find ALL debugging Chromes (not just ones with our session flag)
-    this_session = []
-    other_sessions = []
+    browsers = []
     known_pids = set()
 
+    # Port-based discovery (Chromes listening on debug ports)
     for p, pid in find_debug_chromes():
         known_pids.add(pid)
-        entry = {
-            "port": p,
-            "pid": pid,
-            "can_connect": not is_chrome_in_use(p),
-        }
-        if p in my_ports:
-            this_session.append(entry)
-        else:
-            other_sessions.append(entry)
+        browsers.append(
+            {
+                "port": p,
+                "pid": pid,
+                "can_connect": not is_chrome_in_use(p),
+            }
+        )
 
-    # Add zombies (no port bound but process exists)
-    zombies = _find_zombie_chromes(known_pids)
-    for zombie in zombies:
-        entry = {
-            "port": None,
-            "pid": zombie["pid"],
-            "can_connect": False,
-            "zombie": True,
-        }
-        cmdline = get_process_cmdline(zombie["pid"])
-        if cmdline and is_our_session(cmdline):
-            this_session.append(entry)
-        else:
-            other_sessions.append(entry)
+    # Process-based discovery (zombie Chromes)
+    for zombie in _find_zombie_chromes(known_pids):
+        browsers.append(
+            {
+                "port": None,
+                "pid": zombie["pid"],
+                "can_connect": False,
+                "zombie": True,
+            }
+        )
 
-    total = len(this_session) + len(other_sessions)
     return {
-        "this_session": this_session,
-        "other_sessions": other_sessions,
-        "count": total,
+        "browsers": browsers,
+        "count": len(browsers),
     }

@@ -19,22 +19,14 @@ from .core import (
     DEFAULT_PORT_RANGE,
     DEFAULT_PROFILE_DIR,
     DEFAULT_PROFILE_PREFIX,
-    extract_session_id,
-    find_ai_dev_browser_chromes,
     # Chrome detection and launching
     find_chrome,
     find_debug_chromes,
-    find_our_chromes,
     get_available_port,
     # Process management
     get_pid_on_port,
     get_process_cmdline,
-    # Session management
-    get_session_id,
-    is_ai_dev_browser_chrome_on_port,
     is_chrome_in_use,
-    is_our_chrome_on_port,
-    is_our_session,
     # Port management
     is_port_in_use,
     launch_chrome,
@@ -80,17 +72,9 @@ __all__ = [
     "launch_chrome",
     # Port
     "is_port_in_use",
-    "is_our_chrome_on_port",
-    "is_ai_dev_browser_chrome_on_port",
     "is_chrome_in_use",
-    "find_our_chromes",
-    "find_ai_dev_browser_chromes",
     "find_debug_chromes",
     "get_available_port",
-    # Session
-    "get_session_id",
-    "is_our_session",
-    "extract_session_id",
     # Process
     "get_pid_on_port",
     "get_process_cmdline",

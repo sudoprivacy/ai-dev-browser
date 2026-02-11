@@ -79,21 +79,14 @@ from .page import get_page_html, get_page_info, js_exec, screenshot
 
 # Port management
 from .port import (
-    find_ai_dev_browser_chromes,
     find_debug_chromes,
-    find_our_chromes,
     get_available_port,
-    is_ai_dev_browser_chrome_on_port,
     is_chrome_in_use,
-    is_our_chrome_on_port,
     is_port_in_use,
 )
 
 # Process management
 from .process import get_pid_on_port, get_process_cmdline
-
-# Session management
-from .session import extract_session_id, get_session_id, is_our_session
 
 # Text matching (only the dataclass is public)
 from .text_match import MatchResult
@@ -140,17 +133,9 @@ __all__ = [
     "send_cdp_command",
     # Port
     "is_port_in_use",
-    "is_our_chrome_on_port",
-    "is_ai_dev_browser_chrome_on_port",
     "is_chrome_in_use",
-    "find_our_chromes",
-    "find_ai_dev_browser_chromes",
     "find_debug_chromes",
     "get_available_port",
-    # Session
-    "get_session_id",
-    "is_our_session",
-    "extract_session_id",
     # Process
     "get_pid_on_port",
     "get_process_cmdline",

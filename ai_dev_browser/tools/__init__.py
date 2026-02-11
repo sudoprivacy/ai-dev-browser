@@ -42,9 +42,6 @@ from .focus_by_ref import focus_by_ref
 # JavaScript execution
 from .js_exec import js_exec
 
-# Session
-from .login_interactive import login_interactive
-
 # Mouse actions
 from .mouse_click import mouse_click
 from .mouse_drag import mouse_drag
@@ -109,7 +106,6 @@ __all__ = [
     "page_screenshot",
     "scroll",
     # Session
-    "login_interactive",
     # Mouse
     "mouse_click",
     "mouse_drag",

@@ -1,6 +1,6 @@
 """Browser lifecycle integration tests.
 
-Tests the full start → reuse → connect → stop workflow:
+Tests the full start -> reuse -> connect -> stop workflow:
 - start_browser reuse behavior (same profile, different profiles)
 - CLI auto-detection (no --port specified)
 - stop_browser cleanup
@@ -15,7 +15,7 @@ import pytest
 
 from ai_dev_browser.core.browser import list_browsers, start_browser, stop_browser
 from ai_dev_browser.core.port import (
-    find_ai_dev_browser_chromes,
+    find_debug_chromes,
     is_chrome_in_use,
     is_port_in_use,
 )
@@ -25,30 +25,26 @@ from ai_dev_browser.core.port import (
 TEST_PROFILE = "test-lifecycle"
 
 
-async def _stop_all_ai_dev_chromes():
-    """Stop all ai-dev-browser Chrome instances and wait for ports to free."""
-    for port in find_ai_dev_browser_chromes():
-        try:
-            stop_browser(port=port)
-        except Exception:
-            pass
+async def _stop_all_debug_chromes():
+    """Stop all debugging Chrome instances and wait for ports to free."""
+    stop_browser(stop_all=True)
     # Wait for all ports to free
     for _ in range(30):
-        if not find_ai_dev_browser_chromes():
+        if not find_debug_chromes():
             break
         await asyncio.sleep(0.3)
 
 
 @pytest.fixture(autouse=True)
 async def cleanup_test_chromes():
-    """Stop all ai-dev-browser Chromes before AND after each test.
+    """Stop all debugging Chromes before AND after each test.
 
     Before: ensures clean state (no leftover Chromes from previous runs).
     After: cleans up Chromes started during the test.
     """
-    await _stop_all_ai_dev_chromes()
+    await _stop_all_debug_chromes()
     yield
-    await _stop_all_ai_dev_chromes()
+    await _stop_all_debug_chromes()
 
 
 class TestStartBrowserReuse:
@@ -74,11 +70,13 @@ class TestStartBrowserReuse:
         port1 = result1["port"]
         assert result1["reused"] is False
 
-        # Different profile, but default reuse="ai_dev_browser" finds idle profA Chrome
+        # Different profile, but default reuse="any" finds idle profA Chrome
         result2 = start_browser(headless=True, profile=f"{TEST_PROFILE}-profB")
         assert "error" not in result2
         assert result2["reused"] is True
-        assert result2["port"] == port1, "Reuse strategy finds idle Chrome before profile check"
+        assert result2["port"] == port1, (
+            "Reuse strategy finds idle Chrome before profile check"
+        )
 
     async def test_reuse_none_with_same_profile_still_reuses(self):
         """reuse='none' skips reuse scan, but profile check still catches existing Chrome."""
@@ -110,7 +108,9 @@ class TestStartBrowserReuse:
         assert "error" not in result2
         port2 = result2["port"]
         assert result2["reused"] is False
-        assert port1 != port2, "Different profiles with reuse=none should get different ports"
+        assert port1 != port2, (
+            "Different profiles with reuse=none should get different ports"
+        )
 
 
 class TestAutoDetection:
@@ -122,9 +122,9 @@ class TestAutoDetection:
         assert "error" not in result
         port = result["port"]
 
-        # Verify it's visible to find_ai_dev_browser_chromes
-        found = find_ai_dev_browser_chromes()
-        assert port in found, f"Port {port} not found in {found}"
+        # Verify it's visible to find_debug_chromes
+        found_ports = [p for p, _pid in find_debug_chromes()]
+        assert port in found_ports, f"Port {port} not found in {found_ports}"
 
         # Verify it's NOT in use (no CDP debugger attached)
         assert not is_chrome_in_use(port), "Freshly started Chrome should not be in use"
@@ -205,10 +205,7 @@ class TestListBrowsers:
         port = result["port"]
 
         listing = list_browsers()
-        all_ports = [
-            b["port"]
-            for b in listing.get("this_session", []) + listing.get("other_sessions", [])
-        ]
+        all_ports = [b["port"] for b in listing.get("browsers", [])]
         assert port in all_ports, f"Port {port} not in list: {listing}"
 
     async def test_list_shows_can_connect_status(self):
@@ -218,7 +215,7 @@ class TestListBrowsers:
         port = result["port"]
 
         listing = list_browsers()
-        for b in listing.get("this_session", []) + listing.get("other_sessions", []):
+        for b in listing.get("browsers", []):
             if b["port"] == port:
                 assert b["can_connect"] is True, "Idle Chrome should be connectable"
                 break
@@ -242,7 +239,7 @@ class TestCLIAutoDetectFlow:
 
         # Simulate what _cli.py does when port is None
         detected_port = None
-        for candidate in find_ai_dev_browser_chromes():
+        for candidate, _pid in find_debug_chromes():
             if not is_chrome_in_use(candidate):
                 detected_port = candidate
                 break
@@ -257,7 +254,7 @@ class TestCLIAutoDetectFlow:
 
         # Auto-detect
         detected_port = None
-        for candidate in find_ai_dev_browser_chromes():
+        for candidate, _pid in find_debug_chromes():
             if not is_chrome_in_use(candidate):
                 detected_port = candidate
                 break
@@ -280,16 +277,9 @@ class TestCLIAutoDetectFlow:
 
     async def test_no_chrome_returns_none(self):
         """When no Chrome is running, auto-detection should find nothing."""
-        # Don't start any Chrome - just scan
-        # (cleanup fixture ensures previous test Chromes are stopped)
-        # Note: other Chromes from other tests/sessions may be running,
-        # so we can't guarantee empty. But we test the logic path.
-        detected_port = None
-        for candidate in find_ai_dev_browser_chromes():
+        for candidate, _pid in find_debug_chromes():
             if not is_chrome_in_use(candidate):
-                detected_port = candidate
                 break
 
         # This test verifies the code path doesn't crash.
         # detected_port may or may not be None depending on environment.
-        # The important thing is no exception was raised.
