@@ -11,7 +11,7 @@ Python:
 Behavior:
     1. start_browser (non-headless, launch new Chrome)
     2. Navigate to the login URL
-    3. Poll until user closes the browser - save cookies on each poll
+    3. Poll every 1s until user closes the browser - save cookies on each poll
     4. Return with last successful cookie save path
 """
 
@@ -69,7 +69,7 @@ async def _login_async(url: str, cookies_path: str | None) -> dict:
         # 3. Poll: save cookies periodically, stop when browser closes
         saved_path = ""
         while True:
-            await asyncio.sleep(3)
+            await asyncio.sleep(1)
             try:
                 await tab.evaluate("1")  # heartbeat - throws if browser is gone
                 # Browser still alive: save cookies (captures latest login state)
