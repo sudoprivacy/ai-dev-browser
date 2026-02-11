@@ -10,13 +10,14 @@ Python:
 
 Behavior:
     1. start_browser (non-headless, launch new Chrome)
-    2. Navigate to the login URL
-    3. Poll every 1s until user closes the browser - save cookies on each poll
-    4. Return with last successful cookie save path
+    2. Load existing cookies, then navigate to the login URL
+    3. Wait for user to log in and close the browser
+    4. Save cookies on browser close, return
 """
 
 import asyncio
 import sys
+from pathlib import Path
 
 from .._cli import as_cli
 
@@ -34,10 +35,11 @@ def login_interactive(url: str, cookies_path: str | None = None) -> dict:
 
 async def _login_async(url: str, cookies_path: str | None) -> dict:
     from ai_dev_browser.core.browser import start_browser
+    from ai_dev_browser.core.config import DEFAULT_COOKIES_FILE
     from ai_dev_browser.core.connection import connect_browser, get_active_tab
-    from ai_dev_browser.core.cookies import load_cookies, save_cookies
+    from ai_dev_browser.core.cookies import load_cookies
 
-    # 1. Start a new non-headless Chrome (reuse="none" to get a fresh one)
+    # 1. Start a new non-headless Chrome
     result = start_browser(headless=False, reuse="none")
     if "error" in result:
         return result
@@ -52,47 +54,44 @@ async def _login_async(url: str, cookies_path: str | None) -> dict:
     print("  1. Browser will open and navigate to the URL", file=sys.stderr)
     print("  2. Please log in manually", file=sys.stderr)
     print("  3. Close the browser when done", file=sys.stderr)
-    print("  4. Cookies are saved automatically", file=sys.stderr)
+    print("  4. Cookies will be saved on close", file=sys.stderr)
     print(f"{'=' * 60}\n", file=sys.stderr)
 
     try:
         # 2. Connect, restore previous cookies, then navigate
         browser = await connect_browser(port=port)
         tab = await get_active_tab(browser)
-        await load_cookies(
-            tab, path=cookies_path
-        )  # merge previous cookies (no-op if file missing)
+        await load_cookies(tab, path=cookies_path)  # no-op if file missing
         await tab.get(url)
 
         print("Waiting for you to log in and close the browser...", file=sys.stderr)
 
-        # 3. Poll: save cookies periodically, stop when browser closes
-        saved_path = ""
+        # 3. Wait for browser to close (tab heartbeat)
         while True:
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
             try:
-                await tab.evaluate("1")  # heartbeat - throws if browser is gone
-                # Browser still alive: save cookies (captures latest login state)
-                try:
-                    save_result = await save_cookies(tab, path=cookies_path)
-                    if save_result.get("saved"):
-                        saved_path = save_result.get("path", "")
-                except Exception:
-                    pass
+                await tab.evaluate("1")
             except Exception:
-                # Browser closed
                 break
 
-        if saved_path:
-            print(f"Cookies saved to: {saved_path}", file=sys.stderr)
-        else:
-            print("Warning: No cookies were saved", file=sys.stderr)
-
-        return {
-            "success": True,
-            "cookies_saved": bool(saved_path),
-            "cookies_path": saved_path,
-        }
+        # 4. Save cookies — browser process lingers briefly after last tab closes
+        save_path = Path(cookies_path or DEFAULT_COOKIES_FILE).expanduser()
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            await browser.cookies.save(str(save_path))
+            print(f"Cookies saved to: {save_path}", file=sys.stderr)
+            return {
+                "success": True,
+                "cookies_saved": True,
+                "cookies_path": str(save_path),
+            }
+        except Exception:
+            print("Warning: Could not save cookies after close", file=sys.stderr)
+            return {
+                "success": True,
+                "cookies_saved": False,
+                "cookies_path": "",
+            }
 
     except KeyboardInterrupt:
         return {"success": False, "error": "Interrupted by user"}
