@@ -76,6 +76,8 @@ TOOLS = [
     # CDP & Cloudflare
     ("cdp", "send_cdp_command", "result", "cdp_send"),
     ("cloudflare", "verify_cloudflare", "verified", "cf_verify"),
+    # Interactive login (human-in-the-loop, no tab required)
+    ("login", "login_interactive", "success"),
 ]
 
 # Tools that don't require a browser tab
@@ -83,6 +85,7 @@ NO_TAB_TOOLS = {
     "browser_start",
     "browser_stop",
     "browser_list",
+    "login_interactive",
 }
 
 TEMPLATE = '''"""AUTO-GENERATED from ai_dev_browser.core.{module}.{func_name}

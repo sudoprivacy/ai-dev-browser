@@ -55,6 +55,9 @@ from .dialog import handle_dialog_action
 # Download
 from .download import download_file, set_download_path
 
+# Login (human-in-the-loop)
+from .login import login_interactive
+
 # Elements (only tool-facing functions)
 from .elements import (
     click_by_text,
@@ -183,6 +186,8 @@ __all__ = [
     "download_file",
     # Dialog
     "handle_dialog_action",
+    # Login
+    "login_interactive",
     # Cookies
     "load_cookies",
     "save_cookies",
