@@ -39,6 +39,9 @@ from .find import find
 # Focus
 from .focus_by_ref import focus_by_ref
 
+# Interactive login (human-in-the-loop, no tab required)
+from .login_interactive import login_interactive
+
 # JavaScript execution
 from .js_exec import js_exec
 
@@ -105,7 +108,8 @@ __all__ = [
     "page_wait_url",
     "page_screenshot",
     "scroll",
-    # Session
+    # Login (human-in-the-loop)
+    "login_interactive",
     # Mouse
     "mouse_click",
     "mouse_drag",
