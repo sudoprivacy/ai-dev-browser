@@ -26,7 +26,7 @@ from .config import (
     DEFAULT_PORT_RANGE,
     DEFAULT_PROFILE_PREFIX,
 )
-from .process import get_pid_on_port, get_process_cmdline
+from .process import _find_chrome_processes, get_pid_on_port, get_process_cmdline
 
 
 logger = logging.getLogger(__name__)
@@ -138,7 +138,10 @@ def is_port_in_use(
     """
     Check if a port is in use (Chrome might be listening).
 
-    Checks both IPv4 and IPv6 (Chrome on Windows might only listen on IPv6).
+    Uses a bind-first strategy for speed on Windows: if we can bind the port,
+    nothing is listening — skip the slow connect(). On Windows 11 with Hyper-V,
+    connect() to unused ports hangs until timeout (100ms each) instead of
+    giving an instant ConnectionRefused, making naive scanning 20s+ for 100 ports.
 
     Args:
         host: Host to check (default: 127.0.0.1)
@@ -152,6 +155,16 @@ def is_port_in_use(
         if is_port_in_use(port=9350):
             print("Chrome already running on 9350")
     """
+    # Fast path: if we can bind, nothing is listening (sub-millisecond)
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind((host, port))
+        return False
+    except OSError:
+        pass
+    # Bind failed: either something is listening, or Hyper-V reserved.
+    # Use connect to distinguish (only reached for non-bindable ports).
+
     # Check IPv4
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -274,62 +287,59 @@ def get_available_port(
     port_range = (start, end)
 
     if reuse:
-        # Reuse any idle debugging Chrome (not in use via CDP)
-        def is_idle_debug_chrome(port: int) -> bool:
-            pid, cmdline = _get_chrome_info_on_port(port)
-            if pid and _is_chrome_process(cmdline) and not is_chrome_in_use(port):
-                logger.debug(f"Found reusable idle Chrome on port {port}")
-                return True
-            return False
-
-        port = _scan_ports(
-            port_range,
-            is_idle_debug_chrome,
-            exclude=exclude,
-            check_in_use=True,
-            return_first=True,
-        )
-        if port is not None:
-            return port  # type: ignore[return-value]
+        # Reuse any idle debugging Chrome (process-based, no port scanning)
+        exclude = exclude or set()
+        for chrome_port, _pid in find_debug_chromes(port_range):
+            if chrome_port in exclude:
+                continue
+            if not is_chrome_in_use(chrome_port):
+                logger.debug(f"Found reusable idle Chrome on port {chrome_port}")
+                return chrome_port
 
     # Find unused port (or only strategy when reuse=False)
-    # Must also verify bindability: on Windows, Hyper-V reserves dynamic port
-    # ranges that appear "unused" but reject bind() with WSAEACCES (0x271D).
-    def is_unused_port(port: int) -> bool:
-        if is_port_in_use(DEFAULT_DEBUG_HOST, port):
-            return False
-        return _is_port_bindable(DEFAULT_DEBUG_HOST, port)
+    # Use bind-only test: bindable = nothing listening AND not Hyper-V reserved.
+    # This avoids slow connect() calls on Windows with Hyper-V.
+    for p in range(port_range[0], port_range[1]):
+        if exclude and p in exclude:
+            continue
+        if _is_port_bindable(DEFAULT_DEBUG_HOST, p):
+            return p
 
-    port = _scan_ports(port_range, is_unused_port, exclude=exclude, return_first=True)
-    if port is not None:
-        return port  # type: ignore[return-value]
-
-    raise RuntimeError(f"No available port found in range {start}-{end}")
+    raise RuntimeError(
+        f"No available port found in range {port_range[0]}-{port_range[1]}"
+    )
 
 
 def find_debug_chromes(
     port_range: tuple[int, int] = DEFAULT_PORT_RANGE,
 ) -> list[tuple[int, int]]:
     """
-    Find all Chrome instances listening on debug ports.
+    Find all Chrome instances with --remote-debugging-port.
 
-    Any Chrome on a debug port is a debugging Chrome created by automation.
+    Uses process enumeration instead of port scanning — immune to Hyper-V
+    reserved ports on Windows (which make port scanning 20s+ slow).
 
     Args:
-        port_range: Tuple of (start_port, end_port) to scan
+        port_range: Tuple of (start_port, end_port) to filter results
 
     Returns:
         List of (port, pid) tuples for each found Chrome
     """
+    import re
+
     chromes = []
-
-    def collect_chrome(port: int) -> bool:
-        pid, cmdline = _get_chrome_info_on_port(port)
-        if pid and _is_chrome_process(cmdline):
+    for pid, cmdline in _find_chrome_processes():
+        # Skip child processes (renderers, GPU, etc.)
+        if "--type=" in cmdline:
+            continue
+        # Extract --remote-debugging-port=XXXX
+        match = re.search(r"--remote-debugging-port=(\d+)", cmdline)
+        if not match:
+            continue
+        port = int(match.group(1))
+        if port_range[0] <= port < port_range[1]:
             chromes.append((port, pid))
-        return False  # Always continue scanning
 
-    _scan_ports(port_range, collect_chrome, check_in_use=True)
     return chromes
 
 
