@@ -35,7 +35,7 @@ def login_interactive(url: str, cookies_path: str | None = None) -> dict:
 async def _login_async(url: str, cookies_path: str | None) -> dict:
     from ai_dev_browser.core.browser import start_browser
     from ai_dev_browser.core.connection import connect_browser, get_active_tab
-    from ai_dev_browser.core.cookies import save_cookies
+    from ai_dev_browser.core.cookies import load_cookies, save_cookies
 
     # 1. Start a new non-headless Chrome (reuse="none" to get a fresh one)
     result = start_browser(headless=False, reuse="none")
@@ -56,9 +56,12 @@ async def _login_async(url: str, cookies_path: str | None) -> dict:
     print(f"{'=' * 60}\n", file=sys.stderr)
 
     try:
-        # 2. Connect and navigate
+        # 2. Connect, restore previous cookies, then navigate
         browser = await connect_browser(port=port)
         tab = await get_active_tab(browser)
+        await load_cookies(
+            tab, path=cookies_path
+        )  # merge previous cookies (no-op if file missing)
         await tab.get(url)
 
         print("Waiting for you to log in and close the browser...", file=sys.stderr)
