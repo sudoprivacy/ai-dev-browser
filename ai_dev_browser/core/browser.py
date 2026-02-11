@@ -212,31 +212,34 @@ def start_browser(
 def _find_zombie_chromes(
     known_pids: set[int] | None = None,
 ) -> list[dict]:
-    """Find ai-dev-browser Chromes not visible via port scanning.
+    """Find debugging Chromes not visible via port scanning.
 
-    These are Chrome processes that launched but failed to bind their debug
-    port (e.g., due to Hyper-V reserved ports). They still have our session
-    flag in their command line.
+    These are Chrome processes that have --remote-debugging-port in their
+    command line but failed to bind the port (e.g., due to Hyper-V reserved
+    ports) or are listening outside our scanned range.
+
+    Any Chrome with --remote-debugging-port is a debugging Chrome created
+    by automation — regular user Chromes never have this flag.
 
     Args:
         known_pids: PIDs already found via port scanning (to deduplicate)
 
     Returns:
-        List of {"pid": int, "session_id": str} dicts for zombie Chromes.
+        List of {"pid": int} dicts for zombie Chromes.
     """
-    from .session import SESSION_FLAG, extract_session_id
-
     known_pids = known_pids or set()
     zombies = []
 
     for pid, cmdline in _find_chrome_processes():
         if pid in known_pids:
             continue
-        if SESSION_FLAG not in cmdline:
+        # Any Chrome with --remote-debugging-port is a debugging Chrome
+        if "--remote-debugging-port" not in cmdline:
             continue
-        session_id = extract_session_id(cmdline)
-        if session_id:
-            zombies.append({"pid": pid, "session_id": session_id})
+        # Skip renderer/gpu/utility child processes — only main process matters
+        if "--type=" in cmdline:
+            continue
+        zombies.append({"pid": pid})
 
     return zombies
 
@@ -249,11 +252,13 @@ def stop_browser(
 
     Args:
         port: Port of browser to stop
-        stop_all: Stop all our browser instances (including zombies)
+        stop_all: Stop all debugging Chrome instances (port-bound + zombies)
 
     Returns:
         dict with stopped status, count, browsers list
     """
+    from .port import find_debug_chromes
+
     if not port and not stop_all:
         return {"error": "Please specify port or stop_all"}
 
@@ -261,15 +266,13 @@ def stop_browser(
 
     if stop_all:
         known_pids = set()
-        ports = find_our_chromes(exclude_in_use=False)
-        for p in ports:
+        # Kill all debugging Chromes found via port scanning
+        for p, pid in find_debug_chromes():
             try:
-                pid = get_pid_on_port(p)
-                if pid:
-                    known_pids.add(pid)
-                    _kill_process_tree(pid)
-                    _cleanup_temp_profile(p)
-                    stopped.append({"port": p, "pid": pid})
+                known_pids.add(pid)
+                _kill_process_tree(pid)
+                _cleanup_temp_profile(p)
+                stopped.append({"port": p, "pid": pid})
             except Exception:
                 pass
 
@@ -293,10 +296,13 @@ def stop_browser(
 def list_browsers(
     mine: bool = False,
 ) -> dict:
-    """List running ai-dev-browser Chrome instances.
+    """List all debugging Chrome instances.
 
     Combines port-based discovery (working Chromes) with process-based
     discovery (zombie Chromes that failed to bind their debug port).
+
+    Any Chrome with --remote-debugging-port is a debugging Chrome created
+    by automation — regular user Chromes never have this flag.
 
     Args:
         mine: If True, only show Chromes from this session
@@ -304,6 +310,7 @@ def list_browsers(
     Returns:
         dict with browsers list and count
     """
+    from .port import find_debug_chromes
     from .session import is_our_session
 
     my_ports = set(find_our_chromes(exclude_in_use=False))
@@ -338,15 +345,13 @@ def list_browsers(
 
         return {"browsers": browsers, "count": len(browsers)}
 
-    all_ports = find_ai_dev_browser_chromes()
+    # Find ALL debugging Chromes (not just ones with our session flag)
     this_session = []
     other_sessions = []
     known_pids = set()
 
-    for p in all_ports:
-        pid = get_pid_on_port(p)
-        if pid:
-            known_pids.add(pid)
+    for p, pid in find_debug_chromes():
+        known_pids.add(pid)
         entry = {
             "port": p,
             "pid": pid,
@@ -372,7 +377,7 @@ def list_browsers(
         else:
             other_sessions.append(entry)
 
-    total = len(all_ports) + len(zombies)
+    total = len(this_session) + len(other_sessions)
     return {
         "this_session": this_session,
         "other_sessions": other_sessions,
