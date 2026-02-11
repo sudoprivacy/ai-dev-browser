@@ -112,6 +112,30 @@ def _scan_ports(
 # =============================================================================
 
 
+def _is_port_bindable(
+    host: str = DEFAULT_DEBUG_HOST, port: int = DEFAULT_DEBUG_PORT
+) -> bool:
+    """Check if a port can actually be bound (not reserved by the OS).
+
+    On Windows, Hyper-V reserves dynamic port ranges that appear "unused"
+    (nothing is listening) but reject bind() with WSAEACCES (0x271D).
+    This function catches that by attempting an actual bind.
+
+    Args:
+        host: Host to bind on
+        port: Port to test
+
+    Returns:
+        True if the port is bindable, False if the OS rejects it.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind((host, port))
+            return True
+    except OSError:
+        return False
+
+
 def is_port_in_use(
     host: str = DEFAULT_DEBUG_HOST, port: int = DEFAULT_DEBUG_PORT, timeout: float = 0.1
 ) -> bool:
@@ -122,15 +146,15 @@ def is_port_in_use(
 
     Args:
         host: Host to check (default: 127.0.0.1)
-        port: Port to check (default: 9222)
+        port: Port to check (default: DEFAULT_DEBUG_PORT)
         timeout: Connection timeout in seconds (default 0.1s for fast scanning)
 
     Returns:
         True if port is in use, False otherwise.
 
     Example:
-        if is_port_in_use(port=9222):
-            print("Chrome already running on 9222")
+        if is_port_in_use(port=9350):
+            print("Chrome already running on 9350")
     """
     # Check IPv4
     try:
@@ -170,7 +194,7 @@ def is_our_chrome_on_port(port: int) -> tuple[bool, int | None]:
         Tuple of (is_our_chrome, pid). If not our Chrome or no Chrome, returns (False, None).
 
     Example:
-        is_ours, pid = is_our_chrome_on_port(9222)
+        is_ours, pid = is_our_chrome_on_port(9350)
         if is_ours:
             print(f"This Chrome was started by us, PID: {pid}")
     """
@@ -201,7 +225,7 @@ def is_ai_dev_browser_chrome_on_port(port: int) -> tuple[bool, int | None]:
         Tuple of (is_ai_dev_browser_chrome, pid). If not ai-dev-browser Chrome, returns (False, None).
 
     Example:
-        is_ndk, pid = is_ai_dev_browser_chrome_on_port(9222)
+        is_ndk, pid = is_ai_dev_browser_chrome_on_port(9350)
         if is_ndk:
             print(f"This Chrome was started by ai-dev-browser, PID: {pid}")
     """
@@ -267,8 +291,8 @@ def is_chrome_in_use(port: int, timeout: float = 0.5) -> bool:
         False if no attached sessions or Chrome is not available.
 
     Example:
-        if is_chrome_in_use(9222):
-            print("Chrome on 9222 is busy, find another port")
+        if is_chrome_in_use(9350):
+            print("Chrome on 9350 is busy, find another port")
     """
     try:
         # Get browser WebSocket URL
@@ -338,7 +362,7 @@ def get_available_port(
         RuntimeError: If no available port found in range
 
     Example:
-        port = get_available_port(exclude={9222, 9223})
+        port = get_available_port(exclude={9350, 9351})
         port = get_available_port(reuse=False)  # Always get fresh port
     """
     # Use defaults from config if not specified
@@ -388,8 +412,12 @@ def get_available_port(
             return port  # type: ignore[return-value]
 
     # Strategy 3 (or only strategy when reuse=False): Find unused port
+    # Must also verify bindability: on Windows, Hyper-V reserves dynamic port
+    # ranges that appear "unused" but reject bind() with WSAEACCES (0x271D).
     def is_unused_port(port: int) -> bool:
-        return not is_port_in_use(DEFAULT_DEBUG_HOST, port)
+        if is_port_in_use(DEFAULT_DEBUG_HOST, port):
+            return False
+        return _is_port_bindable(DEFAULT_DEBUG_HOST, port)
 
     port = _scan_ports(port_range, is_unused_port, exclude=exclude, return_first=True)
     if port is not None:

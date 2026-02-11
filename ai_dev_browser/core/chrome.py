@@ -7,7 +7,7 @@ This module provides cross-platform Chrome management:
 Example:
     chrome_path = find_chrome()
     if chrome_path:
-        process = launch_chrome(port=9222)
+        process = launch_chrome()
 """
 
 import logging
@@ -47,7 +47,10 @@ def find_chrome() -> str | None:
         candidates = [
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
             "/Applications/Chromium.app/Contents/MacOS/Chromium",
-            str(Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            str(
+                Path.home()
+                / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            ),
         ]
     elif system == "Windows":
         candidates = [
@@ -139,7 +142,7 @@ def launch_chrome(
     suitable for browser automation without affecting user's Chrome.
 
     Args:
-        port: Remote debugging port (default: 9222)
+        port: Remote debugging port (default: DEFAULT_DEBUG_PORT)
         headless: Run in headless mode (default: False)
         user_data_dir: Custom user data directory. If None, creates a temp directory.
         profile_prefix: Prefix for temp profile directory name (default: "nodriver_chrome_")
@@ -158,7 +161,7 @@ def launch_chrome(
         RuntimeError: If Chrome fails to start.
 
     Example:
-        process = launch_chrome(port=9222)
+        process = launch_chrome()
         # ... connect with nodriver ...
         process.terminate()
     """

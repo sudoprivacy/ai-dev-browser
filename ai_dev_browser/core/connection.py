@@ -5,18 +5,20 @@ import logging
 import nodriver
 from nodriver import cdp
 
+from .config import DEFAULT_DEBUG_HOST, DEFAULT_DEBUG_PORT
+
 logger = logging.getLogger(__name__)
 
 
 async def connect_browser(
-    host: str = "127.0.0.1",
-    port: int = 9222,
+    host: str = DEFAULT_DEBUG_HOST,
+    port: int = DEFAULT_DEBUG_PORT,
 ) -> nodriver.Browser:
     """Connect to existing Chrome instance.
 
     Args:
-        host: Chrome debugging host (default: 127.0.0.1)
-        port: Chrome debugging port (default: 9222)
+        host: Chrome debugging host
+        port: Chrome debugging port
 
     Returns:
         Browser instance
@@ -39,7 +41,9 @@ async def connect_browser(
 
         return browser
     except Exception as e:
-        raise ConnectionError(f"Failed to connect to Chrome on {host}:{port}: {e}") from e
+        raise ConnectionError(
+            f"Failed to connect to Chrome on {host}:{port}: {e}"
+        ) from e
 
 
 async def _attach_to_page_targets(browser: nodriver.Browser) -> None:
@@ -59,7 +63,9 @@ async def _attach_to_page_targets(browser: nodriver.Browser) -> None:
         if tid is None:
             continue
         try:
-            await browser.connection.send(cdp.target.attach_to_target(tid, flatten=True))
+            await browser.connection.send(
+                cdp.target.attach_to_target(tid, flatten=True)
+            )
             logger.debug(f"Attached to page target {tid}")
         except Exception as e:
             logger.debug(f"Could not attach to target {tid}: {e}")

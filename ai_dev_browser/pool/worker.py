@@ -6,7 +6,7 @@ This module defines the Worker abstraction that manages a single browser instanc
 - WorkerStats: Success/failure statistics
 
 Example:
-    worker = Worker(worker_id=0, port=9222)
+    worker = Worker(worker_id=0, port=9350)
     worker.mark_busy(job)
     # ... execute job ...
     worker.mark_idle()
@@ -91,7 +91,7 @@ class Worker:
         stats: Success/failure statistics
 
     Example:
-        worker = Worker(worker_id=0, port=9222)
+        worker = Worker(worker_id=0, port=9350)
         await client.__aenter__()
         worker.client = client
 

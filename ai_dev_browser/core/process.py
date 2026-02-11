@@ -6,7 +6,7 @@ This module provides process inspection and termination:
 - kill_process_tree: Terminate a process and all its children
 
 Example:
-    pid = get_pid_on_port(9222)
+    pid = get_pid_on_port(9350)
     if pid:
         kill_process_tree(pid)
 """
@@ -33,7 +33,7 @@ def get_pid_on_port(port: int) -> int | None:
         PID if found, None otherwise.
 
     Example:
-        pid = get_pid_on_port(9222)
+        pid = get_pid_on_port(9350)
         if pid:
             print(f"Chrome PID: {pid}")
     """
@@ -113,7 +113,9 @@ def get_process_cmdline(pid: int) -> str | None:
                 timeout=5,
             )
             if result.returncode == 0:
-                lines = [line.strip() for line in result.stdout.split("\n") if line.strip()]
+                lines = [
+                    line.strip() for line in result.stdout.split("\n") if line.strip()
+                ]
                 if len(lines) > 1:
                     return lines[1]  # Skip header
         except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -138,7 +140,7 @@ def _kill_process_tree(pid: int) -> bool:
         True if kill command was executed, False on error.
 
     Example:
-        pid = get_pid_on_port(9222)
+        pid = get_pid_on_port(9350)
         if pid:
             kill_process_tree(pid)
             print("Chrome terminated")
