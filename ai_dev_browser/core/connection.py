@@ -143,6 +143,9 @@ class BrowserClient:
     tab lifecycle, and cookies.
     """
 
+    # Connection cache: reuse existing BrowserClient for same host:port
+    _instances: dict[tuple[str, int], "BrowserClient"] = {}
+
     def __init__(self, host: str, port: int):
         self.host = host
         self.port = port
@@ -154,10 +157,21 @@ class BrowserClient:
     async def connect(cls, host: str, port: int) -> BrowserClient:
         """Connect to an existing Chrome instance via CDP.
 
-        1. HTTP GET /json/version → WebSocket URL
-        2. Connect browser-level WebSocket
-        3. Discover existing targets (tabs)
+        Reuses existing connection if one is alive for the same host:port.
         """
+        key = (host, port)
+
+        # Reuse existing connection if alive
+        existing = cls._instances.get(key)
+        if existing and existing.connection and not existing.connection.closed:
+            # Refresh target list
+            await existing.update_targets()
+            return existing
+
+        # Close stale instance if any
+        if existing:
+            await existing.close()
+
         instance = cls(host, port)
 
         # 1. Get WebSocket URL
@@ -173,7 +187,31 @@ class BrowserClient:
         )
         await instance.update_targets()
 
+        cls._instances[key] = instance
         return instance
+
+    async def close(self):
+        """Close all WebSocket connections (browser + tabs)."""
+        # Close tab connections
+        for tab in self.targets:
+            if not tab._connection.closed:
+                await tab._connection.disconnect()
+        self.targets.clear()
+
+        # Close browser-level connection
+        if self.connection and not self.connection.closed:
+            await self.connection.disconnect()
+
+        # Remove from cache
+        key = (self.host, self.port)
+        if BrowserClient._instances.get(key) is self:
+            del BrowserClient._instances[key]
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        await self.close()
 
     async def _get_ws_url(self) -> str:
         """Discover WebSocket URL via Chrome HTTP debug API."""
@@ -245,9 +283,15 @@ class BrowserClient:
                 tab = Tab(ws, target=info, browser=self)
                 self.targets.append(tab)
 
-        # Remove targets that no longer exist
+        # Remove targets that no longer exist (and close their WebSockets)
         current_ids = {info.target_id for info in target_infos}
-        self.targets = [t for t in self.targets if t._target.target_id in current_ids]
+        kept = []
+        for t in self.targets:
+            if t._target.target_id in current_ids:
+                kept.append(t)
+            elif not t._connection.closed:
+                await t._connection.disconnect()
+        self.targets = kept
 
 
 # =============================================================================
@@ -261,12 +305,15 @@ async def connect_browser(
 ) -> BrowserClient:
     """Connect to existing Chrome instance.
 
+    Reuses existing connection for same host:port if alive.
+    Supports context manager: async with connect_browser() as browser: ...
+
     Args:
         host: Chrome debugging host
         port: Chrome debugging port
 
     Returns:
-        BrowserClient instance
+        BrowserClient instance (also usable as async context manager)
 
     Raises:
         ConnectionError: If unable to connect

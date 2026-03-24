@@ -282,3 +282,81 @@ class TestCLIAutoDetectFlow:
 
         # This test verifies the code path doesn't crash.
         # detected_port may or may not be None depending on environment.
+
+
+class TestConnectionReuse:
+    """Test that repeated connect_browser() reuses connections.
+
+    Covers the bug: multiple connect_browser() calls leak WebSockets,
+    eventually exhausting Chrome's CDP slots and causing timeouts.
+    """
+
+    async def test_repeated_connect_reuses_instance(self):
+        """Multiple connect_browser() to same port returns same instance."""
+        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-reuse-conn")
+        assert "error" not in result
+        port = result["port"]
+
+        from ai_dev_browser.core.connection import connect_browser, get_active_tab
+
+        b1 = await connect_browser(port=port)
+        b2 = await connect_browser(port=port)
+        assert b1 is b2, "Should reuse same BrowserClient"
+
+        # Both should work
+        tab = await get_active_tab(b2)
+        r = await tab.evaluate("1 + 1")
+        assert r == 2
+
+    async def test_close_then_reconnect(self):
+        """After close(), next connect_browser() creates fresh instance."""
+        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-close-recon")
+        assert "error" not in result
+        port = result["port"]
+
+        from ai_dev_browser.core.connection import connect_browser, get_active_tab
+
+        b1 = await connect_browser(port=port)
+        await b1.close()
+
+        b2 = await connect_browser(port=port)
+        assert b2 is not b1, "Should create new instance after close"
+
+        tab = await get_active_tab(b2)
+        r = await tab.evaluate("2 + 2")
+        assert r == 4
+
+    async def test_context_manager_cleanup(self):
+        """async with connect_browser() cleans up on exit."""
+        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-ctx")
+        assert "error" not in result
+        port = result["port"]
+
+        from ai_dev_browser.core.connection import (
+            BrowserClient,
+            connect_browser,
+            get_active_tab,
+        )
+
+        async with await connect_browser(port=port) as browser:
+            tab = await get_active_tab(browser)
+            r = await tab.evaluate("3 + 3")
+            assert r == 6
+
+        # Cache should be cleared
+        key = (browser.host, port)
+        assert key not in BrowserClient._instances
+
+    async def test_repeated_connect_all_work(self):
+        """5 sequential connect_browser() calls all produce working tabs."""
+        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-multi")
+        assert "error" not in result
+        port = result["port"]
+
+        from ai_dev_browser.core.connection import connect_browser, get_active_tab
+
+        for i in range(5):
+            browser = await connect_browser(port=port)
+            tab = await get_active_tab(browser)
+            r = await tab.evaluate(f"{i} + 1")
+            assert r == i + 1, f"Iteration {i}: expected {i + 1}, got {r}"

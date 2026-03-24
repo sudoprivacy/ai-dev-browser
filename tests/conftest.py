@@ -17,6 +17,8 @@ async def browser():
     browser_client = await connect_browser(port=port)
     yield browser_client
     with contextlib.suppress(Exception):
+        await browser_client.close()
+    with contextlib.suppress(Exception):
         stop_browser(port=port)
 
 
