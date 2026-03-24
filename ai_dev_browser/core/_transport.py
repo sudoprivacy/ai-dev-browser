@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 MAX_SIZE: int = 2**28
 PING_TIMEOUT: int = 900  # 15 minutes
+COMMAND_TIMEOUT: int = 30  # seconds per CDP command
 
 
 class ProtocolException(Exception):
@@ -155,7 +156,13 @@ class CDPConnection:
         tx.id = next(self._counter)
         self._pending[tx.id] = tx
         asyncio.create_task(self._websocket.send(tx.message))
-        return await tx
+        try:
+            return await asyncio.wait_for(tx, timeout=COMMAND_TIMEOUT)
+        except asyncio.TimeoutError:
+            self._pending.pop(tx.id, None)
+            raise ProtocolException(
+                f"CDP command timed out after {COMMAND_TIMEOUT}s: {tx.method}"
+            )
 
     def add_handler(
         self,
@@ -214,8 +221,21 @@ class CDPConnection:
             except ValueError:
                 pass
 
+    def _cancel_pending(self, reason: str = "connection closed"):
+        """Cancel all pending transactions (e.g., when WebSocket closes)."""
+        for tx_id, tx in list(self._pending.items()):
+            if not tx.done():
+                tx.set_exception(ProtocolException(reason))
+        self._pending.clear()
+
     async def _listener(self):
         """Background task: receive messages, dispatch responses and events."""
+        try:
+            await self._listener_loop()
+        finally:
+            self._cancel_pending("WebSocket listener stopped")
+
+    async def _listener_loop(self):
         while True:
             try:
                 async with self._lock:
