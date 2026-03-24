@@ -1,10 +1,10 @@
 """Local storage operations."""
 
-import nodriver
+from ._tab import Tab
 
 
 async def get_local_storage(
-    tab: nodriver.Tab,
+    tab: Tab,
     key: str | None = None,
 ) -> dict:
     """Get localStorage data.
@@ -24,7 +24,7 @@ async def get_local_storage(
 
 
 async def set_local_storage(
-    tab: nodriver.Tab,
+    tab: Tab,
     items: dict | None = None,
     key: str | None = None,
     value: str | None = None,

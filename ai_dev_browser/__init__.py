@@ -1,8 +1,7 @@
-"""ai-dev-browser: Browser automation toolkit built on nodriver.
+"""ai-dev-browser: Browser automation toolkit with CDP WebSocket transport.
 
 AI-first design for intuitive browser automation.
 
-IMPORTANT: Always import from ai_dev_browser, not directly from nodriver.
     from ai_dev_browser import cdp, connect_browser, browser_start
 """
 
@@ -32,7 +31,7 @@ from .core import (
     launch_chrome,
 )
 
-# Cloudflare verification (wraps nodriver's native verify_cf)
+# Cloudflare verification
 from .core.cloudflare import verify_cloudflare
 
 # Worker pool
@@ -96,7 +95,7 @@ __all__ = [
     "verify_cloudflare",
     # Core operations module
     "core",
-    # Re-exported from nodriver (use these instead of importing nodriver directly)
+    # CDP protocol access (vendored)
     "cdp",
     # Tools
     "browser_start",
@@ -104,8 +103,8 @@ __all__ = [
     "connect_browser",
 ]
 
-# Re-export nodriver.cdp for CDP protocol access
-from nodriver import cdp
+# Vendored CDP protocol module
+from . import cdp
 
 from .core import connect_browser
 

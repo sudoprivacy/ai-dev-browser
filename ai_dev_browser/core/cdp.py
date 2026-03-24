@@ -3,8 +3,9 @@
 import json
 import re
 
-import nodriver
-import nodriver.cdp as cdp_module
+from ai_dev_browser import cdp as cdp_module
+
+from ._tab import Tab
 
 
 def _camel_to_snake(name: str) -> str:
@@ -37,7 +38,7 @@ def _get_cdp_command(method: str, params: dict):
 
 
 async def send_cdp_command(
-    tab: nodriver.Tab,
+    tab: Tab,
     method: str,
     params: str | None = None,
 ) -> dict:

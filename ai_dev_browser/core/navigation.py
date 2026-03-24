@@ -4,11 +4,11 @@ import asyncio
 import re
 import time
 
-import nodriver
+from ._tab import Tab
 
 
 async def goto(
-    tab: nodriver.Tab,
+    tab: Tab,
     url: str,
     new_tab: bool = False,
     wait: bool = True,
@@ -41,19 +41,19 @@ async def goto(
     }
 
 
-async def _back(tab: nodriver.Tab) -> bool:
+async def _back(tab: Tab) -> bool:
     """Go back in history."""
     await tab.back()
     return True
 
 
-async def _forward(tab: nodriver.Tab) -> bool:
+async def _forward(tab: Tab) -> bool:
     """Go forward in history."""
     await tab.forward()
     return True
 
 
-async def reload(tab: nodriver.Tab, ignore_cache: bool = True) -> bool:
+async def reload(tab: Tab, ignore_cache: bool = True) -> bool:
     """Reload the page.
 
     Args:
@@ -68,7 +68,7 @@ async def reload(tab: nodriver.Tab, ignore_cache: bool = True) -> bool:
 
 
 async def wait_for_load(
-    tab: nodriver.Tab,
+    tab: Tab,
     timeout: float = 30,
     idle_time: float = 0.5,
 ) -> bool:
@@ -98,7 +98,7 @@ async def wait_for_load(
 
 
 async def wait_for_url(
-    tab: nodriver.Tab,
+    tab: Tab,
     pattern: str | None = None,
     exact: str | None = None,
     timeout: float = 30,
@@ -120,7 +120,9 @@ async def wait_for_url(
         elapsed = time.time() - start_time
 
         if elapsed > timeout:
-            current_url = tab.target.url if hasattr(tab, "target") and tab.target else ""
+            current_url = (
+                tab.target.url if hasattr(tab, "target") and tab.target else ""
+            )
             return {
                 "matched": False,
                 "url": current_url,
@@ -147,7 +149,7 @@ async def wait_for_url(
 
 
 async def _wait_for_url_match(
-    tab: nodriver.Tab,
+    tab: Tab,
     pattern: str | None = None,
     exact: str | None = None,
     timeout: float = 30,
@@ -176,7 +178,7 @@ async def _wait_for_url_match(
 
 
 async def _wait_for_page(
-    tab: nodriver.Tab,
+    tab: Tab,
     idle: bool = False,
     sleep: float | None = None,
     timeout: float = 30,

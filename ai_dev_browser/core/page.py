@@ -4,17 +4,18 @@ import json
 import tempfile
 from pathlib import Path
 
-import nodriver
+from ._tab import Tab
 
 # Optional PIL for image resizing
 try:
     from PIL import Image
+
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
 
 
-async def js_exec(tab: nodriver.Tab, expression: str) -> dict:
+async def js_exec(tab: Tab, expression: str) -> dict:
     """Execute JavaScript in the page context.
 
     Args:
@@ -34,7 +35,7 @@ async def js_exec(tab: nodriver.Tab, expression: str) -> dict:
 
 
 async def screenshot(
-    tab: nodriver.Tab,
+    tab: Tab,
     path: str | None = None,
     full_page: bool = False,
     css_scale: bool = True,
@@ -102,7 +103,7 @@ async def screenshot(
     }
 
 
-async def get_page_info(tab: nodriver.Tab) -> dict:
+async def get_page_info(tab: Tab) -> dict:
     """Get current page information.
 
     Args:
@@ -128,7 +129,7 @@ async def get_page_info(tab: nodriver.Tab) -> dict:
 
 
 async def get_html(
-    tab: nodriver.Tab,
+    tab: Tab,
     selector: str | None = None,
 ) -> str:
     """Get page HTML content.
@@ -141,12 +142,14 @@ async def get_html(
         HTML string
     """
     if selector:
-        return await tab.evaluate(f"document.querySelector({repr(selector)})?.outerHTML || ''")
+        return await tab.evaluate(
+            f"document.querySelector({repr(selector)})?.outerHTML || ''"
+        )
     return await tab.get_content()
 
 
 async def get_page_html(
-    tab: nodriver.Tab,
+    tab: Tab,
     outer: bool = False,
 ) -> dict:
     """Get page HTML content with metadata.

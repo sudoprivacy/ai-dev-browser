@@ -4,10 +4,11 @@ import asyncio
 import contextlib
 import re
 
-import nodriver
-import nodriver.cdp.dom as dom
-import nodriver.cdp.input_ as cdp_input
-import nodriver.cdp.page as page
+from ai_dev_browser.cdp import dom
+from ai_dev_browser.cdp import input_ as cdp_input
+from ai_dev_browser.cdp import page
+
+from ._tab import Tab
 
 from .snapshot import _get_snapshot
 
@@ -43,7 +44,7 @@ def _parse_ref(ref: str) -> tuple[str | None, str, int | None]:
     return frame_prefix, local_ref, node_id
 
 
-async def _get_frame_id_by_prefix(tab: nodriver.Tab, prefix: str) -> str | None:
+async def _get_frame_id_by_prefix(tab: Tab, prefix: str) -> str | None:
     """Find full frame ID by prefix (e.g., 'FRAME_ABC123' -> full frame ID)."""
     try:
         result = await tab.send(page.get_frame_tree())
@@ -65,7 +66,7 @@ async def _get_frame_id_by_prefix(tab: nodriver.Tab, prefix: str) -> str | None:
 
 
 async def _click_by_node_id(
-    tab: nodriver.Tab,
+    tab: Tab,
     node_id: int,
 ) -> dict:
     """Click element by backend node ID via CDP.
@@ -116,7 +117,7 @@ async def _click_by_node_id(
 
 
 async def _wait_for_ax_element(
-    tab: nodriver.Tab,
+    tab: Tab,
     wait_for_role: str | None = None,
     wait_for_name: str | None = None,
     timeout: float = 5.0,
@@ -146,7 +147,9 @@ async def _wait_for_ax_element(
             elements = await _get_snapshot(tab)
             for el in elements:
                 role_match = wait_for_role is None or el.get("role") == wait_for_role
-                name_match = wait_for_name is None or wait_for_name in el.get("name", "")
+                name_match = wait_for_name is None or wait_for_name in el.get(
+                    "name", ""
+                )
                 if role_match and name_match:
                     return {
                         "found": True,
@@ -163,7 +166,7 @@ async def _wait_for_ax_element(
 
 
 async def _click_ax_element(
-    tab: nodriver.Tab,
+    tab: Tab,
     ref: str | None = None,
     node_id: int | None = None,
     wait_for_role: str | None = None,
@@ -280,7 +283,7 @@ async def _click_ax_element(
 
 
 async def click_by_ref(
-    tab: nodriver.Tab,
+    tab: Tab,
     ref: str,
 ) -> dict:
     """Click element by ref from find().
@@ -305,7 +308,7 @@ async def click_by_ref(
 
 
 async def focus_by_ref(
-    tab: nodriver.Tab,
+    tab: Tab,
     ref: str,
 ) -> dict:
     """Focus element by ref from find().
@@ -339,7 +342,7 @@ async def focus_by_ref(
 
 
 async def type_by_ref(
-    tab: nodriver.Tab,
+    tab: Tab,
     ref: str,
     text: str,
     clear: bool = False,
@@ -402,8 +405,6 @@ async def type_by_ref(
         )
 
     # Type text using insertText (most reliable for input fields)
-    await tab.send(
-        cdp_input.insert_text(text=text)
-    )
+    await tab.send(cdp_input.insert_text(text=text))
 
     return {"typed": True, "ref": ref, "text": text}

@@ -1,0 +1,3 @@
+[submodule "vendor/nodriver"]
+	path = vendor/nodriver
+	url = https://github.com/UltrafunkAmsterdam/nodriver

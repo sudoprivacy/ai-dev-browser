@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 authors = [
     {name = "sudoprivacy"}
 ]
-keywords = ["browser", "automation", "nodriver", "pool", "cloudflare", "ai"]
+keywords = ["browser", "automation", "cdp", "pool", "cloudflare", "ai"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -26,9 +26,10 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "nodriver>=0.38,<1.0",
-    "websocket-client>=1.0",  # For CDP in-use detection
+    "websockets>=13.0",  # For async CDP WebSocket connection
+    "websocket-client>=1.0",  # For CDP in-use detection (sync)
     "Pillow>=10.0",  # For screenshot CSS scaling
+    "deprecated>=1.2",  # For vendored CDP protocol module
 ]
 
 [project.optional-dependencies]
@@ -37,7 +38,7 @@ dev = [
     "pytest-asyncio>=0.21",
 ]
 cv = [
-    "opencv-python>=4.8",  # For nodriver's verify_cf() template matching
+    "opencv-python>=4.8",  # For verify_cf() template matching
 ]
 fuzzy = [
     "rapidfuzz>=3.0",  # Fast C-based Levenshtein for fuzzy_find/fuzzy_click
@@ -50,6 +51,12 @@ Repository = "https://github.com/sudoprivacy/ai-dev-browser"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ai_dev_browser*"]
+
+[tool.ruff]
+extend-exclude = ["ai_dev_browser/cdp"]  # Vendored auto-generated CDP module
+
+[tool.mypy]
+exclude = ["ai_dev_browser/cdp"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

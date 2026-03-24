@@ -3,9 +3,10 @@
 import contextlib
 import os
 
-import nodriver
 import pytest
 from ai_dev_browser.core import human
+from ai_dev_browser.core.browser import start_browser, stop_browser
+from ai_dev_browser.core.connection import connect_browser
 
 
 SKIP_BROWSER = os.environ.get("SKIP_BROWSER_TESTS", "").lower() in ("1", "true", "yes")
@@ -17,13 +18,12 @@ async def browser():
     if SKIP_BROWSER:
         pytest.skip("Browser tests skipped")
 
-    browser = await nodriver.start(
-        headless=True,
-        browser_args=["--no-sandbox", "--disable-gpu"],
-    )
-    yield browser
+    result = start_browser(headless=True, temp=True)
+    port = result["port"]
+    browser_client = await connect_browser(port=port)
+    yield browser_client
     with contextlib.suppress(Exception):
-        browser.stop()
+        stop_browser(port=port)
 
 
 @pytest.fixture(autouse=True)

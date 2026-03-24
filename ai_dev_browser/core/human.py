@@ -9,8 +9,9 @@ import math
 import random
 from dataclasses import dataclass
 
-import nodriver
-from nodriver import cdp
+from ai_dev_browser import cdp
+from ._element import Element
+from ._tab import Tab
 
 
 # Optional: use oxymouse if available
@@ -99,7 +100,7 @@ def get_config() -> HumanConfig:
     return _config
 
 
-def _get_tab_id(tab: nodriver.Tab) -> str:
+def _get_tab_id(tab: Tab) -> str:
     """Get unique identifier for a tab."""
     try:
         return str(tab.target.target_id)
@@ -119,13 +120,13 @@ def _get_mouse_button(button: str) -> cdp.input_.MouseButton:
     return button_map.get(button.lower(), cdp.input_.MouseButton.LEFT)
 
 
-def get_last_mouse_pos(tab: nodriver.Tab) -> tuple[float, float]:
+def get_last_mouse_pos(tab: Tab) -> tuple[float, float]:
     """Get last known mouse position for a tab."""
     tab_id = _get_tab_id(tab)
     return _last_mouse_pos.get(tab_id, (0, 0))
 
 
-def set_last_mouse_pos(tab: nodriver.Tab, x: float, y: float) -> None:
+def set_last_mouse_pos(tab: Tab, x: float, y: float) -> None:
     """Set last known mouse position for a tab."""
     tab_id = _get_tab_id(tab)
     _last_mouse_pos[tab_id] = (x, y)
@@ -170,7 +171,9 @@ def _gaussian_smooth(data: list[float], sigma: float) -> list[float]:
     return smoothed
 
 
-def _morph_distribution(data: list[float], target_mean: float, target_std: float) -> list[float]:
+def _morph_distribution(
+    data: list[float], target_mean: float, target_std: float
+) -> list[float]:
     """Morph data to have target mean and std."""
     if not data:
         return data
@@ -257,7 +260,9 @@ def generate_gaussian_path(
 # =============================================================================
 
 
-def calculate_click_offset(width: float, height: float, ratio: float = None) -> tuple[float, float]:
+def calculate_click_offset(
+    width: float, height: float, ratio: float = None
+) -> tuple[float, float]:
     """Calculate random offset within element bounds.
 
     Args:
@@ -294,7 +299,7 @@ async def delay(min_ms: float = None, max_ms: float = None) -> None:
 
 
 async def mouse_move(
-    tab: nodriver.Tab,
+    tab: Tab,
     x: float,
     y: float,
     from_x: float = None,
@@ -350,7 +355,9 @@ async def mouse_move(
         # Send mouse events with timing
         delay_per_point = duration / len(path) if path else 0
         for point in path:
-            await tab.send(cdp.input_.dispatch_mouse_event("mouseMoved", x=point[0], y=point[1]))
+            await tab.send(
+                cdp.input_.dispatch_mouse_event("mouseMoved", x=point[0], y=point[1])
+            )
             if delay_per_point > 0:
                 await asyncio.sleep(delay_per_point)
     else:
@@ -362,7 +369,7 @@ async def mouse_move(
 
 
 async def mouse_click(
-    tab: nodriver.Tab,
+    tab: Tab,
     x: float,
     y: float,
     button: str = "left",
@@ -388,7 +395,9 @@ async def mouse_click(
 
     # Press
     await tab.send(
-        cdp.input_.dispatch_mouse_event("mousePressed", x=x, y=y, button=btn, click_count=1)
+        cdp.input_.dispatch_mouse_event(
+            "mousePressed", x=x, y=y, button=btn, click_count=1
+        )
     )
 
     # Optional: random hold time (if enabled)
@@ -398,12 +407,14 @@ async def mouse_click(
 
     # Release
     await tab.send(
-        cdp.input_.dispatch_mouse_event("mouseReleased", x=x, y=y, button=btn, click_count=1)
+        cdp.input_.dispatch_mouse_event(
+            "mouseReleased", x=x, y=y, button=btn, click_count=1
+        )
     )
 
 
 async def mouse_double_click(
-    tab: nodriver.Tab,
+    tab: Tab,
     x: float,
     y: float,
     button: str = "left",
@@ -429,13 +440,17 @@ async def mouse_double_click(
 
     # First click
     await tab.send(
-        cdp.input_.dispatch_mouse_event("mousePressed", x=x, y=y, button=btn, click_count=1)
+        cdp.input_.dispatch_mouse_event(
+            "mousePressed", x=x, y=y, button=btn, click_count=1
+        )
     )
     if _config.click_hold_enabled:
         hold_ms = random.uniform(_config.click_hold_min_ms, _config.click_hold_max_ms)
         await asyncio.sleep(hold_ms / 1000)
     await tab.send(
-        cdp.input_.dispatch_mouse_event("mouseReleased", x=x, y=y, button=btn, click_count=1)
+        cdp.input_.dispatch_mouse_event(
+            "mouseReleased", x=x, y=y, button=btn, click_count=1
+        )
     )
 
     # Interval between clicks (random if humanized, else minimal)
@@ -448,20 +463,24 @@ async def mouse_double_click(
 
     # Second click
     await tab.send(
-        cdp.input_.dispatch_mouse_event("mousePressed", x=x, y=y, button=btn, click_count=2)
+        cdp.input_.dispatch_mouse_event(
+            "mousePressed", x=x, y=y, button=btn, click_count=2
+        )
     )
     if _config.click_hold_enabled:
         hold_ms = random.uniform(_config.click_hold_min_ms, _config.click_hold_max_ms)
         await asyncio.sleep(hold_ms / 1000)
     await tab.send(
-        cdp.input_.dispatch_mouse_event("mouseReleased", x=x, y=y, button=btn, click_count=2)
+        cdp.input_.dispatch_mouse_event(
+            "mouseReleased", x=x, y=y, button=btn, click_count=2
+        )
     )
 
 
 async def type_text(
-    tab: nodriver.Tab,
+    tab: Tab,
     text: str,
-    element: nodriver.Element = None,
+    element: Element = None,
     humanize: bool = None,
 ) -> None:
     """Type text with optional human-like timing.
@@ -480,7 +499,11 @@ async def type_text(
 
     for char in text:
         # Simulate typo if enabled (only when humanizing)
-        if use_delays and _config.typo_enabled and random.random() < _config.typo_probability:
+        if (
+            use_delays
+            and _config.typo_enabled
+            and random.random() < _config.typo_probability
+        ):
             # Type wrong char then backspace
             wrong_char = chr(ord(char) + random.choice([-1, 1]))
             await tab.send(cdp.input_.dispatch_key_event("char", text=wrong_char))
@@ -491,7 +514,9 @@ async def type_text(
                 )
             )
             await tab.send(
-                cdp.input_.dispatch_key_event("keyUp", key="Backspace", windows_virtual_key_code=8)
+                cdp.input_.dispatch_key_event(
+                    "keyUp", key="Backspace", windows_virtual_key_code=8
+                )
             )
             await asyncio.sleep(random.uniform(0.05, 0.15))
 
@@ -508,8 +533,8 @@ async def type_text(
 
 
 async def click_element(
-    tab: nodriver.Tab,
-    element: nodriver.Element,
+    tab: Tab,
+    element: Element,
     from_x: float = None,
     from_y: float = None,
     use_offset: bool = None,
@@ -547,8 +572,8 @@ async def click_element(
 
 
 async def double_click_element(
-    tab: nodriver.Tab,
-    element: nodriver.Element,
+    tab: Tab,
+    element: Element,
     from_x: float = None,
     from_y: float = None,
     use_offset: bool = None,

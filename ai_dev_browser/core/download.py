@@ -2,11 +2,11 @@
 
 from pathlib import Path
 
-import nodriver
+from ._tab import Tab
 
 
 async def set_download_path(
-    tab: nodriver.Tab,
+    tab: Tab,
     path: str | Path,
 ) -> dict:
     """Set download directory.
@@ -25,7 +25,7 @@ async def set_download_path(
 
 
 async def download_file(
-    tab: nodriver.Tab,
+    tab: Tab,
     url: str,
     path: str | Path | None = None,
 ) -> dict:

@@ -2,13 +2,13 @@
 
 from pathlib import Path
 
-import nodriver
+from ._tab import Tab
 
 from . import DEFAULT_COOKIES_FILE
 
 
 async def load_cookies(
-    tab: nodriver.Tab,
+    tab: Tab,
     path: str | None = None,
 ) -> dict:
     """Load cookies from file into browser.
@@ -35,7 +35,7 @@ async def load_cookies(
 
 
 async def save_cookies(
-    tab: nodriver.Tab,
+    tab: Tab,
     path: str | None = None,
     pattern: str | None = None,
 ) -> dict:
@@ -66,7 +66,7 @@ async def save_cookies(
 
 
 async def list_cookies(
-    tab: nodriver.Tab,
+    tab: Tab,
     domain: str | None = None,
 ) -> dict:
     """List browser cookies.

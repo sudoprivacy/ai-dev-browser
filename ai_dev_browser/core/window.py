@@ -1,11 +1,12 @@
 """Window operations."""
 
-import nodriver
-import nodriver.cdp.emulation as cdp_emulation
+from ai_dev_browser.cdp import emulation as cdp_emulation
+
+from ._tab import Tab
 
 
 async def resize_window(
-    tab: nodriver.Tab,
+    tab: Tab,
     width: int = 1280,
     height: int = 720,
     left: int = 0,
@@ -28,7 +29,7 @@ async def resize_window(
 
 
 async def set_window_state(
-    tab: nodriver.Tab,
+    tab: Tab,
     state: str = "normal",
 ) -> dict:
     """Set window state.
@@ -52,7 +53,7 @@ async def set_window_state(
 
 
 async def set_focus_emulation(
-    tab: nodriver.Tab,
+    tab: Tab,
     enabled: bool = True,
 ) -> dict:
     """Enable or disable focus emulation.
@@ -72,7 +73,7 @@ async def set_focus_emulation(
     return {"enabled": enabled}
 
 
-async def focus_window(tab: nodriver.Tab) -> dict:
+async def focus_window(tab: Tab) -> dict:
     """Bring the browser window to front.
 
     Args:

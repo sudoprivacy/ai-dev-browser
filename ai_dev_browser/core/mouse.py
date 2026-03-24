@@ -1,12 +1,12 @@
 """Mouse operations."""
 
-import nodriver
+from ._tab import Tab
 
 from . import human
 
 
 async def mouse_move(
-    tab: nodriver.Tab,
+    tab: Tab,
     x: float,
     y: float,
     steps: int = 10,
@@ -24,7 +24,9 @@ async def mouse_move(
     Returns:
         True on success
     """
-    use_human = human_like if human_like is not None else human.get_config().use_gaussian_path
+    use_human = (
+        human_like if human_like is not None else human.get_config().use_gaussian_path
+    )
 
     if use_human:
         await human.mouse_move(tab, x, y, use_gaussian=True)
@@ -36,7 +38,7 @@ async def mouse_move(
 
 
 async def mouse_click(
-    tab: nodriver.Tab,
+    tab: Tab,
     x: float,
     y: float,
     button: str = "left",
@@ -79,7 +81,7 @@ async def mouse_click(
 
 
 async def mouse_drag(
-    tab: nodriver.Tab,
+    tab: Tab,
     from_x: float,
     from_y: float,
     to_x: float,

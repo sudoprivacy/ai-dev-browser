@@ -1,8 +1,9 @@
 """AI-friendly page snapshot using accessibility tree."""
 
-import nodriver
-import nodriver.cdp.accessibility as accessibility
-import nodriver.cdp.page as page
+from ai_dev_browser.cdp import accessibility
+from ai_dev_browser.cdp import page
+
+from ._tab import Tab
 
 
 def _format_ax_node(
@@ -23,7 +24,9 @@ def _format_ax_node(
     if hasattr(node, "properties") and node.properties:
         for prop in node.properties:
             if hasattr(prop, "name") and hasattr(prop, "value"):
-                name = prop.name.value if hasattr(prop.name, "value") else str(prop.name)
+                name = (
+                    prop.name.value if hasattr(prop.name, "value") else str(prop.name)
+                )
                 val = prop.value.value if hasattr(prop.value, "value") else prop.value
                 props[name] = val
 
@@ -67,7 +70,11 @@ def _format_ax_node(
     is_interactable = role in interactable_roles or props.get("focusable", False)
 
     # Skip non-interactable if filter is on
-    if interactable_only and not is_interactable and role not in ("heading", "img", "alert"):
+    if (
+        interactable_only
+        and not is_interactable
+        and role not in ("heading", "img", "alert")
+    ):
         if hasattr(node, "children") and node.children:
             for child in node.children:
                 results.extend(
@@ -136,7 +143,9 @@ def _format_ax_node(
     if hasattr(node, "children") and node.children:
         for child in node.children:
             results.extend(
-                _format_ax_node(child, ref_counter, max_depth, current_depth + 1, interactable_only)
+                _format_ax_node(
+                    child, ref_counter, max_depth, current_depth + 1, interactable_only
+                )
             )
 
     return results
@@ -216,7 +225,7 @@ async def _get_frame_nodes(
 
 
 async def _get_snapshot(
-    tab: nodriver.Tab,
+    tab: Tab,
     interactable_only: bool = False,
     max_depth: int = 10,
     frame_id: str | None = None,
@@ -252,10 +261,14 @@ async def _get_snapshot(
 
     # If specific frame requested, just get that frame
     if frame_id:
-        return await _get_frame_nodes(tab, frame_id, interactable_only, max_depth, ref_prefix="")
+        return await _get_frame_nodes(
+            tab, frame_id, interactable_only, max_depth, ref_prefix=""
+        )
 
     # Get main frame nodes
-    all_nodes = await _get_frame_nodes(tab, None, interactable_only, max_depth, ref_prefix="")
+    all_nodes = await _get_frame_nodes(
+        tab, None, interactable_only, max_depth, ref_prefix=""
+    )
 
     # If not including iframes, return just main frame
     if not include_iframes:
@@ -288,7 +301,7 @@ async def _get_snapshot(
 
 
 async def _get_accessibility_tree(
-    tab: nodriver.Tab,
+    tab: Tab,
     interactable_only: bool = False,
     include_iframes: bool = True,
 ) -> dict:
@@ -313,7 +326,7 @@ async def _get_accessibility_tree(
 
 
 async def find(
-    tab: nodriver.Tab,
+    tab: Tab,
     text: str | None = None,
     interactable_only: bool = True,
     include_coordinates: bool = True,
@@ -345,7 +358,7 @@ async def find(
         find(text="登录")         # Filter by text
         find(text="Sign")         # Case-insensitive match
     """
-    import nodriver.cdp.dom as dom
+    from ai_dev_browser.cdp import dom
 
     # Get accessibility tree
     elements = await _get_snapshot(
@@ -358,8 +371,7 @@ async def find(
     if text:
         text_lower = text.lower()
         elements = [
-            el for el in elements
-            if text_lower in (el.get("name") or "").lower()
+            el for el in elements if text_lower in (el.get("name") or "").lower()
         ]
 
     # Add coordinates if requested
@@ -378,7 +390,9 @@ async def find(
             if node_id:
                 try:
                     backend_node_id = dom.BackendNodeId(node_id)
-                    box = await tab.send(dom.get_box_model(backend_node_id=backend_node_id))
+                    box = await tab.send(
+                        dom.get_box_model(backend_node_id=backend_node_id)
+                    )
                     if box and box.content:
                         quad = box.content
                         # Calculate center

@@ -1,17 +1,18 @@
 """Tab management operations."""
 
-import nodriver
+from ._tab import Tab
+from .connection import BrowserClient
 
 
-def _get_browser(browser_or_tab: nodriver.Browser | nodriver.Tab) -> nodriver.Browser:
+def _get_browser(browser_or_tab: BrowserClient | Tab) -> BrowserClient:
     """Extract browser from browser or tab instance."""
-    if isinstance(browser_or_tab, nodriver.Tab):
+    if isinstance(browser_or_tab, Tab):
         return browser_or_tab.browser
     return browser_or_tab
 
 
 async def new_tab(
-    browser_or_tab: nodriver.Browser | nodriver.Tab,
+    browser_or_tab: BrowserClient | Tab,
     url: str | None = None,
 ) -> dict:
     """Open a new tab.
@@ -25,7 +26,7 @@ async def new_tab(
     """
     url = url or "about:blank"
 
-    if isinstance(browser_or_tab, nodriver.Tab):
+    if isinstance(browser_or_tab, Tab):
         tab = await browser_or_tab.get(url, new_tab=True)
     else:
         tab = await browser_or_tab.get(url)
@@ -35,7 +36,7 @@ async def new_tab(
     return {"url": url, "title": title, "tab": tab}
 
 
-async def list_tabs(browser_or_tab: nodriver.Browser | nodriver.Tab) -> dict:
+async def list_tabs(browser_or_tab: BrowserClient | Tab) -> dict:
     """List all open tabs.
 
     Args:
@@ -62,7 +63,7 @@ async def list_tabs(browser_or_tab: nodriver.Browser | nodriver.Tab) -> dict:
 
 
 async def switch_tab(
-    browser_or_tab: nodriver.Browser | nodriver.Tab,
+    browser_or_tab: BrowserClient | Tab,
     tab_id: int,
 ) -> dict:
     """Switch to a different tab.
@@ -80,7 +81,9 @@ async def switch_tab(
     browser = _get_browser(browser_or_tab)
 
     if tab_id < 0 or tab_id >= len(browser.tabs):
-        raise IndexError(f"Invalid tab ID: {tab_id}. Available: 0-{len(browser.tabs) - 1}")
+        raise IndexError(
+            f"Invalid tab ID: {tab_id}. Available: 0-{len(browser.tabs) - 1}"
+        )
 
     tab = browser.tabs[tab_id]
     await tab.activate()
@@ -91,9 +94,9 @@ async def switch_tab(
 
 
 async def close_tab(
-    browser_or_tab: nodriver.Browser | nodriver.Tab,
+    browser_or_tab: BrowserClient | Tab,
     tab_id: int | None = None,
-    tab: nodriver.Tab | None = None,
+    tab: Tab | None = None,
 ) -> dict:
     """Close a tab.
 

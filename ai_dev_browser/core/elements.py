@@ -3,16 +3,16 @@
 import asyncio
 import time
 
-import nodriver
-import nodriver.cdp.dom as dom
 
 from . import human
+from ._element import Element
+from ._tab import Tab
 from .snapshot import _get_snapshot
 from .text_match import _best_match
 
 
 async def _find_element(
-    tab: nodriver.Tab,
+    tab: Tab,
     text: str | None = None,
     selector: str | None = None,
     timeout: float = 10,
@@ -41,7 +41,7 @@ async def _find_element(
 
 
 async def _find_elements(
-    tab: nodriver.Tab,
+    tab: Tab,
     text: str | None = None,
     selector: str | None = None,
     timeout: float = 10,
@@ -70,7 +70,7 @@ async def _find_elements(
 
 
 async def _find_by_xpath(
-    tab: nodriver.Tab,
+    tab: Tab,
     xpath: str,
     timeout: float = 2.5,
 ) -> dict:
@@ -93,8 +93,8 @@ async def _find_by_xpath(
 
 
 async def _click(
-    tab: nodriver.Tab,
-    element: nodriver.Element | None = None,
+    tab: Tab,
+    element: Element | None = None,
     text: str | None = None,
     selector: str | None = None,
     timeout: float = 10,
@@ -132,9 +132,9 @@ async def _click(
 
 
 async def _type_text(
-    tab: nodriver.Tab,
+    tab: Tab,
     text: str,
-    element: nodriver.Element | None = None,
+    element: Element | None = None,
     selector: str | None = None,
     clear: bool = False,
     timeout: float = 10,
@@ -165,7 +165,9 @@ async def _type_text(
         await element.clear_input()
 
     # Determine whether to use human-like typing
-    use_human = human_like if human_like is not None else human.get_config().type_humanize
+    use_human = (
+        human_like if human_like is not None else human.get_config().type_humanize
+    )
 
     if use_human:
         await human.type_text(tab, text, element, humanize=True)
@@ -175,12 +177,12 @@ async def _type_text(
 
 
 async def scroll(
-    tab: nodriver.Tab,
+    tab: Tab,
     direction: str = "down",
     amount: int = 25,
     to_bottom: bool = False,
     to_top: bool = False,
-    to_element: nodriver.Element | None = None,
+    to_element: Element | None = None,
 ) -> bool:
     """Scroll the page.
 
@@ -209,7 +211,7 @@ async def scroll(
 
 
 async def _wait_for_element(
-    tab: nodriver.Tab,
+    tab: Tab,
     text: str | None = None,
     selector: str | None = None,
     timeout: float = 30,
@@ -259,7 +261,7 @@ async def _wait_for_element(
 
 
 async def _focus_element(
-    tab: nodriver.Tab,
+    tab: Tab,
     text: str | None = None,
     selector: str | None = None,
     timeout: float = 10,
@@ -282,7 +284,7 @@ async def _focus_element(
 
 
 async def _get_element_text(
-    tab: nodriver.Tab,
+    tab: Tab,
     text: str | None = None,
     selector: str | None = None,
     timeout: float = 10,
@@ -306,7 +308,7 @@ async def _get_element_text(
 
 
 async def _find_element_info(
-    tab: nodriver.Tab,
+    tab: Tab,
     text: str | None = None,
     selector: str | None = None,
     all_elements: bool = False,
@@ -325,7 +327,9 @@ async def _find_element_info(
         dict with found, count (if all), tag, text (for single element)
     """
     if all_elements:
-        result = await _find_elements(tab, text=text, selector=selector, timeout=timeout)
+        result = await _find_elements(
+            tab, text=text, selector=selector, timeout=timeout
+        )
         return {
             "found": result["count"] > 0,
             "count": result["count"],
@@ -346,7 +350,7 @@ async def _find_element_info(
 
 
 async def wait_for_element_with_info(
-    tab: nodriver.Tab,
+    tab: Tab,
     text: str | None = None,
     selector: str | None = None,
     timeout: float = 30,
@@ -377,7 +381,7 @@ async def wait_for_element_with_info(
 
 
 async def click_by_text(
-    tab: nodriver.Tab,
+    tab: Tab,
     text: str,
     timeout: float = 10,
     human_like: bool = True,
@@ -406,7 +410,7 @@ async def click_by_text(
 
 
 async def type_by_text(
-    tab: nodriver.Tab,
+    tab: Tab,
     name: str,
     text: str,
     clear: bool = False,
@@ -442,7 +446,9 @@ async def type_by_text(
     if clear:
         await element.clear_input()
 
-    use_human = human_like if human_like is not None else human.get_config().type_humanize
+    use_human = (
+        human_like if human_like is not None else human.get_config().type_humanize
+    )
 
     if use_human:
         await human.type_text(tab, text, element, humanize=True)
@@ -458,7 +464,7 @@ async def type_by_text(
 
 
 async def _fuzzy_find(
-    tab: nodriver.Tab,
+    tab: Tab,
     query: str,
     threshold: float = 0.4,
     interactable_only: bool = False,
@@ -499,7 +505,7 @@ async def _fuzzy_find(
 
 
 async def _fuzzy_find_all(
-    tab: nodriver.Tab,
+    tab: Tab,
     query: str,
     threshold: float = 0.4,
     interactable_only: bool = False,
@@ -537,7 +543,7 @@ async def _fuzzy_find_all(
 
 
 async def _fuzzy_click(
-    tab: nodriver.Tab,
+    tab: Tab,
     query: str,
     threshold: float = 0.4,
     interactable_only: bool = True,
@@ -567,7 +573,10 @@ async def _fuzzy_click(
     from .ax import _click_by_node_id
 
     match = await _fuzzy_find(
-        tab, query, threshold=threshold, interactable_only=interactable_only,
+        tab,
+        query,
+        threshold=threshold,
+        interactable_only=interactable_only,
     )
     if match is None:
         return None
