@@ -34,7 +34,7 @@ from .download_path import download_path
 from .element_wait import element_wait
 
 # Find (main discovery tool for AI)
-from .find import find
+from .page_find import page_find
 
 # Focus
 from .focus_by_ref import focus_by_ref
@@ -59,7 +59,7 @@ from .page_reload import page_reload
 from .page_screenshot import page_screenshot
 from .page_wait import page_wait
 from .page_wait_url import page_wait_url
-from .scroll import scroll
+from .page_scroll import page_scroll
 
 # Storage
 from .storage_get import storage_get
@@ -93,7 +93,7 @@ __all__ = [
     # Element
     "element_wait",
     # Find (main discovery tool for AI)
-    "find",
+    "page_find",
     # Focus
     "focus_by_ref",
     # JavaScript
@@ -107,7 +107,7 @@ __all__ = [
     "page_wait",
     "page_wait_url",
     "page_screenshot",
-    "scroll",
+    "page_scroll",
     # Login (human-in-the-loop)
     "login_interactive",
     # Mouse

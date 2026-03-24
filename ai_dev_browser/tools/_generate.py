@@ -30,7 +30,7 @@ TOOLS = [
     # Focus actions
     ("ax", "focus_by_ref", "focused"),
     # Find
-    ("snapshot", "find", "elements"),
+    ("snapshot", "find", "elements", "page_find"),
     # Element wait
     ("elements", "wait_for_element_with_info", "found", "element_wait"),
     # JavaScript
@@ -44,7 +44,7 @@ TOOLS = [
     ("navigation", "wait_for_load", "ready", "page_wait"),
     ("navigation", "wait_for_url", "matched", "page_wait_url"),
     ("dialog", "handle_dialog_action", "handled", "page_handle_dialog"),
-    ("elements", "scroll", "scrolled"),
+    ("elements", "scroll", "scrolled", "page_scroll"),
     # Mouse actions
     ("mouse", "mouse_click", "clicked"),
     ("mouse", "mouse_move", "moved"),

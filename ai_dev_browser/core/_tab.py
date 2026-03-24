@@ -581,10 +581,21 @@ class Tab:
     # Local storage
     # =========================================================================
 
+    async def _get_origin(self) -> str:
+        """Get current page origin via JS (more reliable than target.url)."""
+        try:
+            origin = await self.evaluate("window.location.origin")
+            if origin and origin != "null":
+                return origin
+        except Exception:
+            pass
+        # Fallback to target URL
+        url = self._target.url or ""
+        return "/".join(url.split("/", 3)[:3])
+
     async def get_local_storage(self) -> dict:
         """Get localStorage items as dict."""
-        url = self._target.url or ""
-        origin = "/".join(url.split("/", 3)[:3])
+        origin = await self._get_origin()
         items = await self.send(
             dom_storage.get_dom_storage_items(
                 dom_storage.StorageId(is_local_storage=True, security_origin=origin)
@@ -594,8 +605,7 @@ class Tab:
 
     async def set_local_storage(self, items: dict):
         """Set localStorage items."""
-        url = self._target.url or ""
-        origin = "/".join(url.split("/", 3)[:3])
+        origin = await self._get_origin()
         await asyncio.gather(
             *(
                 self.send(
