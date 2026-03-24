@@ -143,7 +143,8 @@ class TestAutoDetection:
         # Connect (connect_browser calls Target.attachToTarget)
         from ai_dev_browser.core import connect_browser
 
-        _browser = await connect_browser(port=port)  # noqa: F841
+        browser = await connect_browser(port=port)
+        assert browser is not None, "Should connect successfully"
 
         # Now it should be "in use"
         assert is_chrome_in_use(port), "Connected Chrome should be in use"
