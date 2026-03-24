@@ -141,12 +141,8 @@ class CDPConnection:
     ) -> Any:
         """Send a CDP command and await the response.
 
-        Args:
-            cdp_obj: Generator created by a cdp.<domain>.<method>() call.
-            _is_update: Internal flag to prevent handler re-registration loops.
-
-        Returns:
-            Parsed CDP response (typed by the cdp module).
+        Auto-reconnects if WebSocket is dead. On send failure, reconnects
+        and raises (caller can retry with a fresh generator).
         """
         if self.closed:
             await self.connect()
@@ -155,14 +151,32 @@ class CDPConnection:
         tx = Transaction(cdp_obj)
         tx.id = next(self._counter)
         self._pending[tx.id] = tx
-        asyncio.create_task(self._websocket.send(tx.message))
+        try:
+            await self._websocket.send(tx.message)
+        except Exception as e:
+            self._pending.pop(tx.id, None)
+            # Connection is broken — force reconnect so next call works
+            logger.debug("WebSocket send failed, forcing reconnect: %s", e)
+            await self._force_reconnect()
+            raise ProtocolException(f"WebSocket send failed: {e}")
         try:
             return await asyncio.wait_for(tx, timeout=COMMAND_TIMEOUT)
         except asyncio.TimeoutError:
             self._pending.pop(tx.id, None)
+            # Timeout likely means connection is dead — force reconnect
+            logger.debug("CDP command timed out (%s), forcing reconnect", tx.method)
+            await self._force_reconnect()
             raise ProtocolException(
                 f"CDP command timed out after {COMMAND_TIMEOUT}s: {tx.method}"
             )
+
+    async def _force_reconnect(self):
+        """Disconnect and reconnect the WebSocket."""
+        try:
+            await self.disconnect()
+        except Exception:
+            pass
+        await self.connect()
 
     def add_handler(
         self,

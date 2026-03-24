@@ -79,7 +79,18 @@ class Tab:
     async def send(
         self, cdp_obj: Generator[dict[str, Any], dict[str, Any], Any], _is_update=False
     ) -> Any:
-        """Send CDP command and await response."""
+        """Send CDP command and await response.
+
+        If the tab's WebSocket is broken, reconnects automatically.
+        Note: the CDP generator is consumed on send, so reconnection
+        only helps if the failure is on the WebSocket layer before
+        the command is actually dispatched.
+        """
+        if self._connection.closed:
+            logger.debug(
+                "Tab WebSocket closed, reconnecting: %s", self._connection.websocket_url
+            )
+            await self._connection.connect()
         return await self._connection.send(cdp_obj, _is_update=_is_update)
 
     def add_handler(self, event_type, handler):

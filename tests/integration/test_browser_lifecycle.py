@@ -360,3 +360,26 @@ class TestConnectionReuse:
             tab = await get_active_tab(browser)
             r = await tab.evaluate(f"{i} + 1")
             assert r == i + 1, f"Iteration {i}: expected {i + 1}, got {r}"
+
+    async def test_tab_reconnects_after_websocket_disconnect(self):
+        """Tab auto-reconnects when its WebSocket is broken."""
+        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-tab-recon")
+        assert "error" not in result
+        port = result["port"]
+
+        from ai_dev_browser.core.connection import connect_browser, get_active_tab
+
+        browser = await connect_browser(port=port)
+        tab = await get_active_tab(browser)
+
+        # Verify tab works
+        r = await tab.evaluate("10 + 20")
+        assert r == 30
+
+        # Simulate tab WebSocket dying (e.g., Electron idle timeout)
+        await tab._connection.disconnect()
+        assert tab._connection.closed
+
+        # Next call should auto-reconnect and succeed
+        r2 = await tab.evaluate("30 + 40")
+        assert r2 == 70
