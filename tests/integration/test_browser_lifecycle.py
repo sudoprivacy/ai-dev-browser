@@ -25,26 +25,31 @@ from ai_dev_browser.core.port import (
 TEST_PROFILE = "test-lifecycle"
 
 
-async def _stop_all_debug_chromes():
-    """Stop all debugging Chrome instances and wait for ports to free."""
-    stop_browser(stop_all=True)
-    # Wait for all ports to free
-    for _ in range(30):
-        if not find_debug_chromes():
-            break
-        await asyncio.sleep(0.3)
+def _stop_chrome_on_port(port: int):
+    """Stop a specific Chrome and wait for port to free."""
+    stop_browser(port=port)
 
 
 @pytest.fixture(autouse=True)
-async def cleanup_test_chromes():
-    """Stop all debugging Chromes before AND after each test.
+async def track_and_cleanup_test_chromes():
+    """Track Chromes started during each test and clean up only those.
 
-    Before: ensures clean state (no leftover Chromes from previous runs).
-    After: cleans up Chromes started during the test.
+    Records which debug Chromes exist before the test. After the test,
+    stops only the NEW ones (started during the test).
     """
-    await _stop_all_debug_chromes()
+    # Record pre-existing Chromes
+    existing_ports = {p for p, _pid in find_debug_chromes()}
     yield
-    await _stop_all_debug_chromes()
+    # Stop only Chromes that were started during this test
+    for port, _pid in find_debug_chromes():
+        if port not in existing_ports:
+            _stop_chrome_on_port(port)
+    # Wait for cleanup
+    for _ in range(20):
+        current = {p for p, _ in find_debug_chromes()}
+        if current <= existing_ports:
+            break
+        await asyncio.sleep(0.3)
 
 
 class TestStartBrowserReuse:
@@ -135,10 +140,10 @@ class TestAutoDetection:
         assert "error" not in result
         port = result["port"]
 
-        # Connect via nodriver (connect_browser now calls Target.attachToTarget)
+        # Connect (connect_browser calls Target.attachToTarget)
         from ai_dev_browser.core import connect_browser
 
-        browser = await connect_browser(port=port)
+        _browser = await connect_browser(port=port)  # noqa: F841
 
         # Now it should be "in use"
         assert is_chrome_in_use(port), "Connected Chrome should be in use"
@@ -148,10 +153,6 @@ class TestAutoDetection:
         assert "error" not in result2
         port2 = result2["port"]
         assert port2 != port, "Should get a different port since first is in use"
-
-        # Clean up
-        browser.stop()
-        await asyncio.sleep(0.5)
 
 
 class TestStopBrowser:
@@ -271,9 +272,6 @@ class TestCLIAutoDetectFlow:
         # Execute JS to verify it works
         result = await tab.evaluate("1 + 1")
         assert result == 2
-
-        browser.stop()
-        await asyncio.sleep(0.5)
 
     async def test_no_chrome_returns_none(self):
         """When no Chrome is running, auto-detection should find nothing."""

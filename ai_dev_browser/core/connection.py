@@ -51,17 +51,17 @@ class CookieJar:
         self._browser = browser
 
     def _get_connection(self) -> CDPConnection:
-        """Get a working connection for cookie operations."""
-        # Prefer a tab connection (more reliable for cookie scope)
-        for tab in self._browser.tabs:
-            if not tab.closed:
-                return tab._connection
+        """Get a working connection for cookie operations.
+
+        Uses the browser-level connection (which is always connected).
+        Tab connections may not be established yet.
+        """
         return self._browser.connection
 
     async def get_all(self) -> list:
         """Get all browser cookies."""
         conn = self._get_connection()
-        return await conn.send(storage.get_cookies())
+        return await conn.send(storage.get_cookies(), _is_update=True)
 
     async def save(self, file: str = ".session.dat", pattern: str = ".*"):
         """Save cookies to file (pickle format).
@@ -122,13 +122,13 @@ class CookieJar:
 
         if matched:
             conn = self._get_connection()
-            await conn.send(storage.set_cookies(matched))
+            await conn.send(storage.set_cookies(matched), _is_update=True)
             logger.debug("Loaded %d cookies from %s", len(matched), path)
 
     async def clear(self):
         """Clear all browser cookies."""
         conn = self._get_connection()
-        await conn.send(storage.clear_cookies())
+        await conn.send(storage.clear_cookies(), _is_update=True)
 
 
 # =============================================================================

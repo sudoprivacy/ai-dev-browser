@@ -1,7 +1,6 @@
 """Pytest fixtures for integration tests."""
 
 import contextlib
-import os
 
 import pytest
 from ai_dev_browser.core import human
@@ -9,16 +8,11 @@ from ai_dev_browser.core.browser import start_browser, stop_browser
 from ai_dev_browser.core.connection import connect_browser
 
 
-SKIP_BROWSER = os.environ.get("SKIP_BROWSER_TESTS", "").lower() in ("1", "true", "yes")
-
-
 @pytest.fixture(scope="function")
 async def browser():
-    """Start a browser for testing."""
-    if SKIP_BROWSER:
-        pytest.skip("Browser tests skipped")
-
+    """Start a headless Chrome for testing. Cleaned up after each test."""
     result = start_browser(headless=True, temp=True)
+    assert "error" not in result, f"Failed to start browser: {result}"
     port = result["port"]
     browser_client = await connect_browser(port=port)
     yield browser_client
