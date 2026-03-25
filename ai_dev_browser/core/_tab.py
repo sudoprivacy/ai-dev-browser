@@ -78,24 +78,30 @@ class Tab:
     # =========================================================================
 
     async def _ensure_connected(self):
-        """Ensure tab WebSocket is connected and essential domains are enabled."""
+        """Ensure tab WebSocket is connected and essential domains are enabled.
+
+        Detects both explicit disconnection (closed WebSocket) and implicit
+        reconnection (_force_reconnect clears enabled_domains without resetting
+        _initialized), and re-enables Page/DOM domains in both cases.
+        """
         if self._connection.closed:
             logger.debug(
                 "Tab WebSocket closed, reconnecting: %s",
                 self._connection.websocket_url,
             )
             await self._connection.connect()
-            self._initialized = False  # Force re-enable after reconnect
+            self._initialized = False
+
+        # Also check if domains were lost (e.g., _force_reconnect cleared them)
+        if self._initialized and not self._connection.enabled_domains:
+            self._initialized = False
 
         if not self._initialized:
-            # Enable essential domains that commands depend on.
-            # Page: needed for captureScreenshot, navigate, etc.
-            # DOM: needed for querySelector, getDocument, etc.
             for enable_cmd in (page.enable(), dom.enable()):
                 try:
                     await self._connection.send(enable_cmd, _is_update=True)
                 except Exception:
-                    pass  # Best effort — some targets don't support all domains
+                    pass
             self._initialized = True
 
     async def send(
