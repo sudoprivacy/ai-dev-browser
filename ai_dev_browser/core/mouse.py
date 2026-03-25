@@ -72,7 +72,10 @@ async def mouse_click(
         else:
             await human.mouse_click(tab, x, y, button=button)
     else:
-        await tab.mouse_move(x, y)
+        # Single-step move (no intermediate positions) then click.
+        # 10-step interpolation from (0,0) causes unnecessary mouseMoved events
+        # that can trigger expensive JS hover handlers on complex pages.
+        await tab.mouse_move(x, y, steps=1)
         await tab.mouse_click(x, y, button=button)
         if double:
             await tab.mouse_click(x, y, button=button)

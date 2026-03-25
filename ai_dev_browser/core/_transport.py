@@ -105,7 +105,6 @@ class CDPConnection:
         self._pending: dict[int, Transaction] = {}
         self.handlers: dict[type, list[Callable]] = collections.defaultdict(list)
         self.enabled_domains: list = []
-        self._lock = asyncio.Lock()
 
     @property
     def closed(self) -> bool:
@@ -252,8 +251,7 @@ class CDPConnection:
     async def _listener_loop(self):
         while True:
             try:
-                async with self._lock:
-                    raw = await asyncio.wait_for(self._websocket.recv(), 0.05)
+                raw = await asyncio.wait_for(self._websocket.recv(), 0.05)
             except asyncio.TimeoutError:
                 await asyncio.sleep(0.05)
                 continue
