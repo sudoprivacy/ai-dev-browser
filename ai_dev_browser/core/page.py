@@ -1,10 +1,11 @@
 """Page information operations."""
 
+import datetime
 import json
-import tempfile
 from pathlib import Path
 
 from ._tab import Tab
+from .config import DEFAULT_SCREENSHOT_DIR
 
 # Optional PIL for image resizing
 try:
@@ -44,7 +45,7 @@ async def screenshot(
 
     Args:
         tab: Tab instance
-        path: Path to save screenshot (optional, uses temp file if not provided)
+        path: Path to save screenshot (default: ~/.ai-dev-browser/screenshots/{timestamp}.png)
         full_page: If True, capture full page (not just viewport)
         css_scale: If True (default), resize screenshot to CSS pixel dimensions.
                    This makes screenshot coordinates directly usable for clicking.
@@ -62,7 +63,9 @@ async def screenshot(
             click_y = pixel_y / device_pixel_ratio
     """
     if path is None:
-        path = tempfile.mktemp(suffix=".png")
+        DEFAULT_SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        path = str(DEFAULT_SCREENSHOT_DIR / f"{ts}.png")
 
     # Get viewport info and device pixel ratio for coordinate mapping
     viewport_info = await tab.evaluate(

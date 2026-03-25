@@ -21,6 +21,9 @@ DEFAULT_COOKIES_DIR = DEFAULT_BASE_DIR / "cookies"
 # Temp profile prefix (used to identify our Chrome instances)
 DEFAULT_PROFILE_PREFIX = "nodriver_chrome_"
 
+# Screenshots
+DEFAULT_SCREENSHOT_DIR = DEFAULT_BASE_DIR / "screenshots"
+
 # Debug port range
 # Note: Windows Hyper-V reserves dynamic port ranges that change on reboot.
 # get_available_port() uses _is_port_bindable() to skip reserved ports at runtime.
