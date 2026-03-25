@@ -21,8 +21,8 @@ DEFAULT_COOKIES_DIR = DEFAULT_BASE_DIR / "cookies"
 # Temp profile prefix (used to identify our Chrome instances)
 DEFAULT_PROFILE_PREFIX = "nodriver_chrome_"
 
-# Screenshots
-DEFAULT_SCREENSHOT_DIR = DEFAULT_BASE_DIR / "screenshots"
+# Screenshots (relative to cwd — follows the consuming project)
+DEFAULT_SCREENSHOT_DIR = Path("screenshots")
 
 # Debug port range
 # Note: Windows Hyper-V reserves dynamic port ranges that change on reboot.

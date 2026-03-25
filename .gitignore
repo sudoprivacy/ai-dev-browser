@@ -40,6 +40,9 @@ htmlcov/
 # macOS
 .DS_Store
 
+# Screenshots (default output of page_screenshot)
+screenshots/
+
 # Temporary files
 *.tmp
 tmpclaude-*
