@@ -203,8 +203,30 @@ class CDPConnection:
             else:
                 self.handlers[evt].append(handler)
 
+    # Domains that should never be removed by _register_handlers cleanup.
+    # These are either always-on (target, storage, input_) or essential
+    # for core operations (page, dom) — enabled by Tab._ensure_connected().
+    _PROTECTED_DOMAINS = None  # Populated lazily to avoid import-time issues
+
+    @classmethod
+    def _get_protected_domains(cls):
+        if cls._PROTECTED_DOMAINS is None:
+            cls._PROTECTED_DOMAINS = {
+                cdp.target,
+                cdp.storage,
+                cdp.input_,
+                cdp.page,
+                cdp.dom,
+            }
+        return cls._PROTECTED_DOMAINS
+
     async def _register_handlers(self):
-        """Auto-enable CDP domains for registered event handlers."""
+        """Auto-enable CDP domains for registered event handlers.
+
+        Does NOT remove domains that were explicitly enabled (page, dom, etc.)
+        even if they have no event handlers — those are needed for commands.
+        """
+        protected = self._get_protected_domains()
         enabled_copy = self.enabled_domains.copy()
         for event_type in list(self.handlers):
             if not self.handlers[event_type]:
@@ -217,8 +239,8 @@ class CDPConnection:
                 if domain_mod in enabled_copy:
                     enabled_copy.remove(domain_mod)
                 continue
-            if domain_mod in (cdp.target, cdp.storage, cdp.input_):
-                continue  # enabled by default
+            if domain_mod in protected:
+                continue
             try:
                 self.enabled_domains.append(domain_mod)
                 await self.send(domain_mod.enable(), _is_update=True)
@@ -228,7 +250,10 @@ class CDPConnection:
                     self.enabled_domains.remove(domain_mod)
                 except ValueError:
                     pass
+        # Remove domains that no longer have handlers, EXCEPT protected ones
         for ed in enabled_copy:
+            if ed in protected:
+                continue
             try:
                 self.enabled_domains.remove(ed)
             except ValueError:

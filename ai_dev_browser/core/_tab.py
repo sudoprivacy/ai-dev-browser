@@ -97,9 +97,12 @@ class Tab:
             self._initialized = False
 
         if not self._initialized:
-            for enable_cmd in (page.enable(), dom.enable()):
+            for domain_mod, enable_cmd in ((page, page.enable()), (dom, dom.enable())):
                 try:
                     await self._connection.send(enable_cmd, _is_update=True)
+                    # Track in enabled_domains so _register_handlers won't remove them
+                    if domain_mod not in self._connection.enabled_domains:
+                        self._connection.enabled_domains.append(domain_mod)
                 except Exception:
                     pass
             self._initialized = True
