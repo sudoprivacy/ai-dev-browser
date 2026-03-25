@@ -383,3 +383,31 @@ class TestConnectionReuse:
         # Next call should auto-reconnect and succeed
         r2 = await tab.evaluate("30 + 40")
         assert r2 == 70
+
+    async def test_screenshot_works_after_reconnect(self):
+        """Page.captureScreenshot requires Page.enable() after reconnect."""
+        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-ss-recon")
+        assert "error" not in result
+        port = result["port"]
+
+        from ai_dev_browser.core.connection import connect_browser, get_active_tab
+        from ai_dev_browser.core.page import screenshot
+
+        browser = await connect_browser(port=port)
+        tab = await get_active_tab(browser)
+
+        # Screenshot before disconnect
+        r1 = await screenshot(tab, path="test_recon1.png")
+        assert r1["size"] > 0
+
+        # Kill tab WebSocket
+        await tab._connection.disconnect()
+
+        # Screenshot after reconnect — Page domain must be re-enabled
+        r2 = await screenshot(tab, path="test_recon2.png")
+        assert r2["size"] > 0
+
+        import os
+
+        os.unlink("test_recon1.png")
+        os.unlink("test_recon2.png")
