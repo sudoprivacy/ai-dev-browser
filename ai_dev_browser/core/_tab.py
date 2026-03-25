@@ -113,10 +113,62 @@ class Tab:
         """Send CDP command and await response.
 
         Auto-connects and enables essential CDP domains on first use
-        and after reconnection.
+        and after reconnection. On timeout, re-discovers targets from
+        the browser in case the target ID changed (e.g., Electron SPA
+        navigation that destroys and recreates the renderer).
         """
         await self._ensure_connected()
-        return await self._connection.send(cdp_obj, _is_update=_is_update)
+        try:
+            return await self._connection.send(cdp_obj, _is_update=_is_update)
+        except Exception as e:
+            if "timed out" in str(e).lower() and self._browser:
+                # Timeout might mean target ID changed — re-discover
+                logger.debug("CDP command failed, re-discovering targets: %s", e)
+                await self._rediscover_target()
+            raise
+
+    async def _rediscover_target(self):
+        """Re-discover targets from browser and switch to new target if needed.
+
+        Electron apps can change target IDs during SPA navigation, making
+        the old WebSocket URL stale (connected but unresponsive). This method
+        asks the browser for current targets and switches this Tab to a live
+        page target if the old one is gone.
+        """
+        if not self._browser:
+            return
+        try:
+            await self._browser.update_targets()
+        except Exception:
+            return
+
+        old_url = self._connection.websocket_url
+
+        # Check if our target still exists
+        my_id = self._target.target_id
+        still_exists = any(t._target.target_id == my_id for t in self._browser.targets)
+
+        if still_exists:
+            # Target exists but unresponsive — just force reconnect
+            await self._connection.disconnect()
+            self._initialized = False
+            return
+
+        # Target is gone — switch to the first available page target
+        for tab in self._browser.tabs:
+            if tab is not self:
+                new_id = tab._target.target_id
+                new_url = f"ws://{self._browser.host}:{self._browser.port}/devtools/page/{new_id}"
+                logger.info("Target gone, switching: %s -> %s", old_url, new_url)
+                await self._connection.disconnect()
+                self._connection.websocket_url = new_url
+                self._target = tab._target
+                self._initialized = False
+                return
+
+        # No targets found — just force reconnect and hope for the best
+        await self._connection.disconnect()
+        self._initialized = False
 
     def add_handler(self, event_type, handler):
         """Register a CDP event handler."""
