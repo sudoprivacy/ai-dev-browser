@@ -32,9 +32,11 @@ COMMAND_TIMEOUT: int = 30  # seconds per CDP command
 class ProtocolException(Exception):
     """CDP protocol error."""
 
-    def __init__(self, *args):
+    def __init__(self, *args, method: str = None, params: dict = None):
         self.message = None
         self.code = None
+        self.method = method  # For retry: original CDP method
+        self.params = params  # For retry: original CDP params
         self.args = args
         if isinstance(args[0], dict):
             self.message = args[0].get("message")
@@ -162,11 +164,39 @@ class CDPConnection:
             return await asyncio.wait_for(tx, timeout=COMMAND_TIMEOUT)
         except asyncio.TimeoutError:
             self._pending.pop(tx.id, None)
-            # Timeout likely means connection is dead — force reconnect
             logger.debug("CDP command timed out (%s), forcing reconnect", tx.method)
             await self._force_reconnect()
             raise ProtocolException(
-                f"CDP command timed out after {COMMAND_TIMEOUT}s: {tx.method}"
+                f"CDP command timed out after {COMMAND_TIMEOUT}s: {tx.method}",
+                method=tx.method,
+                params=tx.params,
+            )
+
+    async def send_raw(self, method: str, params: dict) -> dict:
+        """Send a raw CDP command (method + params) and return raw result dict.
+
+        Used for retries where the original CDP generator is consumed.
+        Does not use the generator protocol — returns the raw JSON result.
+        """
+        if self.closed:
+            await self.connect()
+        msg_id = next(self._counter)
+        future: asyncio.Future = asyncio.Future()
+        self._pending[msg_id] = future  # type: ignore[assignment]
+        msg = json.dumps({"method": method, "params": params, "id": msg_id})
+        try:
+            await self._websocket.send(msg)
+        except Exception as e:
+            self._pending.pop(msg_id, None)
+            await self._force_reconnect()
+            raise ProtocolException(f"WebSocket send failed: {e}")
+        try:
+            return await asyncio.wait_for(future, timeout=COMMAND_TIMEOUT)
+        except asyncio.TimeoutError:
+            self._pending.pop(msg_id, None)
+            await self._force_reconnect()
+            raise ProtocolException(
+                f"CDP command timed out after {COMMAND_TIMEOUT}s: {method}"
             )
 
     async def _force_reconnect(self):
@@ -293,7 +323,14 @@ class CDPConnection:
                 # Response to a command
                 tx = self._pending.pop(message["id"], None)
                 if tx:
-                    tx(**message)
+                    if isinstance(tx, Transaction):
+                        tx(**message)
+                    elif isinstance(tx, asyncio.Future) and not tx.done():
+                        # Raw future from send_raw() — resolve with result
+                        if "error" in message:
+                            tx.set_exception(ProtocolException(message["error"]))
+                        else:
+                            tx.set_result(message.get("result", {}))
             else:
                 # CDP event
                 try:

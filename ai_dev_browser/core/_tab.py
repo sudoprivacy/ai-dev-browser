@@ -112,20 +112,24 @@ class Tab:
     ) -> Any:
         """Send CDP command and await response.
 
-        Auto-connects and enables essential CDP domains on first use
-        and after reconnection. On timeout, re-discovers targets from
-        the browser in case the target ID changed (e.g., Electron SPA
-        navigation that destroys and recreates the renderer).
+        On timeout, re-discovers targets (Electron SPA navigation can
+        change target IDs) and retries once with send_raw().
         """
         await self._ensure_connected()
         try:
             return await self._connection.send(cdp_obj, _is_update=_is_update)
         except Exception as e:
-            if "timed out" in str(e).lower() and self._browser:
-                # Timeout might mean target ID changed — re-discover
-                logger.debug("CDP command failed, re-discovering targets: %s", e)
-                await self._rediscover_target()
-            raise
+            # Extract method+params from the exception for retry
+            method = getattr(e, "method", None)
+            params = getattr(e, "params", None)
+            if not method or not self._browser:
+                raise
+
+        # Timeout with retryable info — re-discover targets and retry
+        logger.info("CDP timed out (%s), re-discovering targets and retrying", method)
+        await self._rediscover_target()
+        await self._ensure_connected()
+        return await self._connection.send_raw(method, params)
 
     async def _rediscover_target(self):
         """Re-discover targets from browser and switch to new target if needed.
