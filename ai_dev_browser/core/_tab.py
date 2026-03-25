@@ -46,6 +46,7 @@ class Tab:
         self._target = target
         self._browser = browser
         self._download_behavior: list | None = None
+        self._initialized = False
 
     # =========================================================================
     # Properties
@@ -76,21 +77,36 @@ class Tab:
     # Core CDP dispatch
     # =========================================================================
 
+    async def _ensure_connected(self):
+        """Ensure tab WebSocket is connected and essential domains are enabled."""
+        if self._connection.closed:
+            logger.debug(
+                "Tab WebSocket closed, reconnecting: %s",
+                self._connection.websocket_url,
+            )
+            await self._connection.connect()
+            self._initialized = False  # Force re-enable after reconnect
+
+        if not self._initialized:
+            # Enable essential domains that commands depend on.
+            # Page: needed for captureScreenshot, navigate, etc.
+            # DOM: needed for querySelector, getDocument, etc.
+            for enable_cmd in (page.enable(), dom.enable()):
+                try:
+                    await self._connection.send(enable_cmd, _is_update=True)
+                except Exception:
+                    pass  # Best effort — some targets don't support all domains
+            self._initialized = True
+
     async def send(
         self, cdp_obj: Generator[dict[str, Any], dict[str, Any], Any], _is_update=False
     ) -> Any:
         """Send CDP command and await response.
 
-        If the tab's WebSocket is broken, reconnects automatically.
-        Note: the CDP generator is consumed on send, so reconnection
-        only helps if the failure is on the WebSocket layer before
-        the command is actually dispatched.
+        Auto-connects and enables essential CDP domains on first use
+        and after reconnection.
         """
-        if self._connection.closed:
-            logger.debug(
-                "Tab WebSocket closed, reconnecting: %s", self._connection.websocket_url
-            )
-            await self._connection.connect()
+        await self._ensure_connected()
         return await self._connection.send(cdp_obj, _is_update=_is_update)
 
     def add_handler(self, event_type, handler):
