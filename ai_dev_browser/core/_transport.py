@@ -172,32 +172,35 @@ class CDPConnection:
                 params=tx.params,
             )
 
-    async def send_raw(self, method: str, params: dict) -> dict:
-        """Send a raw CDP command (method + params) and return raw result dict.
+    async def send_raw(self, method: str, params: dict) -> Any:
+        """Send a raw CDP command and return the parsed result.
 
         Used for retries where the original CDP generator is consumed.
-        Does not use the generator protocol — returns the raw JSON result.
+        Reconstructs a fresh generator from the CDP module to parse the
+        response with the same typed protocol as normal send().
         """
-        if self.closed:
-            await self.connect()
-        msg_id = next(self._counter)
-        future: asyncio.Future = asyncio.Future()
-        self._pending[msg_id] = future  # type: ignore[assignment]
-        msg = json.dumps({"method": method, "params": params, "id": msg_id})
+        # Reconstruct the CDP generator from method name + params
+        # e.g., "Page.captureScreenshot" → cdp.page.capture_screenshot(**params)
+        import re
+
+        domain_name, cmd_name = method.split(".")
+        cmd_snake = re.sub(r"(?<!^)(?=[A-Z])", "_", cmd_name).lower()
+        domain_mod = _cdp_get_module(domain_name.lower())
+        cmd_func = getattr(domain_mod, cmd_snake)
+
+        # Convert params from camelCase to snake_case for the function call
+        def to_snake(name: str) -> str:
+            return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+        snake_params = {to_snake(k): v for k, v in params.items()} if params else {}
+
         try:
-            await self._websocket.send(msg)
-        except Exception as e:
-            self._pending.pop(msg_id, None)
-            await self._force_reconnect()
-            raise ProtocolException(f"WebSocket send failed: {e}")
-        try:
-            return await asyncio.wait_for(future, timeout=COMMAND_TIMEOUT)
-        except asyncio.TimeoutError:
-            self._pending.pop(msg_id, None)
-            await self._force_reconnect()
-            raise ProtocolException(
-                f"CDP command timed out after {COMMAND_TIMEOUT}s: {method}"
-            )
+            cdp_obj = cmd_func(**snake_params)
+        except TypeError:
+            # If param conversion fails, try without params
+            cdp_obj = cmd_func()
+
+        return await self.send(cdp_obj, _is_update=True)
 
     async def _force_reconnect(self):
         """Disconnect and reconnect the WebSocket."""
@@ -323,14 +326,7 @@ class CDPConnection:
                 # Response to a command
                 tx = self._pending.pop(message["id"], None)
                 if tx:
-                    if isinstance(tx, Transaction):
-                        tx(**message)
-                    elif isinstance(tx, asyncio.Future) and not tx.done():
-                        # Raw future from send_raw() — resolve with result
-                        if "error" in message:
-                            tx.set_exception(ProtocolException(message["error"]))
-                        else:
-                            tx.set_result(message.get("result", {}))
+                    tx(**message)
             else:
                 # CDP event
                 try:
