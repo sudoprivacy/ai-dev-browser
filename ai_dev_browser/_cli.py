@@ -24,6 +24,7 @@ import asyncio
 import functools
 import inspect
 import json
+import os
 import sys
 from collections.abc import Callable
 from typing import Any, Literal, get_args, get_origin, get_type_hints
@@ -238,14 +239,19 @@ def as_cli(requires_tab: bool = True):
                     try:
                         port = args.port
                         if port is None:
-                            # Auto-detect: find a running ai-dev-browser Chrome
-                            from ai_dev_browser.core.port import find_debug_chromes
-                            from ai_dev_browser.core.port import is_chrome_in_use
+                            # Check env var first (set by embedding apps like Sudowork)
+                            env_port = os.environ.get("AI_DEV_BROWSER_PORT")
+                            if env_port:
+                                port = int(env_port)
+                            else:
+                                # Auto-detect: find a running ai-dev-browser Chrome
+                                from ai_dev_browser.core.port import find_debug_chromes
+                                from ai_dev_browser.core.port import is_chrome_in_use
 
-                            for candidate, _pid in find_debug_chromes():
-                                if not is_chrome_in_use(candidate):
-                                    port = candidate
-                                    break
+                                for candidate, _pid in find_debug_chromes():
+                                    if not is_chrome_in_use(candidate):
+                                        port = candidate
+                                        break
 
                             if port is None:
                                 print(
