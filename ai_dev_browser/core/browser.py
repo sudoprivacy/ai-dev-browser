@@ -63,7 +63,7 @@ def _find_reusable_chrome() -> int | None:
 
 def start_browser(
     port: int | None = None,
-    headless: bool = False,
+    headless: bool = True,
     url: str | None = None,
     profile: str | None = None,
     temp: bool = False,
