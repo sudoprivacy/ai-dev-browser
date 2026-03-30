@@ -1,5 +1,6 @@
 """Browser lifecycle management operations."""
 
+import os
 import time
 from pathlib import Path
 
@@ -63,7 +64,7 @@ def _find_reusable_chrome() -> int | None:
 
 def start_browser(
     port: int | None = None,
-    headless: bool = False,
+    headless: bool = os.environ.get("AI_DEV_BROWSER_HEADLESS", "").lower() in ("1", "true"),
     url: str | None = None,
     profile: str | None = None,
     temp: bool = False,
