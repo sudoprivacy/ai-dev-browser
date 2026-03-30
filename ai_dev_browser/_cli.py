@@ -228,16 +228,11 @@ def as_cli(requires_tab: bool = True):
 
         def cli_main():
             """Entry point for CLI usage."""
-            # When AI_DEV_BROWSER_USE_OPS is set, redirect to the ops wrapper
-            ops_wrapper = os.environ.get("AI_DEV_BROWSER_USE_OPS")
-            if ops_wrapper:
-                tool_name = func.__name__
-                port = os.environ.get("AI_DEV_BROWSER_PORT", "9230")
-                print(json.dumps({
-                    "error": f"Direct tool access is disabled. Use the ops wrapper instead:",
-                    "command": f"python {ops_wrapper} --port {port} --op {tool_name}",
-                    "hint": "Pass any additional arguments after --op <name>",
-                }, ensure_ascii=False, indent=2))
+            # When AI_DEV_BROWSER_REDIRECT is set, block direct access and
+            # print the redirect message (controlled by the embedding app).
+            redirect = os.environ.get("AI_DEV_BROWSER_REDIRECT")
+            if redirect:
+                print(redirect, file=sys.stderr)
                 sys.exit(1)
 
             parser = _generate_parser(func, requires_tab=requires_tab)
