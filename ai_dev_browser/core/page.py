@@ -20,6 +20,24 @@ except ImportError:
 MAX_SCREENSHOT_LONG_EDGE = 1568
 
 
+def read_screenshot_metadata(path: str) -> dict:
+    """Read ai_dev_browser metadata embedded in a PNG screenshot.
+
+    Returns dict with scale_factor, viewport dimensions, etc.
+    Returns empty dict if not a PNG or metadata not found.
+    """
+    if not HAS_PIL or not path.endswith(".png"):
+        return {}
+    try:
+        with Image.open(path) as img:
+            raw = img.text.get("ai_dev_browser")
+            if raw:
+                return json.loads(raw)
+    except Exception:
+        pass
+    return {}
+
+
 async def js_exec(tab: Tab, expression: str) -> dict:
     """Execute JavaScript in the page context.
 
@@ -122,14 +140,11 @@ async def screenshot(
                 )
                 resized.save(path)
 
-        # scale_factor: multiply screenshot coords by this to get click coords
-        # e.g., viewport=2517, image=1527 → scale_factor=2517/1527≈1.648
         if target_width > 0:
             scale_factor = vp["width"] / target_width
 
         width, height = target_width, target_height
     else:
-        # No scaling — return original dimensions
         if HAS_PIL:
             with Image.open(path) as img:
                 width, height = img.size
@@ -137,13 +152,33 @@ async def screenshot(
             width = int(vp["width"] * dpr)
             height = int(vp["height"] * dpr)
 
+    # Embed metadata in PNG so mouse_click can auto-scale coordinates
+    if HAS_PIL and path.endswith(".png"):
+        from PIL.PngImagePlugin import PngInfo
+
+        meta = PngInfo()
+        meta.add_text(
+            "ai_dev_browser",
+            json.dumps(
+                {
+                    "scale_factor": round(scale_factor, 6),
+                    "viewport_width": vp["width"],
+                    "viewport_height": vp["height"],
+                    "image_width": width,
+                    "image_height": height,
+                    "device_pixel_ratio": dpr,
+                }
+            ),
+        )
+        with Image.open(path) as img:
+            img.save(path, pnginfo=meta)
+
     file_size = Path(path).stat().st_size
     return {
         "path": path,
         "size": file_size,
         "width": width,
         "height": height,
-        "device_pixel_ratio": dpr,
         "scale_factor": round(scale_factor, 4),
     }
 

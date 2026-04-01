@@ -1,14 +1,34 @@
-"""Mouse operations."""
+"""Mouse operations.
+
+When a screenshot path is provided, coordinates are automatically scaled
+from screenshot space to CSS viewport space using metadata embedded in
+the PNG. This makes screenshot coordinates directly usable for clicking
+without manual conversion.
+"""
 
 from ._tab import Tab
 
 from . import human
 
 
+def _scale_coords(x: float, y: float, screenshot: str | None) -> tuple[float, float]:
+    """Scale coordinates from screenshot space to CSS viewport space."""
+    if not screenshot:
+        return x, y
+    from .page import read_screenshot_metadata
+
+    meta = read_screenshot_metadata(screenshot)
+    factor = meta.get("scale_factor", 1.0)
+    if factor != 1.0:
+        return x * factor, y * factor
+    return x, y
+
+
 async def mouse_move(
     tab: Tab,
     x: float,
     y: float,
+    screenshot: str | None = None,
     steps: int = 10,
     human_like: bool = None,
 ) -> bool:
@@ -16,14 +36,18 @@ async def mouse_move(
 
     Args:
         tab: Tab instance
-        x: X coordinate
-        y: Y coordinate
+        x: X coordinate (in screenshot space if screenshot provided)
+        y: Y coordinate (in screenshot space if screenshot provided)
+        screenshot: Path to screenshot PNG. Coordinates are auto-scaled
+                    from screenshot space to CSS viewport space.
         steps: Number of steps for smooth movement (native mode)
         human_like: Use gaussian path (default: from config)
 
     Returns:
         True on success
     """
+    x, y = _scale_coords(x, y, screenshot)
+
     use_human = (
         human_like if human_like is not None else human.get_config().use_gaussian_path
     )
@@ -32,7 +56,6 @@ async def mouse_move(
         await human.mouse_move(tab, x, y, use_gaussian=True)
     else:
         await tab.mouse_move(x, y, steps=steps)
-        # Track position for human module
         human.set_last_mouse_pos(tab, x, y)
     return True
 
@@ -41,6 +64,7 @@ async def mouse_click(
     tab: Tab,
     x: float,
     y: float,
+    screenshot: str | None = None,
     button: str = "left",
     double: bool = False,
     human_like: bool = None,
@@ -49,8 +73,10 @@ async def mouse_click(
 
     Args:
         tab: Tab instance
-        x: X coordinate
-        y: Y coordinate
+        x: X coordinate (in screenshot space if screenshot provided)
+        y: Y coordinate (in screenshot space if screenshot provided)
+        screenshot: Path to screenshot PNG. Coordinates are auto-scaled
+                    from screenshot space to CSS viewport space.
         button: "left", "right", or "middle"
         double: If True, double click
         human_like: Use human-like timing (default: from config)
@@ -58,7 +84,8 @@ async def mouse_click(
     Returns:
         True on success
     """
-    # Check if any human-like features are enabled
+    x, y = _scale_coords(x, y, screenshot)
+
     config = human.get_config()
     use_human = (
         human_like
@@ -72,9 +99,6 @@ async def mouse_click(
         else:
             await human.mouse_click(tab, x, y, button=button)
     else:
-        # Single-step move (no intermediate positions) then click.
-        # 10-step interpolation from (0,0) causes unnecessary mouseMoved events
-        # that can trigger expensive JS hover handlers on complex pages.
         await tab.mouse_move(x, y, steps=1)
         await tab.mouse_click(x, y, button=button)
         if double:
@@ -89,21 +113,26 @@ async def mouse_drag(
     from_y: float,
     to_x: float,
     to_y: float,
+    screenshot: str | None = None,
     steps: int = 10,
 ) -> bool:
     """Drag from one point to another.
 
     Args:
         tab: Tab instance
-        from_x: Start X coordinate
-        from_y: Start Y coordinate
-        to_x: End X coordinate
-        to_y: End Y coordinate
+        from_x: Start X (in screenshot space if screenshot provided)
+        from_y: Start Y (in screenshot space if screenshot provided)
+        to_x: End X (in screenshot space if screenshot provided)
+        to_y: End Y (in screenshot space if screenshot provided)
+        screenshot: Path to screenshot PNG. Coordinates are auto-scaled.
         steps: Number of steps for smooth drag
 
     Returns:
         True on success
     """
+    from_x, from_y = _scale_coords(from_x, from_y, screenshot)
+    to_x, to_y = _scale_coords(to_x, to_y, screenshot)
+
     await tab.mouse_drag((from_x, from_y), (to_x, to_y), steps=steps)
     human.set_last_mouse_pos(tab, to_x, to_y)
     return True
