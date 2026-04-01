@@ -179,7 +179,6 @@ async def screenshot(
         "size": file_size,
         "width": width,
         "height": height,
-        "scale_factor": round(scale_factor, 4),
     }
 
 
