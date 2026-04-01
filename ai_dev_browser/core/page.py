@@ -15,9 +15,11 @@ try:
 except ImportError:
     HAS_PIL = False
 
-# Max long edge for screenshots. Prevents downstream image scaling (e.g., by LLM APIs)
+# Default screenshot limits. Prevents downstream image scaling (e.g., by LLM APIs)
 # from breaking coordinate alignment with mouse_click().
+# Claude API: max long edge 1568px, max total pixels ~1,150,000.
 MAX_SCREENSHOT_LONG_EDGE = 1568
+MAX_SCREENSHOT_TOTAL_PIXELS = 1_150_000
 
 
 def read_screenshot_metadata(path: str) -> dict:
@@ -63,6 +65,7 @@ async def screenshot(
     full_page: bool = False,
     css_scale: bool = True,
     max_long_edge: int = MAX_SCREENSHOT_LONG_EDGE,
+    max_total_pixels: int = MAX_SCREENSHOT_TOTAL_PIXELS,
 ) -> dict:
     """Take a screenshot of the page.
 
@@ -72,25 +75,20 @@ async def screenshot(
         full_page: If True, capture full page (not just viewport)
         css_scale: If True (default), resize screenshot so pixel coordinates
                    match CSS/click coordinates. Handles both DPR>1 (Retina)
-                   and large viewport (>1568px) scenarios.
-        max_long_edge: Maximum long edge in pixels (default: 1568, matching
-                       Claude API's auto-scale threshold). Set to 0 to disable.
+                   and large viewport scenarios.
+        max_long_edge: Maximum long edge in pixels (default: 1568). Set to 0
+                       to disable. Different models have different limits:
+                       Claude=1568, GPT-4o=2048, Gemini=0 (unlimited).
+        max_total_pixels: Maximum total pixels (default: 1,150,000). Set to 0
+                          to disable. Claude API constraint; checked after
+                          max_long_edge scaling.
 
     Returns:
-        dict with:
-        - path: file path
-        - size: file size in bytes
-        - width, height: final image dimensions
-        - device_pixel_ratio: browser DPR
-        - scale_factor: multiply screenshot coords by this to get click coords.
-                        1.0 means screenshot coords = click coords directly.
-                        >1.0 means image was downscaled (e.g., 1.65 for 2517→1527).
+        dict with path, size, width, height
 
     Note:
-        When scale_factor=1.0, screenshot coordinates can be used directly for
-        mouse_click(). When scale_factor>1.0:
-            click_x = screenshot_x * scale_factor
-            click_y = screenshot_y * scale_factor
+        Pass the screenshot path to mouse_click(--screenshot) for automatic
+        coordinate scaling. Scaling metadata is embedded in the PNG file.
     """
     if path is None:
         DEFAULT_SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -120,17 +118,27 @@ async def screenshot(
             css_width = int(orig_width / dpr)
             css_height = int(orig_height / dpr)
 
-        # Step 2: Large viewport scaling — prevent Claude API from
-        # doing its own rescaling (which breaks coordinate alignment).
-        # Scale down to max_long_edge while preserving aspect ratio.
+        # Step 2: Scale down to fit within limits (preserving aspect ratio).
         target_width = css_width
         target_height = css_height
+
+        # 2a: Long edge limit
         if max_long_edge > 0:
-            long_edge = max(css_width, css_height)
+            long_edge = max(target_width, target_height)
             if long_edge > max_long_edge:
                 ratio = max_long_edge / long_edge
-                target_width = int(css_width * ratio)
-                target_height = int(css_height * ratio)
+                target_width = int(target_width * ratio)
+                target_height = int(target_height * ratio)
+
+        # 2b: Total pixels limit (checked after long edge)
+        if max_total_pixels > 0:
+            total = target_width * target_height
+            if total > max_total_pixels:
+                import math
+
+                ratio = math.sqrt(max_total_pixels / total)
+                target_width = int(target_width * ratio)
+                target_height = int(target_height * ratio)
 
         # Apply scaling if needed
         if target_width != orig_width or target_height != orig_height:
