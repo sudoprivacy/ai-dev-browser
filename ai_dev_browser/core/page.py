@@ -15,10 +15,11 @@ try:
 except ImportError:
     HAS_PIL = False
 
-# Default screenshot limits. Prevents downstream image scaling (e.g., by LLM APIs)
-# from breaking coordinate alignment with mouse_click().
-# Claude API: max long edge 1568px, max total pixels ~1,150,000.
-MAX_SCREENSHOT_LONG_EDGE = 1568
+# Default screenshot limits matching Claude's effective visual resolution.
+# Claude API accepts up to 1568px, but the vision encoder works at ~768px
+# internally. Anthropic's computer_use docs recommend 1024-1280px for
+# accurate coordinate estimation. 1568px causes ~30-50px systematic drift.
+MAX_SCREENSHOT_LONG_EDGE = 1280
 MAX_SCREENSHOT_TOTAL_PIXELS = 1_150_000
 
 
