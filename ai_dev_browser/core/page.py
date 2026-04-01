@@ -15,6 +15,10 @@ try:
 except ImportError:
     HAS_PIL = False
 
+# Max long edge for screenshots. Prevents downstream image scaling (e.g., by LLM APIs)
+# from breaking coordinate alignment with mouse_click().
+MAX_SCREENSHOT_LONG_EDGE = 1568
+
 
 async def js_exec(tab: Tab, expression: str) -> dict:
     """Execute JavaScript in the page context.
@@ -40,27 +44,35 @@ async def screenshot(
     path: str | None = None,
     full_page: bool = False,
     css_scale: bool = True,
+    max_long_edge: int = MAX_SCREENSHOT_LONG_EDGE,
 ) -> dict:
     """Take a screenshot of the page.
 
     Args:
         tab: Tab instance
-        path: Path to save screenshot (default: ~/.ai-dev-browser/screenshots/{timestamp}.png)
+        path: Path to save screenshot (default: ./screenshots/{timestamp}.png)
         full_page: If True, capture full page (not just viewport)
-        css_scale: If True (default), resize screenshot to CSS pixel dimensions.
-                   This makes screenshot coordinates directly usable for clicking.
-                   If False, return original device pixel resolution.
+        css_scale: If True (default), resize screenshot so pixel coordinates
+                   match CSS/click coordinates. Handles both DPR>1 (Retina)
+                   and large viewport (>1568px) scenarios.
+        max_long_edge: Maximum long edge in pixels (default: 1568, matching
+                       Claude API's auto-scale threshold). Set to 0 to disable.
 
     Returns:
-        dict with path, size, width, height, device_pixel_ratio
+        dict with:
+        - path: file path
+        - size: file size in bytes
+        - width, height: final image dimensions
+        - device_pixel_ratio: browser DPR
+        - scale_factor: multiply screenshot coords by this to get click coords.
+                        1.0 means screenshot coords = click coords directly.
+                        >1.0 means image was downscaled (e.g., 1.65 for 2517→1527).
 
     Note:
-        When css_scale=True (default), screenshot coordinates can be used directly
-        for mouse clicks without conversion. This matches how Claude in Chrome works.
-
-        When css_scale=False, to convert screenshot pixel coordinates to click coordinates:
-            click_x = pixel_x / device_pixel_ratio
-            click_y = pixel_y / device_pixel_ratio
+        When scale_factor=1.0, screenshot coordinates can be used directly for
+        mouse_click(). When scale_factor>1.0:
+            click_x = screenshot_x * scale_factor
+            click_y = screenshot_y * scale_factor
     """
     if path is None:
         DEFAULT_SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -77,17 +89,47 @@ async def screenshot(
 
     await tab.save_screenshot(path, full_page=full_page)
 
-    # Resize to CSS dimensions if requested and PIL is available
-    if css_scale and HAS_PIL and dpr > 1:
+    scale_factor = 1.0
+
+    if css_scale and HAS_PIL:
         with Image.open(path) as img:
             orig_width, orig_height = img.size
-            new_width = int(orig_width / dpr)
-            new_height = int(orig_height / dpr)
-            resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-            resized.save(path)
-            width, height = new_width, new_height
+
+        # Step 1: DPR scaling — convert device pixels to CSS pixels
+        css_width = orig_width
+        css_height = orig_height
+        if dpr > 1:
+            css_width = int(orig_width / dpr)
+            css_height = int(orig_height / dpr)
+
+        # Step 2: Large viewport scaling — prevent Claude API from
+        # doing its own rescaling (which breaks coordinate alignment).
+        # Scale down to max_long_edge while preserving aspect ratio.
+        target_width = css_width
+        target_height = css_height
+        if max_long_edge > 0:
+            long_edge = max(css_width, css_height)
+            if long_edge > max_long_edge:
+                ratio = max_long_edge / long_edge
+                target_width = int(css_width * ratio)
+                target_height = int(css_height * ratio)
+
+        # Apply scaling if needed
+        if target_width != orig_width or target_height != orig_height:
+            with Image.open(path) as img:
+                resized = img.resize(
+                    (target_width, target_height), Image.Resampling.LANCZOS
+                )
+                resized.save(path)
+
+        # scale_factor: multiply screenshot coords by this to get click coords
+        # e.g., viewport=2517, image=1527 → scale_factor=2517/1527≈1.648
+        if target_width > 0:
+            scale_factor = vp["width"] / target_width
+
+        width, height = target_width, target_height
     else:
-        # Return original dimensions
+        # No scaling — return original dimensions
         if HAS_PIL:
             with Image.open(path) as img:
                 width, height = img.size
@@ -102,7 +144,7 @@ async def screenshot(
         "width": width,
         "height": height,
         "device_pixel_ratio": dpr,
-        "css_scaled": css_scale and HAS_PIL and dpr > 1,
+        "scale_factor": round(scale_factor, 4),
     }
 
 
