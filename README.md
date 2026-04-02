@@ -1,6 +1,6 @@
 # ai-dev-browser
 
-Browser automation toolkit for AI agents. Direct CDP WebSocket transport with human-like behavior — works where Selenium, Playwright, and Puppeteer get blocked.
+A browser for AI to develop web automation — human-like automation that works seamlessly in a world designed for humans.
 
 ## What is this?
 
