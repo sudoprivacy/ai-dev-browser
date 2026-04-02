@@ -1,90 +1,111 @@
 # ai-dev-browser
 
-A browser for AI to develop web automation — human-like automation that works seamlessly in a world designed for humans. Built on [nodriver](https://github.com/ultrafunkamsterdam/nodriver).
+Browser automation toolkit for AI agents. Direct CDP WebSocket transport with human-like behavior — works where Selenium, Playwright, and Puppeteer get blocked.
 
 ## What is this?
 
-**ai-dev-browser is designed for AI agents (like Claude) to explore websites and build automation scripts.**
+**ai-dev-browser gives AI agents (Claude, GPT, etc.) tools to see and interact with web pages** — similar to how [Claude in Chrome](https://claude.com/chrome) works, but headless-compatible and embeddable.
 
-The workflow:
-1. **Explore** (CLI): AI uses tools like `ax_tree`, `page_screenshot` to understand a webpage
-2. **Develop** (Python): AI codifies the automation using the same functions
-3. **Run**: The automation runs reliably with human-like behavior
+Two interaction modes:
+- **Accessibility tree** (`page_find`): semantic element discovery with refs for clicking/typing
+- **Screenshots** (`page_screenshot` + `mouse_click --screenshot`): visual coordinate-based interaction with automatic scaling
 
-This is not a traditional testing framework — it's a development environment where AI is the developer.
+```bash
+# AI discovers elements
+python -m ai_dev_browser.tools.page_find
 
-## Human-like Automation (Priority 1)
+# AI clicks by ref (from accessibility tree)
+python -m ai_dev_browser.tools.click_by_ref --ref "5#214"
 
-**ai-dev-browser mimics human behavior** — this is our core feature:
+# AI clicks by coordinates (from screenshot)
+python -m ai_dev_browser.tools.mouse_click --x 105 --y 52 --screenshot screenshots/page.png
+```
 
-- **Mouse**: Gaussian random walk + Bezier curves (not linear paths that bots use)
-- **Clicks**: Random offset within element bounds (±20%), not always dead center
-- **Events**: CDP dispatch produces `isTrusted=true` (JS `.click()` produces `isTrusted=false`)
-- **Timing**: Configurable delays, from pro-gamer speed (30-60ms) to natural pace
+## Screenshot Coordinate Alignment
 
-Unlike Selenium (detectable via `navigator.webdriver`), Playwright (fast but predictable), or Puppeteer (still detectable movements), ai-dev-browser works where others get blocked.
+Screenshots are automatically scaled to fit LLM vision limits (default: 1280px long edge for Claude). Scaling metadata is embedded in the PNG file. When you pass `--screenshot` to mouse tools, coordinates are auto-converted from screenshot space to CSS viewport space.
+
+```bash
+# Take screenshot (auto-scaled, metadata embedded in PNG)
+python -m ai_dev_browser.tools.page_screenshot
+# → screenshots/20260325_210000.png (1280x800)
+
+# Click using coordinates from the screenshot — auto-scaled
+python -m ai_dev_browser.tools.mouse_click --x 78 --y 117 --screenshot screenshots/20260325_210000.png
+```
+
+Configurable per model:
+```python
+await screenshot(tab, max_long_edge=1280)   # Claude (default)
+await screenshot(tab, max_long_edge=2048)   # GPT-4o
+await screenshot(tab, max_long_edge=0)      # Gemini (unlimited)
+```
 
 ## CLI = Python (SSOT)
 
-**Why SSOT matters for AI:**
-
-1. **Seamless exploration**: AI can `ls tools/` to discover capabilities, then directly use the same functions to build automation
-2. **Autoregressive learning**: When AI improves a function, it only edits one place — changes propagate to both CLI and Python automatically
-3. **Meta-learning friendly**: AI can inspect, modify, and extend tools without maintaining duplicate definitions
+Every tool works as both CLI command and Python function. Parameters are defined once in core functions, CLI tools are auto-generated. See [cli-args-ssot](https://github.com/sudoprivacy/cli-args-ssot).
 
 ```bash
-python -m ai_dev_browser.tools.element_click --selector "#btn" --human-like
+python -m ai_dev_browser.tools.click_by_text --text "Sign in"
 ```
 
 ```python
-from ai_dev_browser.core import click
-await click(tab, selector="#btn", human_like=True)
+from ai_dev_browser.core import click_by_text
+await click_by_text(tab, text="Sign in")
 ```
 
-We maintain SSOT rigorously. See [cli-args-ssot](https://github.com/sudoprivacy/cli-args-ssot) for our verification checklist.
+41 tools covering: navigation, element interaction, mouse, tabs, screenshots, cookies, storage, window management, dialogs, downloads, raw CDP, and Cloudflare bypass.
 
-**Related**: The [browser-automation-creator](https://github.com/sudoprivacy/browser-automation-creator) skill uses this library to help AI build custom browser automation tools.
+```bash
+ls ai_dev_browser/tools/  # See all available tools
+```
 
 ## Quick Start
-
-```python
-from ai_dev_browser.core import click, type_text, goto
-
-await goto(tab, "https://example.com")
-await click(tab, selector="#login")
-await type_text(tab, "user@example.com", selector="#email")
-```
-
-## Human Behavior Config
-
-```python
-from ai_dev_browser.core import human
-
-human.configure(
-    use_gaussian_path=True,    # Curved mouse movements (+50ms)
-    click_hold_enabled=True,   # Hold before release (+45ms)
-    type_humanize=True,        # Typing delays (+35ms/char)
-)
-```
-
-**Default philosophy**: FREE features ON (click offset), costly features OFF (opt-in).
-
-**Advanced**: For custom automation, `generate_gaussian_path()` and `calculate_click_offset()` are available from `ai_dev_browser.core.human`.
-
-## Installation
 
 ```bash
 pip install ai-dev-browser
 ```
 
-## Tools
+```python
+from ai_dev_browser.core import goto, click_by_text, type_by_text, screenshot
 
-```bash
-python -m ai_dev_browser.tools.<name> --help
+await goto(tab, "https://example.com")
+await type_by_text(tab, name="Email", text="user@example.com")
+await click_by_text(tab, text="Sign in")
+await screenshot(tab)  # → screenshots/{timestamp}.png
 ```
 
-Navigation, clicks, typing, mouse, tabs, scroll, storage, screenshots — all available as CLI and Python.
+## Human-like Behavior
+
+CDP-dispatched events produce `isTrusted=true`. Optional human-like features (all off by default, opt-in):
+
+```python
+from ai_dev_browser.core import human
+
+human.configure(
+    use_gaussian_path=True,    # Bezier mouse curves (+50ms)
+    click_hold_enabled=True,   # Hold before release (+45ms)
+    type_humanize=True,        # Typing delays (+35ms/char)
+)
+```
+
+Default: click offset randomization (free, always on). Everything else is opt-in for speed.
+
+## Architecture
+
+- **CDP WebSocket transport** (`_transport.py`): direct Chrome DevTools Protocol, no browser automation framework dependency
+- **Auto-reconnect**: tab WebSocket reconnection with target re-discovery (handles Electron SPA navigation)
+- **Connection reuse**: same `host:port` shares one `BrowserClient` instance across calls
+- **CDP module**: vendored from [nodriver](https://github.com/ultrafunkamsterdam/nodriver) via git submodule (`scripts/sync_cdp.py` to update)
+
+## Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `AI_DEV_BROWSER_PORT` | Default CDP port (skips auto-detection) |
+| `AI_DEV_BROWSER_HEADLESS` | Default headless mode (`1`/`true`) |
+| `AI_DEV_BROWSER_REDIRECT` | Block direct CLI, print redirect message |
 
 ## License
 
-AGPL-3.0 (to maintain compatibility with [nodriver](https://github.com/ultrafunkamsterdam/nodriver) which is AGPL-licensed)
+AGPL-3.0
