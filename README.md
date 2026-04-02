@@ -4,7 +4,7 @@ A browser for AI to develop web automation — human-like automation that works 
 
 ## What is this?
 
-**ai-dev-browser gives AI agents (Claude, GPT, etc.) tools to see and interact with web pages** — similar to how [Claude in Chrome](https://claude.com/chrome) works, but headless-compatible and embeddable.
+**ai-dev-browser is a browser that AI agents (Claude, GPT, etc.) use to see and interact with web pages** — similar to how [Claude in Chrome](https://claude.com/chrome) works, but headless-compatible and embeddable.
 
 Two interaction modes:
 - **Accessibility tree** (`page_find`): semantic element discovery with refs for clicking/typing
