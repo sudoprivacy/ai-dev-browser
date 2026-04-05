@@ -31,19 +31,10 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-class _NodriverUnpickler(pickle.Unpickler):
-    """Custom unpickler for backward-compatible cookie files."""
-
-    def find_class(self, module: str, name: str):
-        if module.startswith("nodriver.cdp."):
-            module = module.replace("nodriver.cdp.", "ai_dev_browser.cdp.", 1)
-        return super().find_class(module, name)
-
-
 class CookieJar:
     """Cookie management via CDP storage commands.
 
-    Pickle-based cookie persistence with backward-compatible deserialization.
+    Cookie management via CDP storage commands.
     """
 
     def __init__(self, browser: BrowserClient):
@@ -102,7 +93,7 @@ class CookieJar:
 
         try:
             with open(path, "rb") as fh:
-                cookies = _NodriverUnpickler(fh).load()
+                cookies = pickle.load(fh)
         except Exception as e:
             logger.warning("Failed to load cookies from %s: %s", path, e)
             return

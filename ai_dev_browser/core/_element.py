@@ -202,6 +202,16 @@ class Element:
             )
         )
 
+    async def mouse_click(self, button: str = "left"):
+        """Click element via CDP mouse events (isTrusted=true).
+
+        More reliable than click() for UI frameworks (React, etc.) that
+        depend on real mouse events.
+        """
+        pos = await self.get_position()
+        x, y = pos.center
+        await self._tab.mouse_click(x, y, button=button)
+
     async def send_keys(self, text: str):
         """Send keystrokes to this element."""
         await self.apply("(elem) => elem.focus()")
