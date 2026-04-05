@@ -41,7 +41,7 @@ def read_screenshot_metadata(path: str) -> dict:
     return {}
 
 
-async def js_exec(tab: Tab, expression: str) -> dict:
+async def js_evaluate(tab: Tab, expression: str) -> dict:
     """Execute JavaScript in the page context.
 
     Args:

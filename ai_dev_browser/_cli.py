@@ -251,7 +251,7 @@ def as_cli(requires_tab: bool = True):
                             if env_port:
                                 port = int(env_port)
                             else:
-                                # Auto-detect: page_find a running ai-dev-browser Chrome
+                                # Auto-detect: page_discover a running ai-dev-browser Chrome
                                 from ai_dev_browser.core.port import find_debug_chromes
                                 from ai_dev_browser.core.port import is_chrome_in_use
 

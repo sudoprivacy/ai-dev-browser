@@ -5,62 +5,73 @@ from ai_dev_browser.cdp import emulation as cdp_emulation
 from ._tab import Tab
 
 
-async def window_resize(
+async def window_set(
     tab: Tab,
-    width: int = 1280,
-    height: int = 720,
-    left: int = 0,
-    top: int = 0,
+    width: int | None = None,
+    height: int | None = None,
+    left: int | None = None,
+    top: int | None = None,
+    state: str | None = None,
+    focus: bool = False,
 ) -> dict:
-    """Resize browser window.
+    """Set window size, position, state, and/or focus.
 
     Args:
         tab: Tab instance
-        width: Window width
-        height: Window height
-        left: Window left position
-        top: Window top position
-
-    Returns:
-        dict with width, height, left, top
-    """
-    await tab.set_window_size(left=left, top=top, width=width, height=height)
-    return {"width": width, "height": height, "left": left, "top": top}
-
-
-async def window_state(
-    tab: Tab,
-    state: str = "normal",
-) -> dict:
-    """Set window state.
-
-    Args:
-        tab: Tab instance
+        width: Window width (pixels)
+        height: Window height (pixels)
+        left: Window left position (pixels)
+        top: Window top position (pixels)
         state: "normal", "maximized", "minimized", or "fullscreen"
+        focus: If True, bring window to front
 
     Returns:
-        dict with state
+        dict with applied settings
+
+    Example:
+        window_set(width=1280, height=720)
+        window_set(state="maximized")
+        window_set(focus=True)
+        window_set(width=800, height=600, state="normal", focus=True)
     """
-    if state == "maximized":
-        await tab.maximize()
-    elif state == "minimized":
-        await tab.minimize()
-    elif state == "fullscreen":
-        await tab.fullscreen()
-    else:
-        await tab.medimize()
-    return {"state": state}
+    result: dict[str, object] = {}
+
+    if width is not None or height is not None:
+        await tab.set_window_size(
+            left=left or 0,
+            top=top or 0,
+            width=width or 1280,
+            height=height or 720,
+        )
+        result.update({"width": width, "height": height, "left": left, "top": top})
+
+    if state is not None:
+        if state == "maximized":
+            await tab.maximize()
+        elif state == "minimized":
+            await tab.minimize()
+        elif state == "fullscreen":
+            await tab.fullscreen()
+        else:
+            await tab.medimize()
+        result["state"] = state
+
+    if focus:
+        await tab.bring_to_front()
+        result["focused"] = True
+
+    return result or {"error": "No action specified"}
 
 
-async def window_focus_emulation(
+async def page_emulate_focus(
     tab: Tab,
     enabled: bool = True,
 ) -> dict:
     """Enable or disable focus emulation.
 
     When enabled, the browser behaves as if it has focus even when the
-    window is in the background. This is critical for sites like iCloud
-    that require window focus to render confirmation dialogs, menus, and modals.
+    window is in the background. Critical for sites that require window
+    focus to render dialogs, menus, and modals.
 
     Args:
         tab: Tab instance
@@ -71,16 +82,3 @@ async def window_focus_emulation(
     """
     await tab.send(cdp_emulation.set_focus_emulation_enabled(enabled=enabled))
     return {"enabled": enabled}
-
-
-async def window_focus(tab: Tab) -> dict:
-    """Bring the browser window to front.
-
-    Args:
-        tab: Tab instance
-
-    Returns:
-        dict with focused status
-    """
-    await tab.bring_to_front()
-    return {"focused": True}

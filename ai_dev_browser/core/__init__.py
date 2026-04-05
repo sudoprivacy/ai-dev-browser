@@ -4,12 +4,12 @@ This module provides async functions for common browser operations.
 Both CLI tools and Python code can use these functions.
 
 Usage:
-    from ai_dev_browser.core import page_goto, click_by_text, page_find
+    from ai_dev_browser.core import page_goto, click_by_text, page_discover
 
     # In async context
     await page_goto(tab, "https://example.com")
     await click_by_text(tab, text="Sign in")
-    result = await page_find(tab, interactable_only=True)
+    result = await page_discover(tab, interactable_only=True)
 """
 
 # Accessibility tree interactions
@@ -36,7 +36,7 @@ from .cdp import cdp_send
 from .chrome import find_chrome, launch_chrome
 
 # Cloudflare
-from .cloudflare import cf_verify
+from .cloudflare import cloudflare_verify
 from .config import (
     DEFAULT_BASE_DIR,
     DEFAULT_COOKIES_DIR,
@@ -57,10 +57,10 @@ from .connection import connect_browser, get_active_tab
 from .cookies import cookies_list, cookies_load, cookies_save
 
 # Dialog (only tool-facing function)
-from .dialog import page_handle_dialog
+from .dialog import dialog_respond
 
 # Download
-from .download import download_file, download_path
+from .download import download
 
 # Login (human-in-the-loop)
 from .login import login_interactive
@@ -70,7 +70,7 @@ from .elements import (
     click_by_text,
     page_scroll,
     type_by_text,
-    element_wait,
+    page_wait_element,
 )
 
 # Mouse
@@ -80,12 +80,12 @@ from .mouse import mouse_click, mouse_drag, mouse_move
 from .navigation import (
     page_goto,
     page_reload,
-    page_wait,
+    page_wait_ready,
     page_wait_url,
 )
 
 # Page info
-from .page import page_html, page_info, js_exec, page_screenshot
+from .page import page_html, page_info, js_evaluate, page_screenshot
 
 # Port management
 from .port import (
@@ -102,7 +102,7 @@ from .process import get_pid_on_port, get_process_cmdline
 from .text_match import MatchResult
 
 # Snapshot (AI-friendly accessibility tree) - only tool-facing function
-from .snapshot import page_find
+from .snapshot import page_discover
 
 # Storage
 from .storage import storage_get, storage_set
@@ -111,7 +111,7 @@ from .storage import storage_get, storage_set
 from .tabs import tab_close, tab_list, tab_new, tab_switch
 
 # Window
-from .window import window_focus, window_resize, window_focus_emulation, window_state
+from .window import page_emulate_focus, window_set
 
 
 __all__ = [
@@ -145,7 +145,7 @@ __all__ = [
     "find_chrome",
     "launch_chrome",
     # Cloudflare
-    "cf_verify",
+    "cloudflare_verify",
     # CDP
     "cdp_send",
     # Port
@@ -162,17 +162,17 @@ __all__ = [
     # Navigation
     "page_goto",
     "page_reload",
-    "page_wait",
+    "page_wait_ready",
     "page_wait_url",
     # Elements
     "click_by_text",
     "type_by_text",
     "page_scroll",
-    "element_wait",
+    "page_wait_element",
     # Text matching
     "MatchResult",
     # Snapshot
-    "page_find",
+    "page_discover",
     # Tabs
     "tab_new",
     "tab_list",
@@ -181,25 +181,22 @@ __all__ = [
     # Page
     "page_info",
     "page_html",
-    "js_exec",
+    "js_evaluate",
     "page_screenshot",
     # Mouse
     "mouse_move",
     "mouse_click",
     "mouse_drag",
     # Window
-    "window_resize",
-    "window_state",
-    "window_focus_emulation",
-    "window_focus",
+    "window_set",
+    "page_emulate_focus",
     # Storage
     "storage_get",
     "storage_set",
     # Download
-    "download_path",
-    "download_file",
+    "download",
     # Dialog
-    "page_handle_dialog",
+    "dialog_respond",
     # Login
     "login_interactive",
     # Cookies

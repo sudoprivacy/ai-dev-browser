@@ -27,7 +27,7 @@ async def page_goto(
     result_tab = await tab.get(url, tab_new=tab_new)
 
     if wait:
-        await page_wait(result_tab)
+        await page_wait_ready(result_tab)
 
     try:
         title = await result_tab.evaluate("document.title")
@@ -67,7 +67,7 @@ async def page_reload(tab: Tab, ignore_cache: bool = True) -> bool:
     return True
 
 
-async def page_wait(
+async def page_wait_ready(
     tab: Tab,
     timeout: float = 30,
     idle_time: float = 0.5,
@@ -200,7 +200,7 @@ async def _wait_for_page(
 
     if idle:
         start = time.time()
-        ready = await page_wait(tab, timeout=timeout, idle_time=0.5)
+        ready = await page_wait_ready(tab, timeout=timeout, idle_time=0.5)
         elapsed = time.time() - start
 
         if ready:
@@ -216,7 +216,7 @@ async def _wait_for_page(
         }
 
     # Default: quick wait for DOM ready (10s max)
-    ready = await page_wait(tab, timeout=10, idle_time=0)
+    ready = await page_wait_ready(tab, timeout=10, idle_time=0)
     state = await tab.evaluate("document.readyState")
 
     return {

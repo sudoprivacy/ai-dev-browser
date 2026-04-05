@@ -3,9 +3,9 @@
 Requires: pip install opencv-python
 
 Usage:
-    from ai_dev_browser import cf_verify
+    from ai_dev_browser import cloudflare_verify
 
-    success = await cf_verify(tab)
+    success = await cloudflare_verify(tab)
 """
 
 import logging
@@ -14,7 +14,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def cf_verify(
+async def cloudflare_verify(
     tab, max_retries: int = 5, initial_wait: float = 2.0, **kwargs
 ) -> dict:
     """

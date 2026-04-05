@@ -12,7 +12,7 @@ Covers all non-lifecycle, non-AI-discovery workflows:
 - CDP: raw command, download path
 
 For browser lifecycle (start/stop/reuse/connect), see test_browser_lifecycle.py.
-For AI-style page_find-and-interact workflows, see test_find_and_interact_workflows.py.
+For AI-style page_discover-and-interact workflows, see test_find_and_interact_workflows.py.
 """
 
 import asyncio
@@ -24,13 +24,13 @@ from pathlib import Path
 from ai_dev_browser.core import (
     click_by_text,
     tab_close,
-    page_find,
+    page_discover,
     window_focus,
     page_html,
     page_info,
     page_goto,
-    page_handle_dialog,
-    js_exec,
+    dialog_respond,
+    js_evaluate,
     cookies_list,
     tab_list,
     cookies_load,
@@ -48,7 +48,7 @@ from ai_dev_browser.core import (
     window_state,
     tab_switch,
     type_by_ref,
-    page_wait,
+    page_wait_ready,
 )
 from ai_dev_browser.core import human
 from ai_dev_browser.core.dialog import _setup_auto_dialog_handler
@@ -133,7 +133,7 @@ class TestNavigationWorkflow:
         </body></html>""")
 
         await tab.get(html)
-        ready = await page_wait(tab, timeout=5)
+        ready = await page_wait_ready(tab, timeout=5)
         assert ready is True
         state = await tab.evaluate("document.readyState")
         assert state == "complete"
@@ -304,9 +304,9 @@ class TestPageOperationsWorkflow:
         await tab.get(html)
         await asyncio.sleep(0.2)
 
-        assert (await js_exec(tab, "1 + 1")).get("result") == 2
-        assert (await js_exec(tab, "window.data.users.length")).get("result") == 2
-        assert (await js_exec(tab, "document.body.tagName")).get("result") == "BODY"
+        assert (await js_evaluate(tab, "1 + 1")).get("result") == 2
+        assert (await js_evaluate(tab, "window.data.users.length")).get("result") == 2
+        assert (await js_evaluate(tab, "document.body.tagName")).get("result") == "BODY"
 
 
 # =============================================================================
@@ -393,7 +393,7 @@ class TestFormWorkflow:
         assert await tab.evaluate("window.isValid") is True
 
     async def test_multi_field_form_via_refs(self, browser):
-        """Fill multiple fields using page_find + type_by_ref + click_by_text."""
+        """Fill multiple fields using page_discover + type_by_ref + click_by_text."""
         tab = browser.main_tab
 
         html = """<!DOCTYPE html><html><body>
@@ -409,7 +409,7 @@ class TestFormWorkflow:
         await tab.get(make_data_url(html))
         await asyncio.sleep(0.2)
 
-        result = await page_find(tab)
+        result = await page_discover(tab)
         fields = [el for el in result["elements"] if el.get("role") == "textbox"]
         assert len(fields) >= 3
 
@@ -514,7 +514,7 @@ class TestDialogWorkflow:
         tab = browser.main_tab
         await tab.get(make_data_url("<html><body>No dialogs</body></html>"))
         await asyncio.sleep(0.2)
-        result = await page_handle_dialog(tab, accept=True, wait_timeout=0)
+        result = await dialog_respond(tab, accept=True, wait_timeout=0)
         assert (
             result.get("handled") is False
             or "error" in result

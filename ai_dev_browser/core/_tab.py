@@ -214,7 +214,7 @@ class Tab:
     # Element finding
     # =========================================================================
 
-    async def page_find(self, text: str, best_match: bool = True, timeout: float = 10):
+    async def find(self, text: str, best_match: bool = True, timeout: float = 10):
         """Find single element by text, with retry until timeout."""
         loop = asyncio.get_running_loop()
         start = loop.time()

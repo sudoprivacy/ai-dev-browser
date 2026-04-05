@@ -32,7 +32,7 @@ from .core import (
 )
 
 # Cloudflare verification
-from .core.cloudflare import cf_verify
+from .core.cloudflare import cloudflare_verify
 
 # Worker pool
 from .pool import (
@@ -92,7 +92,7 @@ __all__ = [
     "ProfileManager",
     "ProfileMode",
     # Cloudflare verification
-    "cf_verify",
+    "cloudflare_verify",
     # Core operations module
     "core",
     # CDP protocol access (vendored)

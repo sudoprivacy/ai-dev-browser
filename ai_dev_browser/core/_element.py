@@ -15,11 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 async def get_element_by_ref(tab: Tab, ref: str) -> "Element":
-    """Resolve a ref string (from page_find) to an Element object.
+    """Resolve a ref string (from page_discover) to an Element object.
 
     Args:
         tab: Tab instance
-        ref: Element ref from page_find (e.g., "5#214" or "FRAME_ABC:5#214")
+        ref: Element ref from page_discover (e.g., "5#214" or "FRAME_ABC:5#214")
 
     Returns:
         Element instance

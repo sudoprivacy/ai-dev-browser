@@ -119,10 +119,10 @@ class TestStartBrowserReuse:
 
 
 class TestAutoDetection:
-    """Test CLI auto-detection: when no port specified, page_find idle Chrome."""
+    """Test CLI auto-detection: when no port specified, page_discover idle Chrome."""
 
     async def test_find_idle_chrome(self):
-        """Auto-detection should page_find an idle Chrome in the port range."""
+        """Auto-detection should page_discover an idle Chrome in the port range."""
         result = browser_start(headless=True, profile=f"{TEST_PROFILE}-detect")
         assert "error" not in result
         port = result["port"]
@@ -233,7 +233,7 @@ class TestCLIAutoDetectFlow:
     """
 
     async def test_cli_auto_detect_finds_chrome(self):
-        """Simulate CLI auto-detection: page_find idle Chrome without --port."""
+        """Simulate CLI auto-detection: page_discover idle Chrome without --port."""
         # Start a Chrome
         result = browser_start(headless=True, profile=f"{TEST_PROFILE}-cli")
         assert "error" not in result
@@ -275,7 +275,7 @@ class TestCLIAutoDetectFlow:
         assert result == 2
 
     async def test_no_chrome_returns_none(self):
-        """When no Chrome is running, auto-detection should page_find nothing."""
+        """When no Chrome is running, auto-detection should page_discover nothing."""
         for candidate, _pid in find_debug_chromes():
             if not is_chrome_in_use(candidate):
                 break

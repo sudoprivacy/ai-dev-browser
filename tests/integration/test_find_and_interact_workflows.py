@@ -1,10 +1,10 @@
 """Find-and-interact workflows: discover elements, then click/type.
 
-AI pattern: Use page_find() to discover page elements, then interact by ref or text.
+AI pattern: Use page_discover() to discover page elements, then interact by ref or text.
 
 Workflows covered:
-- page_find → click_by_ref: Discover button, click by ref
-- page_find → type_by_ref: Discover input, type by ref
+- page_discover → click_by_ref: Discover button, click by ref
+- page_discover → type_by_ref: Discover input, type by ref
 - click_by_text / type_by_text: Direct text-based interaction
 - Login forms, multi-step navigation, mixed patterns
 """
@@ -16,7 +16,7 @@ import json
 from ai_dev_browser.core import (
     click_by_ref,
     click_by_text,
-    page_find,
+    page_discover,
     focus_by_ref,
     page_goto,
     type_by_ref,
@@ -39,7 +39,7 @@ async def eval_json(tab, js_expr):
 
 
 class TestFindAndClickByRef:
-    """Workflow: page_find() → click_by_ref()
+    """Workflow: page_discover() → click_by_ref()
 
     AI pattern: Discover elements first, then click by ref.
     """
@@ -65,7 +65,7 @@ class TestFindAndClickByRef:
         await asyncio.sleep(0.2)
 
         # Step 1: Find all elements
-        result = await page_find(tab)
+        result = await page_discover(tab)
         elements = result.get("elements", [])
 
         # Step 2: Locate "Second Button" by name
@@ -75,7 +75,7 @@ class TestFindAndClickByRef:
                 second_btn = el
                 break
 
-        assert second_btn is not None, "Should page_find 'Second Button'"
+        assert second_btn is not None, "Should page_discover 'Second Button'"
         assert second_btn.get("ref") is not None, "Element should have ref"
 
         # Step 3: Click by ref
@@ -109,7 +109,7 @@ class TestFindAndClickByRef:
         await asyncio.sleep(0.2)
 
         # Find and click "Go to Page 2"
-        result = await page_find(tab)
+        result = await page_discover(tab)
         link = next(
             (el for el in result["elements"] if "Page 2" in el.get("name", "")), None
         )
@@ -137,11 +137,11 @@ class TestFindAndClickByRef:
         await asyncio.sleep(0.2)
 
         # Find all elements
-        all_result = await page_find(tab, interactable_only=False)
+        all_result = await page_discover(tab, interactable_only=False)
         all_elements = all_result.get("elements", [])
 
         # Find interactable only
-        interactive_result = await page_find(tab, interactable_only=True)
+        interactive_result = await page_discover(tab, interactable_only=True)
         interactive_elements = interactive_result.get("elements", [])
 
         # Interactable should be subset
@@ -155,7 +155,7 @@ class TestFindAndClickByRef:
 
 
 class TestFindAndTypeByRef:
-    """Workflow: page_find() → focus_by_ref() → type_by_ref()
+    """Workflow: page_discover() → focus_by_ref() → type_by_ref()
 
     AI pattern: Discover input fields, focus, then type.
     """
@@ -174,7 +174,7 @@ class TestFindAndTypeByRef:
         await asyncio.sleep(0.2)
 
         # Find username input
-        result = await page_find(tab)
+        result = await page_discover(tab)
         username_input = next(
             (el for el in result["elements"] if "Username" in el.get("name", "")), None
         )
@@ -203,7 +203,7 @@ class TestFindAndTypeByRef:
         await asyncio.sleep(0.2)
 
         # Find search input
-        result = await page_find(tab)
+        result = await page_discover(tab)
         search_input = next(
             (el for el in result["elements"] if "Search" in el.get("name", "")), None
         )
@@ -233,7 +233,7 @@ class TestFindAndTypeByRef:
         await asyncio.sleep(0.2)
 
         # Find field
-        result = await page_find(tab)
+        result = await page_discover(tab)
         field = next(
             (el for el in result["elements"] if el.get("role") == "textbox"), None
         )
@@ -372,11 +372,11 @@ class TestTypeByText:
 class TestLoginFormWorkflow:
     """Complete login form workflow using new APIs.
 
-    Covers: page_find → type_by_ref → click_by_text (realistic AI usage)
+    Covers: page_discover → type_by_ref → click_by_text (realistic AI usage)
     """
 
     async def test_login_form_with_ref_apis(self, browser):
-        """Complete login using page_find + type_by_ref + click_by_text."""
+        """Complete login using page_discover + type_by_ref + click_by_text."""
         tab = browser.main_tab
 
         html = """<!DOCTYPE html>
@@ -406,7 +406,7 @@ class TestLoginFormWorkflow:
         await asyncio.sleep(0.2)
 
         # Step 1: Find all form elements
-        result = await page_find(tab)
+        result = await page_discover(tab)
         elements = result.get("elements", [])
 
         # Step 2: Find email and password inputs by placeholder
@@ -417,8 +417,8 @@ class TestLoginFormWorkflow:
             (el for el in elements if "Password" in el.get("name", "")), None
         )
 
-        assert email_input is not None, "Should page_find email input"
-        assert pass_input is not None, "Should page_find password input"
+        assert email_input is not None, "Should page_discover email input"
+        assert pass_input is not None, "Should page_discover password input"
 
         # Step 3: Type credentials by ref
         await type_by_ref(tab, ref=email_input["ref"], text="user@example.com")
@@ -460,13 +460,13 @@ class TestLoginFormWorkflow:
 
 
 class TestMultiStepNavigationWorkflow:
-    """Multi-page workflow: navigate → page_find → click → wait → verify.
+    """Multi-page workflow: navigate → page_discover → click → wait → verify.
 
-    Covers: page_goto, page_find, click_by_ref, wait_for_element
+    Covers: page_goto, page_discover, click_by_ref, wait_for_element
     """
 
     async def test_navigate_find_click_sequence(self, browser):
-        """Navigate to page, page_find element, click, verify result."""
+        """Navigate to page, page_discover element, click, verify result."""
         tab = browser.main_tab
 
         html = """<!DOCTYPE html>
@@ -492,14 +492,14 @@ class TestMultiStepNavigationWorkflow:
         await asyncio.sleep(0.2)
 
         # Step 2: Find all elements
-        result = await page_find(tab)
+        result = await page_discover(tab)
         elements = result.get("elements", [])
 
         # Step 3: Find "Buy Product B" button by name
         product_b_btn = next(
             (el for el in elements if el.get("name") == "Buy Product B"), None
         )
-        assert product_b_btn is not None, "Should page_find 'Buy Product B' button"
+        assert product_b_btn is not None, "Should page_discover 'Buy Product B' button"
 
         # Step 4: Click the button
         await click_by_ref(tab, ref=product_b_btn["ref"])
@@ -514,7 +514,7 @@ class TestMultiStepNavigationWorkflow:
         assert "Selected: B" in selected_text
 
     async def test_dynamic_content_workflow(self, browser):
-        """Handle dynamically loaded content with page_find and click."""
+        """Handle dynamically loaded content with page_discover and click."""
         tab = browser.main_tab
 
         html = """<!DOCTYPE html>
@@ -544,12 +544,12 @@ class TestMultiStepNavigationWorkflow:
         await asyncio.sleep(0.3)
 
         # Find new elements
-        result = await page_find(tab)
+        result = await page_discover(tab)
         item2 = next(
             (el for el in result["elements"] if el.get("name") == "Item 2"), None
         )
 
-        assert item2 is not None, "Should page_find dynamically loaded Item 2"
+        assert item2 is not None, "Should page_discover dynamically loaded Item 2"
 
         # Click the dynamic element
         await click_by_ref(tab, ref=item2["ref"])
@@ -565,7 +565,7 @@ class TestMixedApiWorkflow:
     """
 
     async def test_search_and_select_workflow(self, browser):
-        """Search form (page_find + ref) → Results (ref-based)."""
+        """Search form (page_discover + ref) → Results (ref-based)."""
         tab = browser.main_tab
 
         html = """<!DOCTYPE html>
@@ -593,7 +593,7 @@ class TestMixedApiWorkflow:
         await asyncio.sleep(0.2)
 
         # Phase 1: Find input and type by ref
-        result = await page_find(tab)
+        result = await page_discover(tab)
         search_input = next(
             (el for el in result["elements"] if el.get("role") == "textbox"), None
         )
@@ -604,7 +604,7 @@ class TestMixedApiWorkflow:
         await asyncio.sleep(0.1)
 
         # Phase 2: Ref-based result selection
-        result = await page_find(tab)
+        result = await page_discover(tab)
         result2 = next(
             (el for el in result["elements"] if el.get("name") == "Result 2"), None
         )
@@ -653,8 +653,8 @@ class TestMixedApiWorkflow:
         await type_by_text(tab, name="Full Name", text="John Doe")
         await type_by_text(tab, name="Email", text="john@example.com")
 
-        # Select preference (page_find + ref - need to pick specific button)
-        result = await page_find(tab)
+        # Select preference (page_discover + ref - need to pick specific button)
+        result = await page_discover(tab)
         weekly_btn = next(
             (el for el in result["elements"] if el.get("name") == "Weekly Updates"),
             None,
@@ -694,7 +694,7 @@ class TestTrustedEventsWithNewApis:
         await tab.get(make_data_url(html))
         await asyncio.sleep(0.2)
 
-        result = await page_find(tab)
+        result = await page_discover(tab)
         btn = next((el for el in result["elements"] if el.get("name") == "Click"), None)
         await click_by_ref(tab, ref=btn["ref"])
 
@@ -742,7 +742,7 @@ class TestTrustedEventsWithNewApis:
         await tab.get(make_data_url(html))
         await asyncio.sleep(0.2)
 
-        result = await page_find(tab)
+        result = await page_discover(tab)
         input_el = next(
             (el for el in result["elements"] if el.get("role") == "textbox"), None
         )

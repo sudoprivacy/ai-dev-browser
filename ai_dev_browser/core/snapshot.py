@@ -325,7 +325,7 @@ async def _get_accessibility_tree(
     return {"elements": elements, "count": len(elements)}
 
 
-async def page_find(
+async def page_discover(
     tab: Tab,
     text: str | None = None,
     interactable_only: bool = True,
@@ -354,9 +354,9 @@ async def page_find(
         - box: {left, top, right, bottom} (if include_coordinates=True)
 
     Example:
-        page_find()                    # All interactive elements
-        page_find(text="登录")         # Filter by text
-        page_find(text="Sign")         # Case-insensitive match
+        page_discover()                    # All interactive elements
+        page_discover(text="登录")         # Filter by text
+        page_discover(text="Sign")         # Case-insensitive match
     """
     from ai_dev_browser.cdp import dom
 
