@@ -1410,7 +1410,7 @@ class Cookie:
             secure=bool(json['secure']),
             session=bool(json['session']),
             priority=CookiePriority.from_json(json['priority']),
-            same_party=bool(json['sameParty']),
+            same_party=bool(json.get('sameParty', False)),
             source_scheme=CookieSourceScheme.from_json(json['sourceScheme']),
             source_port=int(json['sourcePort']),
             expires=float(json['expires']) if json.get('expires', None) is not None else None,
