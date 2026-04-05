@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import typing
 
 from ai_dev_browser.cdp import dom, input_ as cdp_input, overlay, page, runtime
@@ -11,6 +12,44 @@ if typing.TYPE_CHECKING:
     from ._tab import Tab
 
 logger = logging.getLogger(__name__)
+
+
+async def get_element_by_ref(tab: Tab, ref: str) -> "Element":
+    """Resolve a ref string (from page_find) to an Element object.
+
+    Args:
+        tab: Tab instance
+        ref: Element ref from page_find (e.g., "5#214" or "FRAME_ABC:5#214")
+
+    Returns:
+        Element instance
+
+    Raises:
+        ValueError: If ref format is invalid or element not found
+    """
+    # Parse ref to extract node_id
+    node_id = None
+    local_ref = ref
+    frame_match = re.match(r"^(FRAME_[^:]+):(.+)$", ref)
+    if frame_match:
+        local_ref = frame_match.group(2)
+    node_match = re.match(r"^(\d+)#(\d+)$", local_ref)
+    if node_match:
+        node_id = int(node_match.group(2))
+
+    if node_id is None:
+        raise ValueError(f"Invalid ref format (no node_id): {ref}")
+
+    backend_node_id = dom.BackendNodeId(node_id)
+    try:
+        node_info = await tab.send(
+            dom.describe_node(backend_node_id=backend_node_id, depth=0)
+        )
+    except Exception as e:
+        raise ValueError(f"Element not found for ref {ref}: {e}") from e
+
+    elem = Element(node_info, tab)
+    return elem
 
 
 # =============================================================================

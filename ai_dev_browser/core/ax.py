@@ -408,3 +408,178 @@ async def type_by_ref(
     await tab.send(cdp_input.insert_text(text=text))
 
     return {"typed": True, "ref": ref, "text": text}
+
+
+# ---------------------------------------------------------------------------
+# Element tools (by ref) — all use get_element_by_ref helper
+# ---------------------------------------------------------------------------
+
+
+async def hover_by_ref(
+    tab: Tab,
+    ref: str,
+) -> dict:
+    """Move mouse to element (hover) by ref from page_find().
+
+    Useful for triggering hover menus, tooltips, or dropdown previews.
+
+    Args:
+        tab: Tab instance
+        ref: Element ref from page_find()
+
+    Returns:
+        dict with hovered status
+    """
+    from ._element import get_element_by_ref
+
+    element = await get_element_by_ref(tab, ref)
+    await element.mouse_move()
+    return {"hovered": True, "ref": ref}
+
+
+async def highlight_by_ref(
+    tab: Tab,
+    ref: str,
+    duration: float = 2.0,
+) -> dict:
+    """Highlight element with colored overlay by ref from page_find().
+
+    Useful for visual debugging — confirms which element was found.
+
+    Args:
+        tab: Tab instance
+        ref: Element ref from page_find()
+        duration: How long to show highlight in seconds
+
+    Returns:
+        dict with highlighted status
+    """
+    from ._element import get_element_by_ref
+
+    element = await get_element_by_ref(tab, ref)
+    await element.highlight_overlay(duration=duration)
+    return {"highlighted": True, "ref": ref}
+
+
+async def html_by_ref(
+    tab: Tab,
+    ref: str,
+) -> dict:
+    """Get outerHTML of element by ref from page_find().
+
+    Args:
+        tab: Tab instance
+        ref: Element ref from page_find()
+
+    Returns:
+        dict with html content
+    """
+    from ._element import get_element_by_ref
+
+    element = await get_element_by_ref(tab, ref)
+    html = await element.get_html()
+    return {"html": html, "ref": ref}
+
+
+async def screenshot_by_ref(
+    tab: Tab,
+    ref: str,
+    path: str | None = None,
+) -> dict:
+    """Take screenshot of just this element's region by ref from page_find().
+
+    Args:
+        tab: Tab instance
+        ref: Element ref from page_find()
+        path: File path to save (default: screenshots/{timestamp}_element.png)
+
+    Returns:
+        dict with path
+    """
+    import datetime
+    from pathlib import Path
+
+    from ._element import get_element_by_ref
+    from .config import DEFAULT_SCREENSHOT_DIR
+
+    if path is None:
+        DEFAULT_SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        path = str(DEFAULT_SCREENSHOT_DIR / f"{ts}_element.png")
+
+    element = await get_element_by_ref(tab, ref)
+    saved = await element.save_screenshot(path)
+    file_size = Path(saved).stat().st_size
+    return {"path": saved, "size": file_size, "ref": ref}
+
+
+async def select_by_ref(
+    tab: Tab,
+    ref: str,
+) -> dict:
+    """Select a dropdown option by ref from page_find().
+
+    For <select> elements: use page_find() to see options, then select_by_ref
+    on the <option> element.
+
+    Args:
+        tab: Tab instance
+        ref: Element ref of the <option> to select
+
+    Returns:
+        dict with selected status
+    """
+    from ._element import get_element_by_ref
+
+    element = await get_element_by_ref(tab, ref)
+    await element.select_option()
+    return {"selected": True, "ref": ref}
+
+
+async def upload_by_ref(
+    tab: Tab,
+    ref: str,
+    paths: str,
+) -> dict:
+    """Upload file(s) to a file input by ref from page_find().
+
+    Args:
+        tab: Tab instance
+        ref: Element ref of the <input type="file">
+        paths: Comma-separated file paths to upload
+
+    Returns:
+        dict with uploaded status and file count
+    """
+    from ._element import get_element_by_ref
+
+    element = await get_element_by_ref(tab, ref)
+    file_list = [p.strip() for p in paths.split(",")]
+    await element.send_file(*file_list)
+    return {"uploaded": True, "ref": ref, "files": len(file_list)}
+
+
+async def drag_by_ref(
+    tab: Tab,
+    ref: str,
+    to_x: float,
+    to_y: float,
+    steps: int = 10,
+) -> dict:
+    """Drag element to destination coordinates by ref from page_find().
+
+    Args:
+        tab: Tab instance
+        ref: Element ref to drag from
+        to_x: Destination X coordinate
+        to_y: Destination Y coordinate
+        steps: Number of intermediate steps
+
+    Returns:
+        dict with dragged status
+    """
+    from ._element import get_element_by_ref
+
+    element = await get_element_by_ref(tab, ref)
+    await element.mouse_drag(to_x, to_y, steps=steps)
+    return {"dragged": True, "ref": ref}

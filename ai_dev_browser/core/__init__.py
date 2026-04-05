@@ -17,8 +17,15 @@ Usage:
 # Config (shared constants)
 from .ax import (
     click_by_ref,
+    drag_by_ref,
     focus_by_ref,
+    highlight_by_ref,
+    hover_by_ref,
+    html_by_ref,
+    screenshot_by_ref,
+    select_by_ref,
     type_by_ref,
+    upload_by_ref,
 )
 
 # Browser lifecycle
@@ -108,10 +115,17 @@ from .window import focus_window, resize_window, set_focus_emulation, set_window
 
 
 __all__ = [
-    # Accessibility tree interactions
+    # Accessibility tree interactions (by ref)
     "click_by_ref",
+    "drag_by_ref",
     "focus_by_ref",
+    "highlight_by_ref",
+    "hover_by_ref",
+    "html_by_ref",
+    "screenshot_by_ref",
+    "select_by_ref",
     "type_by_ref",
+    "upload_by_ref",
     # Browser lifecycle
     "start_browser",
     "stop_browser",

@@ -29,6 +29,14 @@ TOOLS = [
     ("ax", "type_by_ref", "typed"),
     # Focus actions
     ("ax", "focus_by_ref", "focused"),
+    # Element inspection/interaction (by ref)
+    ("ax", "hover_by_ref", "hovered"),
+    ("ax", "highlight_by_ref", "highlighted"),
+    ("ax", "html_by_ref", "html"),
+    ("ax", "screenshot_by_ref", "path"),
+    ("ax", "select_by_ref", "selected"),
+    ("ax", "upload_by_ref", "uploaded"),
+    ("ax", "drag_by_ref", "dragged"),
     # Find
     ("snapshot", "find", "elements", "page_find"),
     # Element wait
