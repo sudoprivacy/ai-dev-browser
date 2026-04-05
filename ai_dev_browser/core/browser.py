@@ -11,22 +11,9 @@ from .port import (
     find_debug_chromes,
     get_available_port,
     get_pid_on_port,
-    is_chrome_in_use,
     is_port_in_use,
 )
 from .process import _find_chrome_processes, _kill_process_tree, get_process_cmdline
-
-
-def _is_profile_locked(profile_dir: Path) -> bool:
-    """Check if a Chrome profile is locked by another process.
-
-    Chrome creates a 'SingletonLock' symlink when using a profile.
-    Note: We check both exists() and is_symlink() because:
-    - exists() returns False for broken symlinks
-    - Chrome's SingletonLock is a symlink that may be broken but still indicates lock
-    """
-    singleton_lock = profile_dir / "SingletonLock"
-    return singleton_lock.exists() or singleton_lock.is_symlink()
 
 
 def _find_chrome_using_profile(profile_dir: Path) -> tuple[int, int] | None:
@@ -51,14 +38,15 @@ def _find_chrome_using_profile(profile_dir: Path) -> tuple[int, int] | None:
 
 
 def _find_reusable_chrome() -> int | None:
-    """Find an idle debugging Chrome to reuse.
+    """Find a debugging Chrome to reuse.
+
+    TODO: Filter by workspace (pwd) once ownership is implemented.
 
     Returns:
         Port number if found, None otherwise
     """
     for port, _pid in find_debug_chromes():
-        if not is_chrome_in_use(port):
-            return port
+        return port  # Return first found Chrome
     return None
 
 
@@ -130,17 +118,6 @@ def browser_start(
                 "reused": True,
                 "message": f"Profile '{profile_name}' already in use. Reusing Chrome on port {existing_port}.",
             }
-
-        # Check for stale lock file (lock exists but no Chrome found)
-        if _is_profile_locked(user_data_dir):
-            # Try to remove the stale lock and continue
-            try:
-                (user_data_dir / "SingletonLock").unlink()
-            except Exception:
-                return {
-                    "error": f"Profile '{profile_name}' is locked but no Chrome found. "
-                    f"Try manually removing: {user_data_dir / 'SingletonLock'}"
-                }
 
     # Launch Chrome
     start_url = url or "about:blank"
@@ -286,13 +263,13 @@ def browser_list() -> dict:
     known_pids = set()
 
     # Port-based discovery (Chromes listening on debug ports)
+    # TODO: filter by workspace (pwd) once ownership is implemented
     for p, pid in find_debug_chromes():
         known_pids.add(pid)
         browsers.append(
             {
                 "port": p,
                 "pid": pid,
-                "can_connect": not is_chrome_in_use(p),
             }
         )
 

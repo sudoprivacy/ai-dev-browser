@@ -4,20 +4,16 @@ This module provides port scanning and availability detection:
 - is_port_in_use: Check if a port is occupied
 - get_available_port: Find an available debugging port
 - find_debug_chromes: Find all debugging Chrome instances
-- is_chrome_in_use: Check if a Chrome is being used via CDP
 
 Example:
     port = get_available_port()
     print(f"Available port: {port}")
 """
 
-import json
 import logging
 import shutil
 import socket
 import tempfile
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 from .config import (
@@ -55,54 +51,6 @@ def _get_chrome_info_on_port(port: int) -> tuple[int | None, str | None]:
     return pid, cmdline
 
 
-def _scan_ports(
-    port_range: tuple[int, int],
-    predicate,
-    exclude: set[int] | None = None,
-    check_in_use: bool = False,
-    exclude_in_use: bool = False,
-    return_first: bool = False,
-) -> list[int] | int | None:
-    """Scan ports with a predicate function.
-
-    Args:
-        port_range: (start, end) tuple
-        predicate: Function(port) -> bool, called for each port
-        exclude: Ports to skip
-        check_in_use: If True, only scan ports that are in use
-        exclude_in_use: If True, skip ports where Chrome has attached debugger
-        return_first: If True, return first match instead of list
-
-    Returns:
-        List of matching ports, or first match if return_first=True
-    """
-    exclude = exclude or set()
-    results = []
-
-    for port in range(port_range[0], port_range[1]):
-        if port in exclude:
-            continue
-
-        # Check if port is in use (if required)
-        if check_in_use and not is_port_in_use(DEFAULT_DEBUG_HOST, port):
-            continue
-
-        # Apply predicate
-        if not predicate(port):
-            continue
-
-        # Check CDP in-use status
-        if exclude_in_use and is_chrome_in_use(port):
-            logger.debug(f"Skipping in-use Chrome on port {port}")
-            continue
-
-        if return_first:
-            return port
-        results.append(port)
-
-    return None if return_first else results
-
-
 # =============================================================================
 # Port Detection
 # =============================================================================
@@ -116,13 +64,6 @@ def _is_port_bindable(
     On Windows, Hyper-V reserves dynamic port ranges that appear "unused"
     (nothing is listening) but reject bind() with WSAEACCES (0x271D).
     This function catches that by attempting an actual bind.
-
-    Args:
-        host: Host to bind on
-        port: Port to test
-
-    Returns:
-        True if the port is bindable, False if the OS rejects it.
     """
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -133,27 +74,21 @@ def _is_port_bindable(
 
 
 def is_port_in_use(
-    host: str = DEFAULT_DEBUG_HOST, port: int = DEFAULT_DEBUG_PORT, timeout: float = 0.1
+    host: str = DEFAULT_DEBUG_HOST,
+    port: int = DEFAULT_DEBUG_PORT,
+    timeout: float = 0.1,
 ) -> bool:
-    """
-    Check if a port is in use (Chrome might be listening).
+    """Check if a port is in use (Chrome might be listening).
 
-    Uses a bind-first strategy for speed on Windows: if we can bind the port,
-    nothing is listening — skip the slow connect(). On Windows 11 with Hyper-V,
-    connect() to unused ports hangs until timeout (100ms each) instead of
-    giving an instant ConnectionRefused, making naive scanning 20s+ for 100 ports.
+    Uses a bind-first strategy for speed on Windows.
 
     Args:
         host: Host to check (default: 127.0.0.1)
         port: Port to check (default: DEFAULT_DEBUG_PORT)
-        timeout: Connection timeout in seconds (default 0.1s for fast scanning)
+        timeout: Connection timeout in seconds
 
     Returns:
         True if port is in use, False otherwise.
-
-    Example:
-        if is_port_in_use(port=9350):
-            print("Chrome already running on 9350")
     """
     # Fast path: if we can bind, nothing is listening (sub-millisecond)
     try:
@@ -162,8 +97,6 @@ def is_port_in_use(
         return False
     except OSError:
         pass
-    # Bind failed: either something is listening, or Hyper-V reserved.
-    # Use connect to distinguish (only reached for non-bindable ports).
 
     # Check IPv4
     try:
@@ -174,11 +107,10 @@ def is_port_in_use(
     except (TimeoutError, ConnectionRefusedError, OSError):
         pass
 
-    # Check IPv6 (Chrome on Windows might only listen on IPv6)
+    # Check IPv6
     try:
         with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as sock:
             sock.settimeout(timeout)
-            # Map IPv4 loopback to IPv6
             ipv6_host = "::1" if host in ("127.0.0.1", "localhost") else host
             sock.connect((ipv6_host, port))
             return True
@@ -188,98 +120,27 @@ def is_port_in_use(
     return False
 
 
-def is_chrome_in_use(port: int, timeout: float = 0.5) -> bool:
-    """
-    Check if Chrome on this port is being used by another script via CDP.
-
-    This is more reliable than file-based locking because:
-    1. No cleanup needed - when script dies, CDP attachment is automatically released
-    2. No race conditions - CDP state is always current
-    3. No stale lock detection needed
-
-    Args:
-        port: Chrome debugging port to check
-        timeout: Connection timeout in seconds
-
-    Returns:
-        True if Chrome has attached debugger sessions (in use by another script),
-        False if no attached sessions or Chrome is not available.
-
-    Example:
-        if is_chrome_in_use(9350):
-            print("Chrome on 9350 is busy, page_discover another port")
-    """
-    try:
-        # Get browser WebSocket URL
-        version_url = f"http://127.0.0.1:{port}/json/version"
-        req = urllib.request.Request(version_url)
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            version = json.loads(response.read())
-            browser_ws = version.get("webSocketDebuggerUrl")
-
-        if not browser_ws:
-            return False
-
-        # Use synchronous WebSocket to check targets
-        import websocket
-
-        ws = websocket.create_connection(browser_ws, timeout=timeout)
-        try:
-            # Get all targets
-            ws.send(json.dumps({"id": 1, "method": "Target.getTargets"}))
-            response = json.loads(ws.recv())
-
-            # Check if any page targets are attached
-            for target in response.get("result", {}).get("targetInfos", []):
-                if target.get("type") == "page" and target.get("attached", False):
-                    logger.debug(
-                        f"Port {port} is in use: page '{target.get('title', 'unknown')[:30]}' "
-                        f"has attached debugger"
-                    )
-                    return True
-
-            return False
-        finally:
-            ws.close()
-
-    except Exception as e:
-        logger.debug(f"Could not check CDP state for port {port}: {e}")
-        return False
-
-
 def get_available_port(
     start: int = None,
     end: int = None,
     exclude: set[int] | None = None,
     reuse: bool = True,
 ) -> int:
-    """
-    Find an available port for Chrome.
-
-    Port selection strategy (when reuse=True):
-    1. First, look for any idle debugging Chrome (not in use via CDP)
-    2. If none found, page_discover an unused port for launching new Chrome
-
-    When reuse=False, skips directly to finding an unused port.
+    """Find an available port for Chrome.
 
     Args:
-        start: Start of port range to search (default: from DEFAULT_PORT_RANGE)
-        end: End of port range to search (default: from DEFAULT_PORT_RANGE)
-        exclude: Set of ports to skip (e.g., already assigned to workers)
-        reuse: If True (default), prefer reusing existing Chrome instances.
-               If False, only page_discover unused ports for new Chrome.
+        start: Start of port range
+        end: End of port range
+        exclude: Ports to skip
+        reuse: If True, prefer reusing existing Chrome instances.
+               TODO: will be filtered by workspace once ownership is implemented.
 
     Returns:
         An available port number
 
     Raises:
         RuntimeError: If no available port found in range
-
-    Example:
-        port = get_available_port(exclude={9350, 9351})
-        port = get_available_port(reuse=False)  # Always get fresh port
     """
-    # Use defaults from config if not specified
     if start is None:
         start = DEFAULT_PORT_RANGE[0]
     if end is None:
@@ -287,18 +148,15 @@ def get_available_port(
     port_range = (start, end)
 
     if reuse:
-        # Reuse any idle debugging Chrome (process-based, no port scanning)
+        # TODO: filter by workspace (pwd) once ownership is implemented
         exclude = exclude or set()
         for chrome_port, _pid in find_debug_chromes(port_range):
             if chrome_port in exclude:
                 continue
-            if not is_chrome_in_use(chrome_port):
-                logger.debug(f"Found reusable idle Chrome on port {chrome_port}")
-                return chrome_port
+            # For now, reuse any debugging Chrome found
+            return chrome_port
 
-    # Find unused port (or only strategy when reuse=False)
-    # Use bind-only test: bindable = nothing listening AND not Hyper-V reserved.
-    # This avoids slow connect() calls on Windows with Hyper-V.
+    # Find unused port
     for p in range(port_range[0], port_range[1]):
         if exclude and p in exclude:
             continue
@@ -313,11 +171,9 @@ def get_available_port(
 def find_debug_chromes(
     port_range: tuple[int, int] = DEFAULT_PORT_RANGE,
 ) -> list[tuple[int, int]]:
-    """
-    Find all Chrome instances with --remote-debugging-port.
+    """Find all Chrome instances with --remote-debugging-port.
 
-    Uses process enumeration instead of port scanning — immune to Hyper-V
-    reserved ports on Windows (which make port scanning 20s+ slow).
+    Uses process enumeration instead of port scanning.
 
     Args:
         port_range: Tuple of (start_port, end_port) to filter results
@@ -347,16 +203,7 @@ def _cleanup_temp_profile(
     port: int,
     profile_prefix: str = DEFAULT_PROFILE_PREFIX,
 ) -> bool:
-    """
-    Clean up temp profile directory for a port if it exists.
-
-    Args:
-        port: The port number (used to construct temp dir name)
-        profile_prefix: Profile directory prefix
-
-    Returns:
-        True if profile was cleaned up, False otherwise
-    """
+    """Clean up temp profile directory for a port if it exists."""
     temp_dir = Path(tempfile.gettempdir()) / f"{profile_prefix}{port}"
     if temp_dir.exists():
         try:

@@ -17,7 +17,6 @@ INTERNAL = {
     "find_chrome",
     "launch_chrome",
     "is_port_in_use",
-    "is_chrome_in_use",
     "find_debug_chromes",
     "get_available_port",
     "get_pid_on_port",

@@ -310,33 +310,11 @@ async def connect_browser(
     """
     try:
         browser = await BrowserClient.connect(host=host, port=port)
-        await _attach_to_page_targets(browser)
         return browser
     except Exception as e:
         raise ConnectionError(
             f"Failed to connect to Chrome on {host}:{port}: {e}"
         ) from e
-
-
-async def _attach_to_page_targets(browser: BrowserClient) -> None:
-    """Explicitly attach to page targets so Chrome tracks our connection.
-
-    This makes is_chrome_in_use() work reliably: attached=True while
-    connected, attached=False when our process exits (WebSocket closes).
-    """
-    for tab in browser.targets:
-        if getattr(tab._target, "type_", "") != "page":
-            continue
-        tid = tab._target.target_id
-        if not tid:
-            continue
-        try:
-            await browser.connection.send(
-                cdp_target.attach_to_target(tid, flatten=True), _is_update=True
-            )
-            logger.debug("Attached to page target %s", tid)
-        except Exception as e:
-            logger.debug("Could not attach to target %s: %s", tid, e)
 
 
 async def get_active_tab(browser: BrowserClient) -> Tab:

@@ -91,7 +91,6 @@ from .page import page_html, page_info, js_evaluate, page_screenshot
 from .port import (
     find_debug_chromes,
     get_available_port,
-    is_chrome_in_use,
     is_port_in_use,
 )
 
@@ -150,7 +149,6 @@ __all__ = [
     "cdp_send",
     # Port
     "is_port_in_use",
-    "is_chrome_in_use",
     "find_debug_chromes",
     "get_available_port",
     # Process

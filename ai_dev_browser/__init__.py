@@ -25,7 +25,6 @@ from .core import (
     # Process management
     get_pid_on_port,
     get_process_cmdline,
-    is_chrome_in_use,
     # Port management
     is_port_in_use,
     launch_chrome,
@@ -71,7 +70,6 @@ __all__ = [
     "launch_chrome",
     # Port
     "is_port_in_use",
-    "is_chrome_in_use",
     "find_debug_chromes",
     "get_available_port",
     # Process
