@@ -11,6 +11,7 @@ Example:
 """
 
 import logging
+import os
 import shutil
 import socket
 import tempfile
@@ -132,8 +133,7 @@ def get_available_port(
         start: Start of port range
         end: End of port range
         exclude: Ports to skip
-        reuse: If True, prefer reusing existing Chrome instances.
-               TODO: will be filtered by workspace once ownership is implemented.
+        reuse: If True, prefer reusing existing Chrome instances in the current workspace.
 
     Returns:
         An available port number
@@ -148,13 +148,11 @@ def get_available_port(
     port_range = (start, end)
 
     if reuse:
-        # TODO: filter by workspace (pwd) once ownership is implemented
         exclude = exclude or set()
-        for chrome_port, _pid in find_debug_chromes(port_range):
-            if chrome_port in exclude:
-                continue
-            # For now, reuse any debugging Chrome found
-            return chrome_port
+        # Prefer Chromes in the current workspace
+        for chrome_port, _pid in find_workspace_chromes(port_range=port_range):
+            if chrome_port not in exclude:
+                return chrome_port
 
     # Find unused port
     for p in range(port_range[0], port_range[1]):
@@ -170,7 +168,7 @@ def get_available_port(
 
 def find_debug_chromes(
     port_range: tuple[int, int] = DEFAULT_PORT_RANGE,
-) -> list[tuple[int, int]]:
+) -> list[tuple[int, int, str | None]]:
     """Find all Chrome instances with --remote-debugging-port.
 
     Uses process enumeration instead of port scanning.
@@ -179,7 +177,8 @@ def find_debug_chromes(
         port_range: Tuple of (start_port, end_port) to filter results
 
     Returns:
-        List of (port, pid) tuples for each found Chrome
+        List of (port, pid, workspace) tuples for each found Chrome.
+        workspace is the --ai-dev-browser-workspace value, or None if absent.
     """
     import re
 
@@ -194,9 +193,41 @@ def find_debug_chromes(
             continue
         port = int(match.group(1))
         if port_range[0] <= port < port_range[1]:
-            chromes.append((port, pid))
+            # Extract workspace tag.
+            # Value runs until next ` --` flag, a URL (about:, http:), or end of string.
+            ws_match = re.search(
+                r"--ai-dev-browser-workspace=(.+?)(?=\s+--|\s+[a-z]+:|$)", cmdline
+            )
+            workspace = (
+                ws_match.group(1).strip().strip('"').strip("'") if ws_match else None
+            )
+            chromes.append((port, pid, workspace))
 
     return chromes
+
+
+def find_workspace_chromes(
+    workspace: str | None = None,
+    port_range: tuple[int, int] = DEFAULT_PORT_RANGE,
+) -> list[tuple[int, int]]:
+    """Find debug Chromes belonging to the given workspace.
+
+    Args:
+        workspace: Working directory to match. Defaults to os.getcwd().
+        port_range: Tuple of (start_port, end_port) to filter results
+
+    Returns:
+        List of (port, pid) tuples for Chromes matching the workspace.
+    """
+    if workspace is None:
+        workspace = os.getcwd()
+    workspace = os.path.normcase(os.path.normpath(workspace))
+
+    results = []
+    for port, pid, ws in find_debug_chromes(port_range):
+        if ws is not None and os.path.normcase(os.path.normpath(ws)) == workspace:
+            results.append((port, pid))
+    return results
 
 
 def _cleanup_temp_profile(

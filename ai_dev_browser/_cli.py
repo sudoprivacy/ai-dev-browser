@@ -251,11 +251,12 @@ def as_cli(requires_tab: bool = True):
                             if env_port:
                                 port = int(env_port)
                             else:
-                                # Auto-detect: find a running Chrome
-                                # TODO: filter by workspace (pwd) once ownership is implemented
-                                from ai_dev_browser.core.port import find_debug_chromes
+                                # Auto-detect: find a running Chrome in this workspace
+                                from ai_dev_browser.core.port import (
+                                    find_workspace_chromes,
+                                )
 
-                                for candidate, _pid in find_debug_chromes():
+                                for candidate, _pid in find_workspace_chromes():
                                     port = candidate
                                     break
 

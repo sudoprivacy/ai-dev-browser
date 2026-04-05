@@ -14,6 +14,8 @@ import urllib.request
 from pathlib import Path
 
 from ai_dev_browser.cdp import (
+    browser as cdp_browser,
+    network as cdp_network,
     storage,
     target as cdp_target,
 )
@@ -54,7 +56,7 @@ class CookieJar:
         return await conn.send(storage.get_cookies(), _is_update=True)
 
     async def save(self, file: str = ".session.dat", pattern: str = ".*"):
-        """Save cookies to file (pickle format).
+        """Save cookies to file (JSON format).
 
         Args:
             file: Path to save cookies.
@@ -71,16 +73,16 @@ class CookieJar:
                 cookie.to_json() if hasattr(cookie, "to_json") else str(cookie)
             )
             if pat.search(str(cookie_dict)):
-                matched.append(cookie)
+                matched.append(cookie_dict)
 
         path = Path(file)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "wb") as fh:
-            pickle.dump(matched, fh)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(matched, fh, indent=2)
         logger.debug("Saved %d cookies to %s", len(matched), path)
 
     async def load(self, file: str = ".session.dat", pattern: str = ".*"):
-        """Load cookies from file.
+        """Load cookies from file (JSON format, with pickle fallback).
 
         Args:
             file: Path to cookie file.
@@ -91,12 +93,22 @@ class CookieJar:
             logger.debug("Cookie file not found: %s", path)
             return
 
+        # Try JSON first, fall back to pickle for old files
+        cookies = None
         try:
-            with open(path, "rb") as fh:
-                cookies = pickle.load(fh)
-        except Exception as e:
-            logger.warning("Failed to load cookies from %s: %s", path, e)
-            return
+            with open(path, "r", encoding="utf-8") as fh:
+                raw = json.load(fh)
+            # Convert JSON dicts back to Cookie objects
+            cookies = [cdp_network.Cookie.from_json(c) for c in raw]
+        except (json.JSONDecodeError, UnicodeDecodeError, KeyError):
+            # Fall back to legacy pickle format
+            try:
+                with open(path, "rb") as fh:
+                    cookies = pickle.load(fh)
+                logger.debug("Loaded legacy pickle cookies from %s", path)
+            except Exception as e:
+                logger.warning("Failed to load cookies from %s: %s", path, e)
+                return
 
         if not cookies:
             return
@@ -112,7 +124,7 @@ class CookieJar:
 
         if matched:
             conn = self._get_connection()
-            await conn.send(storage.set_cookies(matched), _is_update=True)
+            await conn.send(storage.set_cookies(matched), _is_update=True)  # type: ignore[arg-type]
             logger.debug("Loaded %d cookies from %s", len(matched), path)
 
     async def clear(self):
@@ -340,3 +352,52 @@ async def get_active_tab(browser: BrowserClient) -> Tab:
 
     # No tabs, create one
     return await browser.get("about:blank")
+
+
+async def graceful_close_browser(
+    host: str = DEFAULT_DEBUG_HOST,
+    port: int = DEFAULT_DEBUG_PORT,
+) -> bool:
+    """Send CDP Browser.close() to gracefully shut down Chrome.
+
+    This flushes cookies and other profile data to disk before exiting.
+    Creates a temporary connection just for the close command.
+
+    Args:
+        host: Chrome debugging host
+        port: Chrome debugging port
+
+    Returns:
+        True if close command was sent successfully, False on error.
+    """
+    try:
+        # Get WebSocket URL
+        url = f"http://{host}:{port}/json/version"
+        loop = asyncio.get_running_loop()
+        resp = await loop.run_in_executor(None, urllib.request.urlopen, url)
+        info = json.loads(resp.read())
+        ws_url = info["webSocketDebuggerUrl"]
+
+        # Connect and send Browser.close
+        conn = CDPConnection(ws_url)
+        await conn.connect()
+        try:
+            await conn.send(cdp_browser.close(), _is_update=True)
+        except Exception:
+            # Connection may close before we get a response — that's expected
+            pass
+        finally:
+            if not conn.closed:
+                await conn.disconnect()
+
+        # Remove cached BrowserClient for this port
+        key = (host, port)
+        existing = BrowserClient._instances.pop(key, None)
+        if existing:
+            existing.connection = None  # Already closed
+            existing.targets.clear()
+
+        return True
+    except Exception as e:
+        logger.debug("graceful_close_browser failed for %s:%d: %s", host, port, e)
+        return False

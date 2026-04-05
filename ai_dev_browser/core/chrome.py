@@ -11,6 +11,7 @@ Example:
 """
 
 import logging
+import os
 import platform
 import shutil
 import subprocess
@@ -202,6 +203,11 @@ def launch_chrome(
         "--metrics-recording-only",
         "--safebrowsing-disable-auto-update",
     ]
+
+    # Workspace tag: identifies which working directory owns this Chrome.
+    # Placed before other --flags so the regex in port.py can reliably
+    # terminate at the next ` --` boundary.
+    args.append(f"--ai-dev-browser-workspace={os.getcwd()}")
 
     # Session restore behavior (default: suppress for clean automation state)
     if disable_session_crashed_bubble:

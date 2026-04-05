@@ -21,6 +21,7 @@ from .core import (
     # Chrome detection and launching
     find_chrome,
     find_debug_chromes,
+    find_workspace_chromes,
     get_available_port,
     # Process management
     get_pid_on_port,
@@ -71,6 +72,7 @@ __all__ = [
     # Port
     "is_port_in_use",
     "find_debug_chromes",
+    "find_workspace_chromes",
     "get_available_port",
     # Process
     "get_pid_on_port",

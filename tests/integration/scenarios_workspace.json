@@ -1,0 +1,719 @@
+{
+  "config": {
+    "imports": [
+      "import time",
+      "",
+      "from ai_dev_browser.core.browser import browser_list, browser_start, browser_stop",
+      "from ai_dev_browser.core.config import get_workspace_slug, get_workspace_profile_dir",
+      "from ai_dev_browser.core.connection import BrowserClient, connect_browser, get_active_tab",
+      "from ai_dev_browser.core.page import page_screenshot",
+      "from ai_dev_browser.core.port import find_debug_chromes, find_workspace_chromes, is_port_in_use",
+      "from ai_dev_browser.core.process import get_process_cmdline"
+    ],
+    "call_style": "function",
+    "extract_style": "dict",
+    "required_env_vars": [],
+    "smoke_test_assertions": [
+      "browser_start is not None",
+      "browser_stop is not None",
+      "browser_list is not None",
+      "connect_browser is not None",
+      "get_active_tab is not None",
+      "find_debug_chromes is not None",
+      "find_workspace_chromes is not None",
+      "get_workspace_slug is not None",
+      "get_workspace_profile_dir is not None"
+    ],
+    "fixtures": [
+      {
+        "name": "cleanup_test_chromes",
+        "doc": "Track and cleanup Chromes started during each test",
+        "scope": "each",
+        "body": "existing = {p for p, _pid, _ws in find_debug_chromes()}\nyield\nfor port, _pid, _ws in find_debug_chromes():\n    if port not in existing:\n        browser_stop(port=port)\nfor _ in range(20):\n    current = {p for p, _, _ws in find_debug_chromes()}\n    if current <= existing:\n        break\n    time.sleep(0.3)"
+      }
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "workspace_tag_in_chrome_cmdline",
+      "title": "Verify workspace tag appears in Chrome's command line",
+      "workflow": "Start Chrome → Read cmdline → Verify workspace tag matches cwd",
+      "user_problem": "When multiple AI agents run on the same machine, each Chrome must be tagged with the owning workspace so they don't steal each other's instances",
+      "fixtures": ["cleanup_test_chromes"],
+      "steps": [
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-ws-tag"},
+          "var_name": "result",
+          "assertions": [
+            "'error' not in result",
+            "result['reused'] is False"
+          ],
+          "extract": "pid",
+          "extract_var": "pid"
+        },
+        {
+          "function": "get_process_cmdline",
+          "params": {"pid": {"var": "pid"}},
+          "var_name": "cmdline",
+          "assertions": [
+            "cmdline is not None",
+            "'--ai-dev-browser-workspace=' in cmdline",
+            "os.path.normcase(os.getcwd()) in os.path.normcase(cmdline)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "workspace_slug_deterministic_and_unique",
+      "title": "Workspace slug is deterministic and different paths produce different slugs",
+      "workflow": "Generate slug for cwd → Generate slug for different path → Verify they differ but cwd slug is stable",
+      "user_problem": "Profile directories must be deterministic (same path always maps to same profile) and collision-free (different paths get different profiles)",
+      "steps": [
+        {
+          "function": "get_workspace_slug",
+          "params": {},
+          "var_name": "slug1",
+          "assertions": [
+            "isinstance(slug1, str)",
+            "len(slug1) > 0",
+            "len(slug1) <= 67"
+          ]
+        },
+        {
+          "function": "get_workspace_slug",
+          "params": {},
+          "var_name": "slug2",
+          "assertions": [
+            "slug2 == slug1"
+          ]
+        },
+        {
+          "function": "get_workspace_slug",
+          "params": {"workspace": "/some/other/path"},
+          "var_name": "slug_other",
+          "assertions": [
+            "slug_other != slug1"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "workspace_profile_dir_isolation",
+      "title": "Different workspaces get different profile directories",
+      "workflow": "Get profile dir for workspace A → Get profile dir for workspace B → Verify they differ",
+      "user_problem": "Each AI agent workspace must have isolated Chrome profiles so login state doesn't leak between projects",
+      "steps": [
+        {
+          "function": "get_workspace_profile_dir",
+          "params": {"profile_name": "default"},
+          "var_name": "dir_a",
+          "assertions": [
+            "isinstance(dir_a, Path)",
+            "'profiles' in str(dir_a)",
+            "'default' in str(dir_a)"
+          ]
+        },
+        {
+          "function": "get_workspace_profile_dir",
+          "params": {"profile_name": "default", "workspace": "/other/project"},
+          "var_name": "dir_b",
+          "assertions": [
+            "dir_a != dir_b",
+            "'default' in str(dir_b)"
+          ]
+        },
+        {
+          "function": "get_workspace_profile_dir",
+          "params": {"profile_name": "custom", "workspace": "/other/project"},
+          "var_name": "dir_c",
+          "assertions": [
+            "dir_c != dir_b",
+            "'custom' in str(dir_c)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "workspace_chrome_filtering",
+      "title": "find_workspace_chromes only returns Chromes from current workspace",
+      "workflow": "Start Chrome → Verify find_workspace_chromes finds it → Verify find_debug_chromes shows workspace",
+      "user_problem": "Auto-detection must only return Chromes belonging to the current workspace, not Chromes from other agents",
+      "fixtures": ["cleanup_test_chromes"],
+      "steps": [
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-ws-filter"},
+          "var_name": "result",
+          "assertions": [
+            "'error' not in result",
+            "result['reused'] is False"
+          ],
+          "extract": "port",
+          "extract_var": "started_port"
+        },
+        {
+          "function": "find_workspace_chromes",
+          "params": {},
+          "var_name": "ws_chromes",
+          "assertions": [
+            "len(ws_chromes) >= 1",
+            "any(p == started_port for p, _pid in ws_chromes)"
+          ]
+        },
+        {
+          "function": "find_debug_chromes",
+          "params": {},
+          "var_name": "all_chromes",
+          "assertions": [
+            "len(all_chromes) >= 1",
+            "any(p == started_port and ws is not None for p, _pid, ws in all_chromes)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "browser_list_workspace_filtering",
+      "title": "browser_list defaults to current workspace, all_workspaces shows all",
+      "workflow": "Start Chrome → List (default) → Verify visible → List (all_workspaces) → Verify workspace field",
+      "user_problem": "AI agent should see only its own browsers by default, but can see all with explicit flag",
+      "fixtures": ["cleanup_test_chromes"],
+      "steps": [
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-ws-list"},
+          "var_name": "result",
+          "assertions": [
+            "'error' not in result"
+          ],
+          "extract": "port",
+          "extract_var": "started_port"
+        },
+        {
+          "function": "browser_list",
+          "params": {},
+          "var_name": "filtered_list",
+          "assertions": [
+            "filtered_list['count'] >= 1",
+            "any(b['port'] == started_port for b in filtered_list['browsers'])"
+          ]
+        },
+        {
+          "function": "browser_list",
+          "params": {"all_workspaces": true},
+          "var_name": "full_list",
+          "assertions": [
+            "full_list['count'] >= 1",
+            "any(b['port'] == started_port for b in full_list['browsers'])"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "graceful_shutdown_preserves_method",
+      "title": "browser_stop uses graceful CDP shutdown and reports method",
+      "workflow": "Start Chrome → Stop gracefully → Verify method=graceful and port freed",
+      "user_problem": "Graceful shutdown via CDP Browser.close() flushes cookies to profile SQLite; force-kill loses them",
+      "fixtures": ["cleanup_test_chromes"],
+      "steps": [
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-graceful"},
+          "var_name": "start_result",
+          "assertions": [
+            "'error' not in start_result",
+            "start_result['reused'] is False"
+          ],
+          "extract": "port",
+          "extract_var": "port"
+        },
+        {
+          "function": "browser_stop",
+          "params": {"port": {"var": "port"}},
+          "var_name": "stop_result",
+          "assertions": [
+            "stop_result['stopped'] is True",
+            "stop_result['count'] == 1",
+            "stop_result['browsers'][0]['method'] in ('graceful', 'force')"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "graceful_stop_all_workspaces",
+      "title": "browser_stop(stop_all=True) stops all Chromes gracefully",
+      "workflow": "Start two Chromes → Stop all → Verify both stopped → Verify ports freed",
+      "user_problem": "AI agent needs to clean up all Chrome instances at end of session",
+      "fixtures": ["cleanup_test_chromes"],
+      "steps": [
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-stopall-1", "reuse": "none"},
+          "var_name": "result1",
+          "assertions": [
+            "'error' not in result1",
+            "result1['reused'] is False"
+          ],
+          "extract": "port",
+          "extract_var": "port1"
+        },
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-stopall-2", "reuse": "none"},
+          "var_name": "result2",
+          "assertions": [
+            "'error' not in result2",
+            "result2['reused'] is False",
+            "result2['port'] != port1"
+          ]
+        },
+        {
+          "function": "browser_stop",
+          "params": {"stop_all": true},
+          "var_name": "stop_result",
+          "assertions": [
+            "stop_result['stopped'] is True",
+            "stop_result['count'] >= 2"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "workspace_reuse_only_own_chrome",
+      "title": "browser_start reuse only finds Chromes in current workspace",
+      "workflow": "Start Chrome → Verify reuse finds it → Stop → Start again → Verify new Chrome created",
+      "user_problem": "Reuse strategy must not accidentally attach to another agent's Chrome",
+      "fixtures": ["cleanup_test_chromes"],
+      "steps": [
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-reuse-ws"},
+          "var_name": "result1",
+          "assertions": [
+            "'error' not in result1",
+            "result1['reused'] is False"
+          ],
+          "extract": "port",
+          "extract_var": "first_port"
+        },
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-reuse-ws"},
+          "var_name": "result2",
+          "assertions": [
+            "'error' not in result2",
+            "result2['reused'] is True",
+            "result2['port'] == first_port"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "reuse_across_profiles_in_same_workspace",
+      "title": "Default reuse finds idle Chrome even with different profile name",
+      "workflow": "Start Chrome (profile A) → Start Chrome (profile B, reuse=any) → Verify reused same port",
+      "user_problem": "Within the same workspace, default reuse strategy should find any idle Chrome before creating a new one",
+      "fixtures": ["cleanup_test_chromes"],
+      "steps": [
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-profA"},
+          "var_name": "result1",
+          "assertions": [
+            "'error' not in result1",
+            "result1['reused'] is False"
+          ],
+          "extract": "port",
+          "extract_var": "port1"
+        },
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-profB"},
+          "var_name": "result2",
+          "assertions": [
+            "'error' not in result2",
+            "result2['reused'] is True",
+            "result2['port'] == port1"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "reuse_none_same_profile_still_detects",
+      "title": "reuse='none' skips reuse scan but profile check catches existing Chrome",
+      "workflow": "Start Chrome → Start again with reuse=none + same profile → Verify still reused via profile detection",
+      "user_problem": "Even when reuse scanning is disabled, starting Chrome with an already-active profile must reuse it to avoid Chrome conflicts",
+      "fixtures": ["cleanup_test_chromes"],
+      "steps": [
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-force"},
+          "var_name": "result1",
+          "assertions": [
+            "'error' not in result1"
+          ],
+          "extract": "port",
+          "extract_var": "port1"
+        },
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-force", "reuse": "none"},
+          "var_name": "result2",
+          "assertions": [
+            "'error' not in result2",
+            "result2['reused'] is True",
+            "result2['port'] == port1"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "reuse_none_different_profile_new_chrome",
+      "title": "reuse='none' + different profile = truly new Chrome",
+      "workflow": "Start Chrome (profile A, reuse=none) → Start Chrome (profile B, reuse=none) → Verify different ports",
+      "user_problem": "With reuse disabled and different profiles, each gets its own Chrome instance",
+      "fixtures": ["cleanup_test_chromes"],
+      "steps": [
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-newA", "reuse": "none"},
+          "var_name": "result1",
+          "assertions": [
+            "'error' not in result1",
+            "result1['reused'] is False"
+          ],
+          "extract": "port",
+          "extract_var": "port1"
+        },
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-newB", "reuse": "none"},
+          "var_name": "result2",
+          "assertions": [
+            "'error' not in result2",
+            "result2['reused'] is False",
+            "result2['port'] != port1"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "stop_frees_port",
+      "title": "Stopping a browser frees its debug port",
+      "workflow": "Start Chrome → Verify port in use → Stop → Verify port freed",
+      "user_problem": "Ports must be released after stop so they can be reused by future Chrome instances",
+      "fixtures": ["cleanup_test_chromes"],
+      "steps": [
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-stop-port"},
+          "var_name": "result",
+          "assertions": [
+            "'error' not in result"
+          ],
+          "extract": "port",
+          "extract_var": "port"
+        },
+        {
+          "function": "is_port_in_use",
+          "params": {"port": {"var": "port"}},
+          "var_name": "in_use_before",
+          "assertions": [
+            "in_use_before is True"
+          ]
+        },
+        {
+          "function": "browser_stop",
+          "params": {"port": {"var": "port"}},
+          "var_name": "stop_result",
+          "assertions": [
+            "stop_result['stopped'] is True"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "restart_after_stop",
+      "title": "Can restart Chrome with same profile after stopping",
+      "workflow": "Start Chrome → Stop → Start again → Verify fresh (not reused)",
+      "user_problem": "After stopping a browser, starting again with the same profile should launch a new instance",
+      "fixtures": ["cleanup_test_chromes"],
+      "steps": [
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-restart"},
+          "var_name": "result1",
+          "assertions": [
+            "'error' not in result1"
+          ],
+          "extract": "port",
+          "extract_var": "port1"
+        },
+        {
+          "function": "browser_stop",
+          "params": {"port": {"var": "port1"}},
+          "var_name": "stop_result",
+          "pre_code": ["time.sleep(3)"],
+          "assertions": [
+            "stop_result['stopped'] is True"
+          ]
+        },
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-restart"},
+          "var_name": "result2",
+          "pre_code": ["time.sleep(3)"],
+          "assertions": [
+            "'error' not in result2",
+            "result2['reused'] is False"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "list_shows_port_and_pid",
+      "title": "browser_list includes port and pid for each browser",
+      "workflow": "Start Chrome → List → Verify port and pid present",
+      "user_problem": "Listing must show identifying info (port, pid) for each browser instance",
+      "fixtures": ["cleanup_test_chromes"],
+      "steps": [
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-list-info"},
+          "var_name": "result",
+          "assertions": [
+            "'error' not in result"
+          ],
+          "extract": "port",
+          "extract_var": "port"
+        },
+        {
+          "function": "browser_list",
+          "params": {},
+          "var_name": "listing",
+          "assertions": [
+            "any(b['port'] == port and 'pid' in b for b in listing['browsers'])"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "connection_reuse_same_port",
+      "title": "Multiple connect_browser() calls reuse the same BrowserClient",
+      "workflow": "Start Chrome → Connect twice → Verify same instance → Execute JS",
+      "user_problem": "Without connection reuse, multiple connect_browser() calls leak WebSockets and exhaust Chrome's CDP slots",
+      "async": true,
+      "fixtures": ["cleanup_test_chromes"],
+      "steps": [
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-conn-reuse"},
+          "var_name": "result",
+          "await": false,
+          "assertions": ["'error' not in result"],
+          "extract": "port",
+          "extract_var": "port"
+        },
+        {
+          "function": "connect_browser",
+          "params": {"port": {"var": "port"}},
+          "var_name": "b1"
+        },
+        {
+          "function": "connect_browser",
+          "params": {"port": {"var": "port"}},
+          "var_name": "b2",
+          "assertions": ["b1 is b2"]
+        },
+        {
+          "function": "get_active_tab",
+          "params": {"browser": {"var": "b2"}},
+          "var_name": "tab"
+        },
+        {
+          "function": "tab.evaluate",
+          "params": {"expression": "1 + 1"},
+          "var_name": "r",
+          "assertions": ["r == 2"],
+          "description": "Execute JS to verify connection works"
+        }
+      ]
+    },
+    {
+      "name": "close_then_reconnect_fresh_instance",
+      "title": "After close(), reconnecting creates a fresh BrowserClient",
+      "workflow": "Start Chrome → Connect → Close → Reconnect → Verify different instance → JS works",
+      "user_problem": "After explicitly closing a connection, the next connect must create a fresh instance rather than returning a dead cached one",
+      "async": true,
+      "fixtures": ["cleanup_test_chromes"],
+      "steps": [
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-close-recon"},
+          "var_name": "result",
+          "await": false,
+          "assertions": ["'error' not in result"],
+          "extract": "port",
+          "extract_var": "port"
+        },
+        {
+          "function": "connect_browser",
+          "params": {"port": {"var": "port"}},
+          "var_name": "b1"
+        },
+        {
+          "function": "b1.close",
+          "params": {},
+          "var_name": "_"
+        },
+        {
+          "function": "connect_browser",
+          "params": {"port": {"var": "port"}},
+          "var_name": "b2",
+          "assertions": ["b2 is not b1"]
+        },
+        {
+          "function": "get_active_tab",
+          "params": {"browser": {"var": "b2"}},
+          "var_name": "tab"
+        },
+        {
+          "function": "tab.evaluate",
+          "params": {"expression": "2 + 2"},
+          "var_name": "r",
+          "assertions": ["r == 4"]
+        }
+      ]
+    },
+    {
+      "name": "context_manager_clears_cache",
+      "title": "async with connect_browser() cleans up cache on exit",
+      "workflow": "Start Chrome → async with connect_browser → JS works → Exit → Cache cleared",
+      "user_problem": "Context manager must remove the cached BrowserClient so stale connections don't accumulate",
+      "async": true,
+      "fixtures": ["cleanup_test_chromes"],
+      "steps": [
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-ctx-mgr"},
+          "var_name": "result",
+          "await": false,
+          "assertions": ["'error' not in result"],
+          "extract": "port",
+          "extract_var": "port"
+        },
+        {
+          "description": "Use async context manager, verify JS works, then verify cache cleared on exit",
+          "raw_code": [
+            "async with await connect_browser(port=port) as browser:",
+            "    tab = await get_active_tab(browser)",
+            "    r = await tab.evaluate('3 + 3')",
+            "    assert r == 6",
+            "",
+            "# Cache should be cleared after context manager exit",
+            "key = (browser.host, port)",
+            "assert key not in BrowserClient._instances"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tab_reconnects_after_ws_disconnect",
+      "title": "Tab auto-reconnects when its WebSocket dies",
+      "workflow": "Start Chrome → Connect → JS works → Kill WS → JS works again (auto-reconnect)",
+      "user_problem": "WebSocket connections can drop (idle timeout, network hiccup); tab must transparently reconnect",
+      "async": true,
+      "fixtures": ["cleanup_test_chromes"],
+      "steps": [
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-tab-recon"},
+          "var_name": "result",
+          "await": false,
+          "assertions": ["'error' not in result"],
+          "extract": "port",
+          "extract_var": "port"
+        },
+        {
+          "function": "connect_browser",
+          "params": {"port": {"var": "port"}},
+          "var_name": "browser"
+        },
+        {
+          "function": "get_active_tab",
+          "params": {"browser": {"var": "browser"}},
+          "var_name": "tab"
+        },
+        {
+          "function": "tab.evaluate",
+          "params": {"expression": "10 + 20"},
+          "var_name": "r1",
+          "assertions": ["r1 == 30"],
+          "description": "Verify tab works before disconnect"
+        },
+        {
+          "description": "Simulate WebSocket dying and verify auto-reconnect",
+          "raw_code": [
+            "await tab._connection.disconnect()",
+            "assert tab._connection.closed",
+            "",
+            "# Next call should auto-reconnect and succeed",
+            "r2 = await tab.evaluate('30 + 40')",
+            "assert r2 == 70"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "screenshot_after_ws_reconnect",
+      "title": "Screenshot works after tab WebSocket reconnects",
+      "workflow": "Start Chrome → Screenshot → Kill WS → Screenshot again (Page.enable re-enabled)",
+      "user_problem": "Page.captureScreenshot requires Page.enable() which must be re-sent after WebSocket reconnection",
+      "async": true,
+      "fixtures": ["cleanup_test_chromes"],
+      "steps": [
+        {
+          "function": "browser_start",
+          "params": {"headless": true, "profile": "test-ss-recon"},
+          "var_name": "result",
+          "await": false,
+          "assertions": ["'error' not in result"],
+          "extract": "port",
+          "extract_var": "port"
+        },
+        {
+          "function": "connect_browser",
+          "params": {"port": {"var": "port"}},
+          "var_name": "browser"
+        },
+        {
+          "function": "get_active_tab",
+          "params": {"browser": {"var": "browser"}},
+          "var_name": "tab"
+        },
+        {
+          "function": "page_screenshot",
+          "params": {"tab": {"var": "tab"}, "path": "test_recon1.png"},
+          "var_name": "r1",
+          "assertions": ["r1['size'] > 0"],
+          "description": "Screenshot before disconnect"
+        },
+        {
+          "description": "Kill WS, screenshot again, cleanup files",
+          "raw_code": [
+            "await tab._connection.disconnect()",
+            "",
+            "# Screenshot after reconnect — Page domain must be re-enabled",
+            "r2 = await page_screenshot(tab=tab, path='test_recon2.png')",
+            "assert r2['size'] > 0",
+            "",
+            "# Cleanup",
+            "import os as _os",
+            "_os.unlink('test_recon1.png')",
+            "_os.unlink('test_recon2.png')"
+          ]
+        }
+      ]
+    }
+  ]
+}

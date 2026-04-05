@@ -1,14 +1,21 @@
 """Browser lifecycle management operations."""
 
+import asyncio
 import os
 import time
 from pathlib import Path
 
 from .chrome import launch_chrome
-from .config import DEFAULT_PROFILE_DIR, DEFAULT_REUSE_STRATEGY, ReuseStrategy
+from .config import (
+    DEFAULT_REUSE_STRATEGY,
+    ReuseStrategy,
+    get_workspace_profile_dir,
+)
+from .connection import graceful_close_browser
 from .port import (
     _cleanup_temp_profile,
     find_debug_chromes,
+    find_workspace_chromes,
     get_available_port,
     get_pid_on_port,
     is_port_in_use,
@@ -26,7 +33,7 @@ def _find_chrome_using_profile(profile_dir: Path) -> tuple[int, int] | None:
     """
     profile_str = str(profile_dir)
 
-    for port, pid in find_debug_chromes():
+    for port, pid, _ws in find_debug_chromes():
         try:
             cmdline = get_process_cmdline(pid)
             if cmdline and profile_str in cmdline:
@@ -38,15 +45,13 @@ def _find_chrome_using_profile(profile_dir: Path) -> tuple[int, int] | None:
 
 
 def _find_reusable_chrome() -> int | None:
-    """Find a debugging Chrome to reuse.
-
-    TODO: Filter by workspace (pwd) once ownership is implemented.
+    """Find a debugging Chrome in the current workspace to reuse.
 
     Returns:
         Port number if found, None otherwise
     """
-    for port, _pid in find_debug_chromes():
-        return port  # Return first found Chrome
+    for port, _pid in find_workspace_chromes():
+        return port
     return None
 
 
@@ -102,7 +107,7 @@ def browser_start(
         profile_name = "(temp)"
     else:
         profile_name = profile or "default"
-        user_data_dir = Path(DEFAULT_PROFILE_DIR) / profile_name
+        user_data_dir = get_workspace_profile_dir(profile_name)
         user_data_dir.mkdir(parents=True, exist_ok=True)
 
         # Always check for existing Chrome using this profile
@@ -200,11 +205,58 @@ def _find_zombie_chromes(
     return zombies
 
 
+def _graceful_stop(port: int, pid: int, timeout: float = 5.0) -> dict:
+    """Gracefully stop a Chrome instance via CDP Browser.close().
+
+    Sends Browser.close() which flushes cookies/profile data, then waits
+    for the process to exit. Falls back to force-kill if graceful fails.
+
+    Returns:
+        dict with port, pid, and method used ("graceful" or "force").
+    """
+    # Try graceful shutdown via CDP
+    try:
+        sent = asyncio.run(graceful_close_browser(port=port))
+    except RuntimeError:
+        # Already inside a running event loop — use a thread with its own loop
+        import concurrent.futures
+
+        def _run_close():
+            return asyncio.run(graceful_close_browser(port=port))
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                sent = pool.submit(_run_close).result(timeout=timeout)
+        except Exception:
+            sent = False
+    except Exception:
+        sent = False
+
+    if sent:
+        # Wait for process to exit
+        elapsed = 0.0
+        poll_interval = 0.2
+        while elapsed < timeout:
+            if not is_port_in_use(port=port):
+                _cleanup_temp_profile(port)
+                return {"port": port, "pid": pid, "method": "graceful"}
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+
+    # Graceful failed or timed out — force kill
+    _kill_process_tree(pid)
+    _cleanup_temp_profile(port)
+    return {"port": port, "pid": pid, "method": "force"}
+
+
 def browser_stop(
     port: int | None = None,
     stop_all: bool = False,
 ) -> dict:
     """Stop browser instance(s).
+
+    Uses CDP Browser.close() for graceful shutdown (flushes cookies to
+    profile SQLite). Falls back to force-kill if graceful fails.
 
     Args:
         port: Port of browser to stop
@@ -220,13 +272,11 @@ def browser_stop(
 
     if stop_all:
         known_pids = set()
-        # Kill all debugging Chromes found via port scanning
-        for p, pid in find_debug_chromes():
+        for p, pid, _ws in find_debug_chromes():
             try:
                 known_pids.add(pid)
-                _kill_process_tree(pid)
-                _cleanup_temp_profile(p)
-                stopped.append({"port": p, "pid": pid})
+                result = _graceful_stop(p, pid)
+                stopped.append(result)
             except Exception:
                 pass
 
@@ -237,8 +287,8 @@ def browser_stop(
     else:
         pid = get_pid_on_port(port)
         if pid:
-            _kill_process_tree(pid)
-            stopped.append({"port": port, "pid": pid})
+            result = _graceful_stop(port, pid)
+            stopped.append(result)
 
     return {
         "stopped": True,
@@ -247,14 +297,17 @@ def browser_stop(
     }
 
 
-def browser_list() -> dict:
-    """List all debugging Chrome instances.
+def browser_list(all_workspaces: bool = False) -> dict:
+    """List debugging Chrome instances.
+
+    By default, shows only Chromes belonging to the current workspace.
+    Use all_workspaces=True to see all debugging Chromes.
 
     Combines port-based discovery (working Chromes) with process-based
     discovery (zombie Chromes that failed to bind their debug port).
 
-    Any Chrome with --remote-debugging-port is a debugging Chrome created
-    by automation — regular user Chromes never have this flag.
+    Args:
+        all_workspaces: Show Chromes from all workspaces (default: current only)
 
     Returns:
         dict with browsers list and count
@@ -262,18 +315,24 @@ def browser_list() -> dict:
     browsers = []
     known_pids = set()
 
-    # Port-based discovery (Chromes listening on debug ports)
-    # TODO: filter by workspace (pwd) once ownership is implemented
-    for p, pid in find_debug_chromes():
-        known_pids.add(pid)
-        browsers.append(
-            {
-                "port": p,
-                "pid": pid,
-            }
-        )
+    if all_workspaces:
+        chrome_list = find_debug_chromes()
+    else:
+        chrome_list = [(p, pid, None) for p, pid in find_workspace_chromes()]
 
-    # Process-based discovery (zombie Chromes)
+    for entry in chrome_list:
+        p, pid = entry[0], entry[1]
+        workspace = entry[2] if len(entry) > 2 else None
+        known_pids.add(pid)
+        info: dict = {
+            "port": p,
+            "pid": pid,
+        }
+        if all_workspaces and workspace:
+            info["workspace"] = workspace
+        browsers.append(info)
+
+    # Process-based discovery (zombie Chromes) — always show these
     for zombie in _find_zombie_chromes(known_pids):
         browsers.append(
             {

@@ -48,10 +48,12 @@ from .config import (
     DEFAULT_PROFILE_PREFIX,
     DEFAULT_REUSE_STRATEGY,
     ReuseStrategy,
+    get_workspace_profile_dir,
+    get_workspace_slug,
 )
 
 # Connection
-from .connection import connect_browser, get_active_tab
+from .connection import connect_browser, get_active_tab, graceful_close_browser
 
 # Cookies
 from .cookies import cookies_list, cookies_load, cookies_save
@@ -90,6 +92,7 @@ from .page import page_html, page_info, js_evaluate, page_screenshot
 # Port management
 from .port import (
     find_debug_chromes,
+    find_workspace_chromes,
     get_available_port,
     is_port_in_use,
 )
@@ -140,6 +143,8 @@ __all__ = [
     "DEFAULT_PORT_RANGE",
     "DEFAULT_REUSE_STRATEGY",
     "ReuseStrategy",
+    "get_workspace_slug",
+    "get_workspace_profile_dir",
     # Chrome
     "find_chrome",
     "launch_chrome",
@@ -150,6 +155,7 @@ __all__ = [
     # Port
     "is_port_in_use",
     "find_debug_chromes",
+    "find_workspace_chromes",
     "get_available_port",
     # Process
     "get_pid_on_port",
@@ -157,6 +163,7 @@ __all__ = [
     # Connection
     "connect_browser",
     "get_active_tab",
+    "graceful_close_browser",
     # Navigation
     "page_goto",
     "page_reload",
