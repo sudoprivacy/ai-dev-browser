@@ -202,15 +202,19 @@ class Element:
             )
         )
 
-    async def mouse_click(self, button: str = "left"):
+    async def mouse_click(self, button: str = "left", modifiers: int = 0):
         """Click element via CDP mouse events (isTrusted=true).
 
         More reliable than click() for UI frameworks (React, etc.) that
         depend on real mouse events.
+
+        Args:
+            button: "left", "right", or "middle"
+            modifiers: Modifier keys bitmask (1=Alt, 2=Ctrl, 4=Meta, 8=Shift)
         """
         pos = await self.get_position()
         x, y = pos.center
-        await self._tab.mouse_click(x, y, button=button)
+        await self._tab.mouse_click(x, y, button=button, modifiers=modifiers)
 
     async def send_keys(self, text: str):
         """Send keystrokes to this element."""
@@ -262,6 +266,55 @@ class Element:
             dom.resolve_node(backend_node_id=self._node.backend_node_id)
         )
         return self
+
+    async def mouse_move(self):
+        """Move mouse to element center (hover)."""
+        pos = await self.get_position()
+        x, y = pos.center
+        await self._tab.mouse_move(x, y)
+
+    async def get_html(self) -> str:
+        """Get element's outerHTML."""
+        await self._resolve()
+        return await self._tab.send(
+            dom.get_outer_html(backend_node_id=self.backend_node_id)
+        )
+
+    async def select_option(self):
+        """Select this option element (for <select> dropdowns)."""
+        await self.apply(
+            "(el) => { el.selected = true; "
+            "el.dispatchEvent(new Event('change', {bubbles: true})); }"
+        )
+
+    async def send_file(self, *paths: str):
+        """Set file paths on a file input element."""
+        await self._tab.send(
+            dom.set_file_input_files(list(paths), backend_node_id=self.backend_node_id)
+        )
+
+    async def query_selector(self, selector: str):
+        """Find a child element by CSS selector."""
+        doc = self._tree or await self._tab.send(dom.get_document(-1, True))
+        node_id = await self._tab.send(dom.query_selector(self._node.node_id, selector))
+        if not node_id:
+            return None
+        node = filter_recurse(doc, lambda n: n.node_id == node_id)
+        return create(node, self._tab, doc) if node else None
+
+    async def query_selector_all(self, selector: str):
+        """Find all child elements by CSS selector."""
+        doc = self._tree or await self._tab.send(dom.get_document(-1, True))
+        node_ids = await self._tab.send(
+            dom.query_selector_all(self._node.node_id, selector)
+        )
+        if not node_ids:
+            return []
+        return [
+            create(node, self._tab, doc)
+            for nid in node_ids
+            if (node := filter_recurse(doc, lambda n: n.node_id == nid))
+        ]
 
     def __repr__(self):
         name = self.node_name

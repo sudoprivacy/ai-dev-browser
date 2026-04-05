@@ -66,6 +66,7 @@ async def mouse_click(
     y: float,
     screenshot: str | None = None,
     button: str = "left",
+    modifiers: int = 0,
     double: bool = False,
     human_like: bool = None,
 ) -> bool:
@@ -78,6 +79,7 @@ async def mouse_click(
         screenshot: Path to screenshot PNG. Coordinates are auto-scaled
                     from screenshot space to CSS viewport space.
         button: "left", "right", or "middle"
+        modifiers: Modifier keys bitmask (1=Alt, 2=Ctrl, 4=Meta, 8=Shift)
         double: If True, double click
         human_like: Use human-like timing (default: from config)
 
@@ -100,9 +102,9 @@ async def mouse_click(
             await human.mouse_click(tab, x, y, button=button)
     else:
         await tab.mouse_move(x, y, steps=1)
-        await tab.mouse_click(x, y, button=button)
+        await tab.mouse_click(x, y, button=button, modifiers=modifiers)
         if double:
-            await tab.mouse_click(x, y, button=button)
+            await tab.mouse_click(x, y, button=button, modifiers=modifiers)
         human.set_last_mouse_pos(tab, x, y)
     return True
 
