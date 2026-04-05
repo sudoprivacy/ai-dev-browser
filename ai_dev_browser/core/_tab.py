@@ -1,8 +1,4 @@
-"""Tab class — wraps a CDP WebSocket connection to a browser tab.
-
-Replaces nodriver.Tab with our own implementation. Provides all ~35 methods
-used by ai-dev-browser's core/ modules.
-"""
+"""Tab class — wraps a CDP WebSocket connection to a browser tab."""
 
 from __future__ import annotations
 
@@ -34,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class Tab:
-    """CDP tab connection — replacement for nodriver.Tab."""
+    """CDP tab connection."""
 
     def __init__(
         self,
@@ -760,7 +756,7 @@ class Tab:
                         f"Template image not found: {template_image}"
                     )
             else:
-                # Use built-in CF template from nodriver utils
+                # Use built-in CF template
                 from ai_dev_browser.core._cf_template import get_cf_template
 
                 template_path = tempfile.mktemp(suffix=".png")

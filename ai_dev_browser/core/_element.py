@@ -1,8 +1,4 @@
-"""Element class and DOM tree utilities.
-
-Replaces nodriver.Element with a minimal implementation that covers
-only the methods used by ai-dev-browser's core/ modules.
-"""
+"""Element class and DOM tree utilities."""
 
 from __future__ import annotations
 
@@ -18,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# DOM tree utilities (ported from nodriver/core/util.py)
+# DOM tree utilities
 # =============================================================================
 
 

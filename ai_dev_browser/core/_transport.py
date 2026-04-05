@@ -1,8 +1,4 @@
-"""Async WebSocket transport for Chrome DevTools Protocol.
-
-Replaces nodriver's Connection/Transaction classes with a simplified
-implementation that uses the same CDP generator protocol.
-"""
+"""Async WebSocket transport for Chrome DevTools Protocol."""
 
 from __future__ import annotations
 

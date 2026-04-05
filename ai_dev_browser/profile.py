@@ -6,8 +6,7 @@ Provides three profile modes for parallel browser scenarios:
 2. "per_worker" - Each worker has independent persistent cookies file
 3. "temp" - No cookie persistence (fresh state each run)
 
-This module uses nodriver's cookies.save()/load() API for reliable cookie
-persistence, instead of Chrome profile copying (which was unreliable).
+Uses cookies.save()/load() API for reliable cookie persistence.
 
 Example:
     from ai_dev_browser import BrowserPool
@@ -41,9 +40,8 @@ class ProfileManager:
     """
     Manages cookies files for BrowserPool workers.
 
-    Uses nodriver's cookies.save()/load() API for reliable persistence.
-    Chrome profiles are no longer copied - all workers use temporary profiles
-    and share authentication state via cookies files.
+    Manages cookie persistence for browser pool workers.
+    All workers use temporary profiles and share authentication state via cookies files.
 
     Three modes:
     - shared: All workers load from the same cookies.dat file
@@ -88,7 +86,9 @@ class ProfileManager:
         if self.mode == "shared":
             # All workers share the same cookies file
             if self.cookies_file.exists():
-                logger.debug(f"Worker {worker_id} using shared cookies: {self.cookies_file}")
+                logger.debug(
+                    f"Worker {worker_id} using shared cookies: {self.cookies_file}"
+                )
             else:
                 logger.warning(
                     f"Worker {worker_id}: shared cookies file not found at {self.cookies_file}. "
@@ -99,7 +99,9 @@ class ProfileManager:
         if self.mode == "per_worker":
             # Each worker has its own cookies file
             worker_cookies = self.cookies_dir / f"cookies_worker_{worker_id}.dat"
-            logger.debug(f"Worker {worker_id} using persistent cookies: {worker_cookies}")
+            logger.debug(
+                f"Worker {worker_id} using persistent cookies: {worker_cookies}"
+            )
             return worker_cookies
 
         return None

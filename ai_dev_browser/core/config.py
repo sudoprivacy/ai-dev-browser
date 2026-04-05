@@ -19,7 +19,7 @@ DEFAULT_COOKIES_FILE = DEFAULT_BASE_DIR / "cookies.dat"
 DEFAULT_COOKIES_DIR = DEFAULT_BASE_DIR / "cookies"
 
 # Temp profile prefix (used to identify our Chrome instances)
-DEFAULT_PROFILE_PREFIX = "nodriver_chrome_"
+DEFAULT_PROFILE_PREFIX = "ai_dev_browser_"
 
 # Screenshots (relative to cwd — follows the consuming project)
 DEFAULT_SCREENSHOT_DIR = Path("screenshots")

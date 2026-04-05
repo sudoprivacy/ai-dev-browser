@@ -35,7 +35,7 @@ class HumanConfig:
     """
 
     # Mouse movement (cost: +50ms, default OFF)
-    use_gaussian_path: bool = False  # Use nodriver's linear path by default
+    use_gaussian_path: bool = False  # Use linear path by default
     mouse_duration: float = 0.05  # Duration in seconds (when gaussian enabled)
     mouse_duration_variance: float = 0.2  # +/- variance ratio
     mouse_smoothness: float = 2.0  # Gaussian smoothing factor
@@ -361,7 +361,7 @@ async def mouse_move(
             if delay_per_point > 0:
                 await asyncio.sleep(delay_per_point)
     else:
-        # Use nodriver's built-in linear movement
+        # Use built-in linear movement
         await tab.mouse_move(x, y, steps=10)
 
     # Update last position

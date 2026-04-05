@@ -42,7 +42,7 @@ async def _dismiss_overlays(
     - Modal dialogs (Escape key closes them)
 
     Args:
-        tab: nodriver Tab object
+        tab: Tab instance
         extra_selectors: Additional CSS selectors for site-specific overlays
             (e.g., ['.mat-drawer-backdrop'] for Angular Material)
         press_escape: Press Escape key to close modal dialogs (default: True)

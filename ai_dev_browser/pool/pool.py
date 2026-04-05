@@ -101,7 +101,7 @@ class BrowserPool(Generic[ClientT]):
         - "temp": No cookie persistence. Fresh state each run.
 
     Cookie persistence:
-        Uses nodriver's browser.cookies.save()/load() API for reliable persistence.
+        Uses browser.cookies.save()/load() API for reliable persistence.
         Client classes must accept 'cookies_file' parameter and handle loading/saving.
 
     Args:
@@ -485,7 +485,9 @@ class BrowserPool(Generic[ClientT]):
             shared = _SharedTarget(target=min_success)
             for job_id in job_ids:
                 self._shared_targets[job_id] = shared
-            logger.info(f"[wait] Setup shared target: {min_success} across {len(job_ids)} jobs")
+            logger.info(
+                f"[wait] Setup shared target: {min_success} across {len(job_ids)} jobs"
+            )
 
         # Release held jobs
         async with self._held_jobs_lock:
@@ -504,7 +506,9 @@ class BrowserPool(Generic[ClientT]):
             while True:
                 queues_empty = self._job_queue.empty() and self._priority_queue.empty()
                 if not self._pending_jobs and queues_empty:
-                    all_idle = all(w.status == WorkerStatus.IDLE for w in self._workers.values())
+                    all_idle = all(
+                        w.status == WorkerStatus.IDLE for w in self._workers.values()
+                    )
                     if all_idle:
                         break
 
@@ -590,7 +594,9 @@ class BrowserPool(Generic[ClientT]):
         self._state.in_progress = in_progress
 
         save_state(self._state, self._state_file)
-        logger.debug(f"State saved: {len(self._results)} completed, {len(pending)} pending")
+        logger.debug(
+            f"State saved: {len(self._results)} completed, {len(pending)} pending"
+        )
 
     # =========================================================================
     # Properties
@@ -599,7 +605,11 @@ class BrowserPool(Generic[ClientT]):
     @property
     def pending_count(self) -> int:
         """Number of pending jobs."""
-        return len(self._pending_jobs) + self._job_queue.qsize() + self._priority_queue.qsize()
+        return (
+            len(self._pending_jobs)
+            + self._job_queue.qsize()
+            + self._priority_queue.qsize()
+        )
 
     @property
     def completed_count(self) -> int:
@@ -746,7 +756,9 @@ class BrowserPool(Generic[ClientT]):
             total = sum(shared_state.values())
             should_continue = total < target
             if not should_continue:
-                logger.info(f"[shared_target] Total {total} >= {target}, signaling stop")
+                logger.info(
+                    f"[shared_target] Total {total} >= {target}, signaling stop"
+                )
             return should_continue
 
         return callback
@@ -773,7 +785,9 @@ class BrowserPool(Generic[ClientT]):
         """Convert result to JSON-serializable format."""
         # Pydantic models
         if hasattr(result, "model_dump"):
-            return result.model_dump(mode="python", exclude_none=True, exclude_unset=False)
+            return result.model_dump(
+                mode="python", exclude_none=True, exclude_unset=False
+            )
 
         # List of results
         if isinstance(result, list):
@@ -839,7 +853,9 @@ class BrowserPool(Generic[ClientT]):
             # Wrap thumbnail_selector
             original_selector = kwargs.get("thumbnail_selector")
             if original_selector is not None:
-                kwargs["thumbnail_selector"] = self._wrap_selector(job.job_id, original_selector)
+                kwargs["thumbnail_selector"] = self._wrap_selector(
+                    job.job_id, original_selector
+                )
 
             # Call the method
             result = await method(*job.args, **kwargs)

@@ -96,7 +96,7 @@ Default: click offset randomization (free, always on). Everything else is opt-in
 - **CDP WebSocket transport** (`_transport.py`): direct Chrome DevTools Protocol, no browser automation framework dependency
 - **Auto-reconnect**: tab WebSocket reconnection with target re-discovery (handles Electron SPA navigation)
 - **Connection reuse**: same `host:port` shares one `BrowserClient` instance across calls
-- **CDP module**: vendored from [nodriver](https://github.com/ultrafunkamsterdam/nodriver) via git submodule (`scripts/sync_cdp.py` to update)
+- **CDP module**: generated from [Google's official CDP spec](https://github.com/ChromeDevTools/devtools-protocol) via [cdp-python](https://github.com/sudoprivacy/cdp-python)
 
 ## Environment Variables
 

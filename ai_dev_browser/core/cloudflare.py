@@ -1,6 +1,5 @@
-"""Cloudflare bypass wrapper.
+"""Cloudflare Turnstile bypass via OpenCV template matching.
 
-Wraps nodriver's native tab.verify_cf() for reliable Cloudflare Turnstile bypass.
 Requires: pip install opencv-python
 
 Usage:
@@ -15,16 +14,18 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def verify_cloudflare(tab, max_retries: int = 5, initial_wait: float = 2.0, **kwargs) -> dict:
+async def verify_cloudflare(
+    tab, max_retries: int = 5, initial_wait: float = 2.0, **kwargs
+) -> dict:
     """
-    Verify and bypass Cloudflare challenge using nodriver's native verify_cf.
+    Verify and bypass Cloudflare challenge using template matching.
 
-    This is a thin wrapper around tab.verify_cf() that provides a consistent API
-    and handles exceptions gracefully.
+    Uses tab.verify_cf() which takes a screenshot, finds the Turnstile
+    checkbox via OpenCV template matching, and clicks it.
 
     Args:
-        tab: nodriver Tab object
-        max_retries: Max retry attempts (we retry the verify_cf call)
+        tab: Tab instance
+        max_retries: Max retry attempts
         initial_wait: Seconds to wait before first attempt (for CF to load)
         **kwargs: Additional arguments (ignored for compatibility)
 
@@ -63,17 +64,14 @@ async def verify_cloudflare(tab, max_retries: int = 5, initial_wait: float = 2.0
                 }
             if attempt < max_retries - 1:
                 logger.debug(f"CF attempt {attempt + 1} failed: {e}, retrying...")
-                # Longer wait between retries to let CF reset
                 await asyncio.sleep(2)
             else:
-                logger.warning(f"Cloudflare verification failed after {max_retries} attempts: {e}")
+                logger.warning(
+                    f"Cloudflare verification failed after {max_retries} attempts: {e}"
+                )
 
     return {
         "verified": False,
         "attempts": max_retries,
         "error": f"Cloudflare verification failed after {max_retries} attempts",
     }
-
-
-# Backward compatibility alias
-CFVerify = None  # Deprecated, use verify_cloudflare() directly

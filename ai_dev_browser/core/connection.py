@@ -1,7 +1,6 @@
 """Browser connection utilities.
 
 Provides BrowserClient (CDP client), CookieJar, connect_browser, get_active_tab.
-Replaces the previous nodriver-based implementation.
 """
 
 from __future__ import annotations
@@ -33,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 class _NodriverUnpickler(pickle.Unpickler):
-    """Custom unpickler that redirects nodriver.cdp.* → ai_dev_browser.cdp.*"""
+    """Custom unpickler for backward-compatible cookie files."""
 
     def find_class(self, module: str, name: str):
         if module.startswith("nodriver.cdp."):
@@ -44,7 +43,7 @@ class _NodriverUnpickler(pickle.Unpickler):
 class CookieJar:
     """Cookie management via CDP storage commands.
 
-    Compatible with nodriver's pickle-based cookie files.
+    Pickle-based cookie persistence with backward-compatible deserialization.
     """
 
     def __init__(self, browser: BrowserClient):
@@ -137,7 +136,7 @@ class CookieJar:
 
 
 class BrowserClient:
-    """CDP browser client — replacement for nodriver.Browser.
+    """CDP browser client.
 
     Manages the browser-level WebSocket connection, target discovery,
     tab lifecycle, and cookies.

@@ -144,7 +144,7 @@ def launch_chrome(
         port: Remote debugging port (default: DEFAULT_DEBUG_PORT)
         headless: Run in headless mode (default: False)
         user_data_dir: Custom user data directory. If None, creates a temp directory.
-        profile_prefix: Prefix for temp profile directory name (default: "nodriver_chrome_")
+        profile_prefix: Prefix for temp profile directory name
         extra_args: Additional Chrome command-line arguments
         start_url: Initial URL to open (default: "about:blank" for clean state)
         disable_session_restore: Prevent Chrome from restoring previous tabs (default: True).
@@ -161,7 +161,7 @@ def launch_chrome(
 
     Example:
         process = launch_chrome()
-        # ... connect with nodriver ...
+        # ... connect via CDP ...
         process.terminate()
     """
     chrome_path = find_chrome()
