@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import typing
 
-from ai_dev_browser.cdp import dom, input_ as cdp_input, runtime
+from ai_dev_browser.cdp import dom, input_ as cdp_input, overlay, page, runtime
 
 if typing.TYPE_CHECKING:
     from ._tab import Tab
@@ -315,6 +315,65 @@ class Element:
             for nid in node_ids
             if (node := filter_recurse(doc, lambda n: n.node_id == nid))
         ]
+
+    async def mouse_drag(self, dest_x: float, dest_y: float, steps: int = 10):
+        """Drag from this element to destination coordinates.
+
+        Args:
+            dest_x: Destination X coordinate
+            dest_y: Destination Y coordinate
+            steps: Number of intermediate mouse move steps
+        """
+        pos = await self.get_position()
+        x, y = pos.center
+        await self._tab.mouse_drag((x, y), (dest_x, dest_y), steps=steps)
+
+    async def save_screenshot(self, filename: str, format: str = "png") -> str:
+        """Take a screenshot of just this element's region.
+
+        Args:
+            filename: Path to save screenshot
+            format: Image format ("png" or "jpeg")
+
+        Returns:
+            File path of saved screenshot
+        """
+        import base64
+        import pathlib
+
+        pos = await self.get_position()
+        clip = page.Viewport(
+            x=pos.left, y=pos.top, width=pos.width, height=pos.height, scale=1
+        )
+        format_ = "jpeg" if format.lower() in ("jpg", "jpeg") else "png"
+        data = await self._tab.send(page.capture_screenshot(format_=format_, clip=clip))
+        pathlib.Path(filename).write_bytes(base64.b64decode(data))
+        return filename
+
+    async def highlight_overlay(self, color_r=255, color_g=0, color_b=0, duration=2.0):
+        """Highlight this element with a colored overlay (for debugging).
+
+        Args:
+            color_r: Red component (0-255)
+            color_g: Green component (0-255)
+            color_b: Blue component (0-255)
+            duration: How long to show highlight in seconds
+        """
+        import asyncio
+
+        highlight_config = overlay.HighlightConfig(
+            content_color=dom.RGBA(r=color_r, g=color_g, b=color_b, a=0.3),
+            border_color=dom.RGBA(r=color_r, g=color_g, b=color_b, a=0.8),
+        )
+        await self._tab.send(
+            overlay.highlight_node(
+                highlight_config=highlight_config,
+                backend_node_id=self.backend_node_id,
+            )
+        )
+        if duration > 0:
+            await asyncio.sleep(duration)
+            await self._tab.send(overlay.hide_highlight())
 
     def __repr__(self):
         name = self.node_name
