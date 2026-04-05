@@ -244,13 +244,17 @@ class Element:
     async def mouse_click(self, button: str = "left", modifiers: int = 0):
         """Click element via CDP mouse events (isTrusted=true).
 
-        More reliable than click() for UI frameworks (React, etc.) that
-        depend on real mouse events.
+        Automatically scrolls element into view and gets fresh viewport
+        coordinates before clicking. More reliable than click() for UI
+        frameworks (React, etc.) that depend on real mouse events.
 
         Args:
             button: "left", "right", or "middle"
             modifiers: Modifier keys bitmask (1=Alt, 2=Ctrl, 4=Meta, 8=Shift)
         """
+        await self.scroll_into_view()
+        # Re-resolve to get fresh viewport coordinates after scroll
+        await self._resolve()
         pos = await self.get_position()
         x, y = pos.center
         await self._tab.mouse_click(x, y, button=button, modifiers=modifiers)
@@ -266,9 +270,12 @@ class Element:
         await self.apply('function (element) { element.value = "" }')
 
     async def get_position(self) -> Position:
-        """Get element position and dimensions."""
-        if not self.object_id:
-            await self._resolve()
+        """Get element position in viewport coordinates.
+
+        Always re-resolves the node to get fresh coordinates
+        (stale object_id returns stale quads after scroll).
+        """
+        await self._resolve()
         quads = await self._tab.send(
             dom.get_content_quads(object_id=self._remote_object.object_id)
         )
@@ -307,7 +314,9 @@ class Element:
         return self
 
     async def mouse_move(self):
-        """Move mouse to element center (hover)."""
+        """Move mouse to element center (hover). Scrolls into view first."""
+        await self.scroll_into_view()
+        await self._resolve()
         pos = await self.get_position()
         x, y = pos.center
         await self._tab.mouse_move(x, y)
@@ -356,13 +365,15 @@ class Element:
         ]
 
     async def mouse_drag(self, dest_x: float, dest_y: float, steps: int = 10):
-        """Drag from this element to destination coordinates.
+        """Drag from this element to destination. Scrolls into view first.
 
         Args:
             dest_x: Destination X coordinate
             dest_y: Destination Y coordinate
             steps: Number of intermediate mouse move steps
         """
+        await self.scroll_into_view()
+        await self._resolve()
         pos = await self.get_position()
         x, y = pos.center
         await self._tab.mouse_drag((x, y), (dest_x, dest_y), steps=steps)
