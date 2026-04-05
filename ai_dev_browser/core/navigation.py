@@ -7,10 +7,10 @@ import time
 from ._tab import Tab
 
 
-async def goto(
+async def page_goto(
     tab: Tab,
     url: str,
-    new_tab: bool = False,
+    tab_new: bool = False,
     wait: bool = True,
 ) -> dict:
     """Navigate to URL.
@@ -18,16 +18,16 @@ async def goto(
     Args:
         tab: Tab instance
         url: URL to navigate to
-        new_tab: If True, open in new tab
+        tab_new: If True, open in new tab
         wait: If True, wait for page load
 
     Returns:
         dict with url, title, success
     """
-    result_tab = await tab.get(url, new_tab=new_tab)
+    result_tab = await tab.get(url, tab_new=tab_new)
 
     if wait:
-        await wait_for_load(result_tab)
+        await page_wait(result_tab)
 
     try:
         title = await result_tab.evaluate("document.title")
@@ -53,7 +53,7 @@ async def _forward(tab: Tab) -> bool:
     return True
 
 
-async def reload(tab: Tab, ignore_cache: bool = True) -> bool:
+async def page_reload(tab: Tab, ignore_cache: bool = True) -> bool:
     """Reload the page.
 
     Args:
@@ -67,7 +67,7 @@ async def reload(tab: Tab, ignore_cache: bool = True) -> bool:
     return True
 
 
-async def wait_for_load(
+async def page_wait(
     tab: Tab,
     timeout: float = 30,
     idle_time: float = 0.5,
@@ -97,7 +97,7 @@ async def wait_for_load(
     return False
 
 
-async def wait_for_url(
+async def page_wait_url(
     tab: Tab,
     pattern: str | None = None,
     exact: str | None = None,
@@ -168,7 +168,7 @@ async def _wait_for_url_match(
     if not pattern and not exact:
         return {"error": "Must specify pattern or exact"}
 
-    result = await wait_for_url(tab, pattern=pattern, exact=exact, timeout=timeout)
+    result = await page_wait_url(tab, pattern=pattern, exact=exact, timeout=timeout)
 
     # Add timeout message if not matched
     if not result.get("matched"):
@@ -200,7 +200,7 @@ async def _wait_for_page(
 
     if idle:
         start = time.time()
-        ready = await wait_for_load(tab, timeout=timeout, idle_time=0.5)
+        ready = await page_wait(tab, timeout=timeout, idle_time=0.5)
         elapsed = time.time() - start
 
         if ready:
@@ -216,7 +216,7 @@ async def _wait_for_page(
         }
 
     # Default: quick wait for DOM ready (10s max)
-    ready = await wait_for_load(tab, timeout=10, idle_time=0)
+    ready = await page_wait(tab, timeout=10, idle_time=0)
     state = await tab.evaluate("document.readyState")
 
     return {

@@ -4,14 +4,14 @@ import contextlib
 
 import pytest
 from ai_dev_browser.core import human
-from ai_dev_browser.core.browser import start_browser, stop_browser
+from ai_dev_browser.core.browser import browser_start, browser_stop
 from ai_dev_browser.core.connection import connect_browser
 
 
 @pytest.fixture(scope="function")
 async def browser():
     """Start a headless Chrome for testing. Cleaned up after each test."""
-    result = start_browser(headless=True, temp=True)
+    result = browser_start(headless=True, temp=True)
     assert "error" not in result, f"Failed to start browser: {result}"
     port = result["port"]
     browser_client = await connect_browser(port=port)
@@ -19,7 +19,7 @@ async def browser():
     with contextlib.suppress(Exception):
         await browser_client.close()
     with contextlib.suppress(Exception):
-        stop_browser(port=port)
+        browser_stop(port=port)
 
 
 @pytest.fixture(autouse=True)

@@ -207,7 +207,7 @@ def is_chrome_in_use(port: int, timeout: float = 0.5) -> bool:
 
     Example:
         if is_chrome_in_use(9350):
-            print("Chrome on 9350 is busy, find another port")
+            print("Chrome on 9350 is busy, page_find another port")
     """
     try:
         # Get browser WebSocket URL
@@ -258,7 +258,7 @@ def get_available_port(
 
     Port selection strategy (when reuse=True):
     1. First, look for any idle debugging Chrome (not in use via CDP)
-    2. If none found, find an unused port for launching new Chrome
+    2. If none found, page_find an unused port for launching new Chrome
 
     When reuse=False, skips directly to finding an unused port.
 
@@ -267,7 +267,7 @@ def get_available_port(
         end: End of port range to search (default: from DEFAULT_PORT_RANGE)
         exclude: Set of ports to skip (e.g., already assigned to workers)
         reuse: If True (default), prefer reusing existing Chrome instances.
-               If False, only find unused ports for new Chrome.
+               If False, only page_find unused ports for new Chrome.
 
     Returns:
         An available port number

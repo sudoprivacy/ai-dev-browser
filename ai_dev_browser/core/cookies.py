@@ -7,7 +7,7 @@ from ._tab import Tab
 from . import DEFAULT_COOKIES_FILE
 
 
-async def load_cookies(
+async def cookies_load(
     tab: Tab,
     path: str | None = None,
 ) -> dict:
@@ -34,7 +34,7 @@ async def load_cookies(
     }
 
 
-async def save_cookies(
+async def cookies_save(
     tab: Tab,
     path: str | None = None,
     pattern: str | None = None,
@@ -65,7 +65,7 @@ async def save_cookies(
     }
 
 
-async def list_cookies(
+async def cookies_list(
     tab: Tab,
     domain: str | None = None,
 ) -> dict:

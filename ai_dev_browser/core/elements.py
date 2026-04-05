@@ -108,8 +108,8 @@ async def _click(
     Args:
         tab: Tab instance
         element: Element to click (if already found)
-        text: Text to find and click
-        selector: CSS selector to find and click
+        text: Text to page_find and click
+        selector: CSS selector to page_find and click
         timeout: Search timeout in seconds
         human_like: Use CDP events + offset (default True, recommended)
 
@@ -146,7 +146,7 @@ async def _type_text(
         tab: Tab instance
         text: Text to type
         element: Element to type into (if already found)
-        selector: CSS selector to find element
+        selector: CSS selector to page_find element
         clear: If True, clear existing content first
         timeout: Search timeout in seconds
         human_like: Add delays between keystrokes (default: from config)
@@ -176,7 +176,7 @@ async def _type_text(
     return True
 
 
-async def scroll(
+async def page_scroll(
     tab: Tab,
     direction: str = "down",
     amount: int = 25,
@@ -270,7 +270,7 @@ async def _focus_element(
 
     Args:
         tab: Tab instance
-        text: Text to find element by
+        text: Text to page_find element by
         selector: CSS selector
 
     Returns:
@@ -293,7 +293,7 @@ async def _get_element_text(
 
     Args:
         tab: Tab instance
-        text: Text to find element by
+        text: Text to page_find element by
         selector: CSS selector
 
     Returns:
@@ -320,7 +320,7 @@ async def _find_element_info(
         tab: Tab instance
         text: Text to search for
         selector: CSS selector
-        all_elements: If True, find all matching elements
+        all_elements: If True, page_find all matching elements
         timeout: Search timeout in seconds
 
     Returns:
@@ -349,7 +349,7 @@ async def _find_element_info(
         return {"found": False}
 
 
-async def wait_for_element_with_info(
+async def element_wait(
     tab: Tab,
     text: str | None = None,
     selector: str | None = None,
@@ -388,7 +388,7 @@ async def click_by_text(
 ) -> dict:
     """Click element by text content.
 
-    This is the primary way for AI to click elements. Use find() first to
+    This is the primary way for AI to click elements. Use page_find() first to
     see available elements, then click_by_text with the exact text.
 
     Args:
@@ -419,12 +419,12 @@ async def type_by_text(
 ) -> dict:
     """Type text into element located by its accessible name.
 
-    Use find() first to see element names (placeholder, label, etc.),
+    Use page_find() first to see element names (placeholder, label, etc.),
     then type_by_text with the name.
 
     Args:
         tab: Tab instance
-        name: Accessible name to find element (placeholder, label, etc.)
+        name: Accessible name to page_find element (placeholder, label, etc.)
         text: Text to type into the element
         clear: If True, clear existing content first
         timeout: Search timeout in seconds
@@ -471,7 +471,7 @@ async def _fuzzy_find(
 ) -> dict | None:
     """Find element by fuzzy text matching against accessibility tree.
 
-    Uses exact > contains > edit distance scoring to find the best
+    Uses exact > contains > edit distance scoring to page_find the best
     matching element. Works with aria-labels, button text, and other
     accessible names - stable identifiers ideal for scripting.
 

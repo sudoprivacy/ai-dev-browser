@@ -251,7 +251,7 @@ def as_cli(requires_tab: bool = True):
                             if env_port:
                                 port = int(env_port)
                             else:
-                                # Auto-detect: find a running ai-dev-browser Chrome
+                                # Auto-detect: page_find a running ai-dev-browser Chrome
                                 from ai_dev_browser.core.port import find_debug_chromes
                                 from ai_dev_browser.core.port import is_chrome_in_use
 
@@ -399,10 +399,10 @@ def wrap_core_sync(core_func: Callable, result_key: str = "success") -> Callable
 
     Example:
         # browser_start.py - True SSOT
-        from ai_dev_browser.core import start_browser
+        from ai_dev_browser.core import browser_start
         from .._cli import as_cli, wrap_core_sync
 
-        browser_start = as_cli(requires_tab=False)(wrap_core_sync(start_browser, "port"))
+        browser_start = as_cli(requires_tab=False)(wrap_core_sync(browser_start, "port"))
     """
 
     @functools.wraps(core_func)

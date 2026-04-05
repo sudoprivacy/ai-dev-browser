@@ -237,7 +237,7 @@ class BrowserClient:
         return self._cookies
 
     async def get(
-        self, url: str = "about:blank", new_tab: bool = False, new_window: bool = False
+        self, url: str = "about:blank", tab_new: bool = False, new_window: bool = False
     ) -> Tab:
         """Open URL in new tab or navigate existing tab."""
         target_id = await self.connection.send(

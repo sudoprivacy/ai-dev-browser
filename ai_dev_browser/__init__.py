@@ -32,7 +32,7 @@ from .core import (
 )
 
 # Cloudflare verification
-from .core.cloudflare import verify_cloudflare
+from .core.cloudflare import cf_verify
 
 # Worker pool
 from .pool import (
@@ -92,7 +92,7 @@ __all__ = [
     "ProfileManager",
     "ProfileMode",
     # Cloudflare verification
-    "verify_cloudflare",
+    "cf_verify",
     # Core operations module
     "core",
     # CDP protocol access (vendored)
@@ -108,6 +108,5 @@ from . import cdp
 
 from .core import connect_browser
 
-# Re-export commonly used tools as functions
-from .tools.browser_start import browser_start
-from .tools.browser_stop import browser_stop
+# Core functions also available at package level
+from .core import browser_start, browser_stop

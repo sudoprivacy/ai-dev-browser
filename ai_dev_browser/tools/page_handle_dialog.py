@@ -1,9 +1,9 @@
-"""AUTO-GENERATED from ai_dev_browser.core.dialog.handle_dialog_action
+"""AUTO-GENERATED from ai_dev_browser.core — page_handle_dialog
 DO NOT EDIT - modify the core function instead, then run:
     python -m ai_dev_browser.tools._generate
 """
 
-from ai_dev_browser.core.dialog import handle_dialog_action as _core_func
+from ai_dev_browser.core import page_handle_dialog as _core_func
 
 from .._cli import as_cli, wrap_core
 

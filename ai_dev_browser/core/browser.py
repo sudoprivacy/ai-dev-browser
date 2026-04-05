@@ -62,9 +62,10 @@ def _find_reusable_chrome() -> int | None:
     return None
 
 
-def start_browser(
+def browser_start(
     port: int | None = None,
-    headless: bool = os.environ.get("AI_DEV_BROWSER_HEADLESS", "").lower() in ("1", "true"),
+    headless: bool = os.environ.get("AI_DEV_BROWSER_HEADLESS", "").lower()
+    in ("1", "true"),
     url: str | None = None,
     profile: str | None = None,
     temp: bool = False,
@@ -222,7 +223,7 @@ def _find_zombie_chromes(
     return zombies
 
 
-def stop_browser(
+def browser_stop(
     port: int | None = None,
     stop_all: bool = False,
 ) -> dict:
@@ -269,7 +270,7 @@ def stop_browser(
     }
 
 
-def list_browsers() -> dict:
+def browser_list() -> dict:
     """List all debugging Chrome instances.
 
     Combines port-based discovery (working Chromes) with process-based

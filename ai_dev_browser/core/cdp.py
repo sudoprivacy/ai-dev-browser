@@ -37,7 +37,7 @@ def _get_cdp_command(method: str, params: dict):
     return cmd_func(**params) if params else cmd_func()
 
 
-async def send_cdp_command(
+async def cdp_send(
     tab: Tab,
     method: str,
     params: str | None = None,

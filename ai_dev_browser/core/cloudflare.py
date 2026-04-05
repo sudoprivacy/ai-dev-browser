@@ -3,9 +3,9 @@
 Requires: pip install opencv-python
 
 Usage:
-    from ai_dev_browser import verify_cloudflare
+    from ai_dev_browser import cf_verify
 
-    success = await verify_cloudflare(tab)
+    success = await cf_verify(tab)
 """
 
 import logging
@@ -14,13 +14,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def verify_cloudflare(
+async def cf_verify(
     tab, max_retries: int = 5, initial_wait: float = 2.0, **kwargs
 ) -> dict:
     """
     Verify and bypass Cloudflare challenge using template matching.
 
-    Uses tab.verify_cf() which takes a screenshot, finds the Turnstile
+    Uses tab.verify_cf() which takes a page_screenshot, finds the Turnstile
     checkbox via OpenCV template matching, and clicks it.
 
     Args:

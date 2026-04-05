@@ -105,7 +105,7 @@ async def _setup_auto_dialog_handler(
     tab.add_handler(page_cdp.JavascriptDialogOpening, on_dialog)
 
 
-async def handle_dialog_action(
+async def page_handle_dialog(
     tab: Tab,
     accept: bool = True,
     prompt_text: str | None = None,

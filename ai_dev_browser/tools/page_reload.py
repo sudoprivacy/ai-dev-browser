@@ -1,9 +1,9 @@
-"""AUTO-GENERATED from ai_dev_browser.core.navigation.reload
+"""AUTO-GENERATED from ai_dev_browser.core — page_reload
 DO NOT EDIT - modify the core function instead, then run:
     python -m ai_dev_browser.tools._generate
 """
 
-from ai_dev_browser.core.navigation import reload as _core_func
+from ai_dev_browser.core import page_reload as _core_func
 
 from .._cli import as_cli, wrap_core
 

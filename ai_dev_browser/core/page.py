@@ -15,7 +15,7 @@ try:
 except ImportError:
     HAS_PIL = False
 
-# Default screenshot limits matching Claude's effective visual resolution.
+# Default page_screenshot limits matching Claude's effective visual resolution.
 # Claude API accepts up to 1568px, but the vision encoder works at ~768px
 # internally. Anthropic's computer_use docs recommend 1024-1280px for
 # accurate coordinate estimation. 1568px causes ~30-50px systematic drift.
@@ -24,7 +24,7 @@ MAX_SCREENSHOT_TOTAL_PIXELS = 1_150_000
 
 
 def read_screenshot_metadata(path: str) -> dict:
-    """Read ai_dev_browser metadata embedded in a PNG screenshot.
+    """Read ai_dev_browser metadata embedded in a PNG page_screenshot.
 
     Returns dict with scale_factor, viewport dimensions, etc.
     Returns empty dict if not a PNG or metadata not found.
@@ -60,7 +60,7 @@ async def js_exec(tab: Tab, expression: str) -> dict:
         return {"result": str(result)}
 
 
-async def screenshot(
+async def page_screenshot(
     tab: Tab,
     path: str | None = None,
     full_page: bool = False,
@@ -68,13 +68,13 @@ async def screenshot(
     max_long_edge: int = MAX_SCREENSHOT_LONG_EDGE,
     max_total_pixels: int = MAX_SCREENSHOT_TOTAL_PIXELS,
 ) -> dict:
-    """Take a screenshot of the page.
+    """Take a page_screenshot of the page.
 
     Args:
         tab: Tab instance
-        path: Path to save screenshot (default: ./screenshots/{timestamp}.png)
+        path: Path to save page_screenshot (default: ./screenshots/{timestamp}.png)
         full_page: If True, capture full page (not just viewport)
-        css_scale: If True (default), resize screenshot so pixel coordinates
+        css_scale: If True (default), resize page_screenshot so pixel coordinates
                    match CSS/click coordinates. Handles both DPR>1 (Retina)
                    and large viewport scenarios.
         max_long_edge: Maximum long edge in pixels (default: 1568). Set to 0
@@ -88,7 +88,7 @@ async def screenshot(
         dict with path, size, width, height
 
     Note:
-        Pass the screenshot path to mouse_click(--screenshot) for automatic
+        Pass the page_screenshot path to mouse_click(--page_screenshot) for automatic
         coordinate scaling. Scaling metadata is embedded in the PNG file.
     """
     if path is None:
@@ -191,7 +191,7 @@ async def screenshot(
     }
 
 
-async def get_page_info(tab: Tab) -> dict:
+async def page_info(tab: Tab) -> dict:
     """Get current page information.
 
     Args:
@@ -236,7 +236,7 @@ async def get_html(
     return await tab.get_content()
 
 
-async def get_page_html(
+async def page_html(
     tab: Tab,
     outer: bool = False,
 ) -> dict:

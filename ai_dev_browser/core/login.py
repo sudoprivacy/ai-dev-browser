@@ -36,13 +36,13 @@ def login_interactive(url: str, cookies_path: str | None = None) -> dict:
 
 
 async def _login_async(url: str, cookies_path: str | None) -> dict:
-    from .browser import start_browser, stop_browser
+    from .browser import browser_start, browser_stop
     from .connection import connect_browser, get_active_tab
-    from .cookies import load_cookies, save_cookies
+    from .cookies import cookies_load, cookies_save
     from .port import is_port_in_use
 
     # 1. Start non-headless Chrome with dedicated login profile
-    result = start_browser(headless=False, profile=_LOGIN_PROFILE, reuse="none")
+    result = browser_start(headless=False, profile=_LOGIN_PROFILE, reuse="none")
     if "error" in result:
         return result
     port = result["port"]
@@ -63,7 +63,7 @@ async def _login_async(url: str, cookies_path: str | None) -> dict:
         # 2. Connect, restore previous cookies, then navigate
         browser = await connect_browser(port=port)
         tab = await get_active_tab(browser)
-        await load_cookies(tab, path=cookies_path)  # no-op if file missing
+        await cookies_load(tab, path=cookies_path)  # no-op if file missing
         await tab.get(url)
 
         print("Waiting for you to log in and close the browser...", file=sys.stderr)
@@ -93,24 +93,24 @@ async def _login_async(url: str, cookies_path: str | None) -> dict:
     #    Chrome loads cookies from profile SQLite on startup — no race condition
     print("Saving cookies...", file=sys.stderr)
     try:
-        result2 = start_browser(headless=True, profile=_LOGIN_PROFILE, reuse="none")
+        result2 = browser_start(headless=True, profile=_LOGIN_PROFILE, reuse="none")
         if "error" in result2:
             return {"success": True, "cookies_saved": False, "error": result2["error"]}
         port2 = result2["port"]
 
         browser2 = await connect_browser(port=port2)
         tab2 = await get_active_tab(browser2)
-        save_result = await save_cookies(tab2, path=cookies_path)
+        save_result = await cookies_save(tab2, path=cookies_path)
 
         # Clean up: stop the temporary headless Chrome
-        stop_browser(port=port2)
+        browser_stop(port=port2)
 
         saved = save_result.get("saved", False)
         saved_path = save_result.get("path", "")
         if saved:
             print(f"Cookies saved to: {saved_path}", file=sys.stderr)
         else:
-            print("Warning: save_cookies returned no result", file=sys.stderr)
+            print("Warning: cookies_save returned no result", file=sys.stderr)
 
         return {
             "success": True,

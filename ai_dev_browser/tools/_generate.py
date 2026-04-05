@@ -1,194 +1,202 @@
 #!/usr/bin/env python3
 """Generate tool wrapper files from core functions.
 
-This is the SSOT (Single Source of Truth) generator. Core functions are the
-source of truth, and tool files are auto-generated from them.
+Auto-discovers public functions from core.__all__ and generates CLI tools.
+Functions are excluded if they're in INTERNAL (infrastructure, not user-facing).
 
 Usage:
     python -m ai_dev_browser.tools._generate
-
-After modifying core functions, run this script to regenerate tool files.
 """
 
+import inspect
 from pathlib import Path
 
-# =============================================================================
-# TOOL REGISTRY - Add new tools here
-# =============================================================================
-# Format: (module_path, function_name, result_key)
-# - module_path: relative to ai_dev_browser.core
-# - function_name: the core function name (same as tool file name)
-# - result_key: key for successful result in JSON output
-
-TOOLS = [
-    # Click actions
-    ("elements", "click_by_text", "clicked"),
-    ("ax", "click_by_ref", "clicked"),
-    # Type actions
-    ("elements", "type_by_text", "typed"),
-    ("ax", "type_by_ref", "typed"),
-    # Focus actions
-    ("ax", "focus_by_ref", "focused"),
-    # Element inspection/interaction (by ref)
-    ("ax", "hover_by_ref", "hovered"),
-    ("ax", "highlight_by_ref", "highlighted"),
-    ("ax", "html_by_ref", "html"),
-    ("ax", "screenshot_by_ref", "path"),
-    ("ax", "select_by_ref", "selected"),
-    ("ax", "upload_by_ref", "uploaded"),
-    ("ax", "drag_by_ref", "dragged"),
-    # Find
-    ("snapshot", "find", "elements", "page_find"),
-    # Element wait
-    ("elements", "wait_for_element_with_info", "found", "element_wait"),
-    # JavaScript
-    ("page", "js_exec", "result"),
-    # Page actions
-    ("navigation", "goto", "success", "page_goto"),
-    ("page", "get_page_info", "url", "page_info"),
-    ("page", "get_page_html", "html", "page_html"),
-    ("navigation", "reload", "success", "page_reload"),
-    ("page", "screenshot", "path", "page_screenshot"),
-    ("navigation", "wait_for_load", "ready", "page_wait"),
-    ("navigation", "wait_for_url", "matched", "page_wait_url"),
-    ("dialog", "handle_dialog_action", "handled", "page_handle_dialog"),
-    ("elements", "scroll", "scrolled", "page_scroll"),
-    # Mouse actions
-    ("mouse", "mouse_click", "clicked"),
-    ("mouse", "mouse_move", "moved"),
-    ("mouse", "mouse_drag", "dragged"),
-    # Tab actions
-    ("tabs", "new_tab", "tab_id", "tab_new"),
-    ("tabs", "list_tabs", "tabs", "tab_list"),
-    ("tabs", "switch_tab", "switched", "tab_switch"),
-    ("tabs", "close_tab", "closed", "tab_close"),
-    # Browser management (no tab required)
-    ("browser", "start_browser", "port", "browser_start"),
-    ("browser", "stop_browser", "stopped", "browser_stop"),
-    ("browser", "list_browsers", "count", "browser_list"),
-    # Cookies
-    ("cookies", "load_cookies", "loaded", "cookies_load"),
-    ("cookies", "save_cookies", "saved", "cookies_save"),
-    ("cookies", "list_cookies", "cookies", "cookies_list"),
-    # Storage
-    ("storage", "get_local_storage", "value", "storage_get"),
-    ("storage", "set_local_storage", "set", "storage_set"),
-    # Window
-    ("window", "focus_window", "focused", "window_focus"),
-    ("window", "set_focus_emulation", "set", "window_focus_emulation"),
-    ("window", "resize_window", "resized", "window_resize"),
-    ("window", "set_window_state", "state", "window_state"),
-    # Download
-    ("download", "download_file", "path", "download_file"),
-    ("download", "set_download_path", "path", "download_path"),
-    # CDP & Cloudflare
-    ("cdp", "send_cdp_command", "result", "cdp_send"),
-    ("cloudflare", "verify_cloudflare", "verified", "cf_verify"),
-    # Interactive login (human-in-the-loop, no tab required)
-    ("login", "login_interactive", "success"),
-]
-
-# Tools that don't require a browser tab
-NO_TAB_TOOLS = {
-    "browser_start",
-    "browser_stop",
-    "browser_list",
-    "login_interactive",
+# Functions in core.__all__ that should NOT become CLI tools.
+# These are infrastructure functions used internally by the CLI wrapper.
+INTERNAL = {
+    "find_chrome",
+    "launch_chrome",
+    "is_port_in_use",
+    "is_chrome_in_use",
+    "find_debug_chromes",
+    "get_available_port",
+    "get_pid_on_port",
+    "get_process_cmdline",
+    "connect_browser",
+    "get_active_tab",
 }
 
-TEMPLATE = '''"""AUTO-GENERATED from ai_dev_browser.core.{module}.{func_name}
+# Per-tool metadata overrides. Key = function name, value = dict of overrides.
+# Defaults: requires_tab=True (auto-detected from first param), result_key="success"
+TOOL_META = {
+    "browser_start": {"result_key": "port"},
+    "browser_stop": {"result_key": "stopped"},
+    "browser_list": {"result_key": "count"},
+    "click_by_ref": {"result_key": "clicked"},
+    "click_by_text": {"result_key": "clicked"},
+    "type_by_ref": {"result_key": "typed"},
+    "type_by_text": {"result_key": "typed"},
+    "focus_by_ref": {"result_key": "focused"},
+    "hover_by_ref": {"result_key": "hovered"},
+    "highlight_by_ref": {"result_key": "highlighted"},
+    "html_by_ref": {"result_key": "html"},
+    "screenshot_by_ref": {"result_key": "path"},
+    "select_by_ref": {"result_key": "selected"},
+    "upload_by_ref": {"result_key": "uploaded"},
+    "drag_by_ref": {"result_key": "dragged"},
+    "page_find": {"result_key": "elements"},
+    "find": {"result_key": "elements"},
+    "element_wait": {"result_key": "found"},
+    "js_exec": {"result_key": "result"},
+    "page_goto": {"result_key": "success"},
+    "page_info": {"result_key": "url"},
+    "page_html": {"result_key": "html"},
+    "page_reload": {"result_key": "success"},
+    "page_screenshot": {"result_key": "path"},
+    "screenshot": {"result_key": "path"},
+    "page_scroll": {"result_key": "scrolled"},
+    "scroll": {"result_key": "scrolled"},
+    "page_wait": {"result_key": "ready"},
+    "page_wait_url": {"result_key": "matched"},
+    "page_handle_dialog": {"result_key": "handled"},
+    "mouse_click": {"result_key": "clicked"},
+    "mouse_move": {"result_key": "moved"},
+    "mouse_drag": {"result_key": "dragged"},
+    "tab_new": {"result_key": "tab_id"},
+    "tab_list": {"result_key": "tabs"},
+    "tab_switch": {"result_key": "switched"},
+    "tab_close": {"result_key": "closed"},
+    "cookies_load": {"result_key": "loaded"},
+    "cookies_save": {"result_key": "saved"},
+    "cookies_list": {"result_key": "cookies"},
+    "storage_get": {"result_key": "value"},
+    "storage_set": {"result_key": "set"},
+    "window_focus": {"result_key": "focused"},
+    "window_focus_emulation": {"result_key": "set"},
+    "window_resize": {"result_key": "resized"},
+    "window_state": {"result_key": "state"},
+    "download_file": {"result_key": "path"},
+    "download_path": {"result_key": "path"},
+    "cdp_send": {"result_key": "result"},
+    "cf_verify": {"result_key": "verified"},
+    "login_interactive": {"result_key": "success"},
+    "reload": {"result_key": "success"},
+}
+
+TEMPLATE = '''"""AUTO-GENERATED from ai_dev_browser.core — {func_name}
 DO NOT EDIT - modify the core function instead, then run:
     python -m ai_dev_browser.tools._generate
 """
 
-from ai_dev_browser.core.{module} import {func_name} as _core_func
+from ai_dev_browser.core import {func_name} as _core_func
 
 from .._cli import as_cli, wrap_core
 
 
-{tool_name} = as_cli({no_tab})(wrap_core(_core_func, "{result_key}"))
+{func_name} = as_cli({no_tab})(wrap_core(_core_func, "{result_key}"))
 
 if __name__ == "__main__":
-    {tool_name}.cli_main()
+    {func_name}.cli_main()
 '''
 
-TEMPLATE_SYNC = '''"""AUTO-GENERATED from ai_dev_browser.core.{module}.{func_name}
+TEMPLATE_SYNC = '''"""AUTO-GENERATED from ai_dev_browser.core — {func_name}
 DO NOT EDIT - modify the core function instead, then run:
     python -m ai_dev_browser.tools._generate
 """
 
-from ai_dev_browser.core.{module} import {func_name} as _core_func
+from ai_dev_browser.core import {func_name} as _core_func
 
 from .._cli import as_cli, wrap_core_sync
 
 
-{tool_name} = as_cli({no_tab})(wrap_core_sync(_core_func, "{result_key}"))
+{func_name} = as_cli({no_tab})(wrap_core_sync(_core_func, "{result_key}"))
 
 if __name__ == "__main__":
-    {tool_name}.cli_main()
+    {func_name}.cli_main()
 '''
 
 
-def generate_tool_file(
-    module: str, func_name: str, result_key: str, tool_name: str = None
-) -> str:
-    """Generate tool file content."""
-    if tool_name is None:
-        tool_name = func_name
+def _discover_tools():
+    """Auto-discover tool functions from core.__all__."""
+    from ai_dev_browser.core import __all__ as core_all
+    import ai_dev_browser.core as core_module
 
-    no_tab = "requires_tab=False" if tool_name in NO_TAB_TOOLS else ""
+    tools = []
+    for name in sorted(core_all):
+        if name in INTERNAL:
+            continue
+        obj = getattr(core_module, name, None)
+        if obj is None:
+            continue
+        if not (inspect.isfunction(obj) or inspect.iscoroutinefunction(obj)):
+            continue
 
-    # Use sync template for browser management functions
-    if tool_name in NO_TAB_TOOLS:
-        template = TEMPLATE_SYNC
-    else:
-        template = TEMPLATE
+        # Detect requires_tab from first parameter name
+        sig = inspect.signature(obj)
+        params = list(sig.parameters.keys())
+        first_param = params[0] if params else ""
+        requires_tab = first_param in ("tab", "browser_or_tab")
 
-    return template.format(
-        module=module,
-        func_name=func_name,
-        tool_name=tool_name,
-        result_key=result_key,
-        no_tab=no_tab,
-    )
+        # Get metadata
+        meta = TOOL_META.get(name, {})
+        result_key = meta.get("result_key", "success")
+        is_async = inspect.iscoroutinefunction(obj)
+
+        tools.append(
+            {
+                "name": name,
+                "result_key": result_key,
+                "requires_tab": requires_tab,
+                "is_async": is_async,
+            }
+        )
+
+    return tools
 
 
 def main():
     """Generate all tool files."""
     tools_dir = Path(__file__).parent
+    tools = _discover_tools()
 
     generated = []
     skipped = []
 
-    for entry in TOOLS:
-        if len(entry) == 3:
-            module, func_name, result_key = entry
-            tool_name = func_name
-        else:
-            module, func_name, result_key, tool_name = entry
+    for tool in tools:
+        name = tool["name"]
+        file_path = tools_dir / f"{name}.py"
 
-        file_path = tools_dir / f"{tool_name}.py"
-        content = generate_tool_file(module, func_name, result_key, tool_name)
+        no_tab = "requires_tab=False" if not tool["requires_tab"] else ""
+        template = TEMPLATE if tool["is_async"] else TEMPLATE_SYNC
 
-        # Check if file exists and has same content
+        content = template.format(
+            func_name=name,
+            result_key=tool["result_key"],
+            no_tab=no_tab,
+        )
+
         if file_path.exists():
             existing = file_path.read_text()
             if existing == content:
-                skipped.append(tool_name)
+                skipped.append(name)
                 continue
 
         file_path.write_text(content)
-        generated.append(tool_name)
-        print(f"Generated: {tool_name}.py")
+        generated.append(name)
+        print(f"Generated: {name}.py")
+
+    # Report orphan tool files (exist on disk but not discovered)
+    expected = {t["name"] for t in tools}
+    for f in tools_dir.glob("*.py"):
+        if f.name.startswith("_") or f.name == "__init__.py":
+            continue
+        stem = f.stem
+        if stem not in expected:
+            print(f"ORPHAN (delete?): {f.name}")
 
     print(f"\nGenerated: {len(generated)} files")
     print(f"Skipped (unchanged): {len(skipped)} files")
-
-    # List all tool files
-    print(f"\nAll tools ({len(TOOLS)}):")
-    for entry in sorted(TOOLS, key=lambda x: x[-1] if len(x) == 4 else x[1]):
-        tool_name = entry[-1] if len(entry) == 4 else entry[1]
-        print(f"  - {tool_name}")
+    print(f"Total tools: {len(tools)}")
 
 
 if __name__ == "__main__":

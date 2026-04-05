@@ -5,7 +5,7 @@ from pathlib import Path
 from ._tab import Tab
 
 
-async def set_download_path(
+async def download_path(
     tab: Tab,
     path: str | Path,
 ) -> dict:
@@ -20,7 +20,7 @@ async def set_download_path(
     """
     resolved = Path(path).expanduser().resolve()
     resolved.mkdir(parents=True, exist_ok=True)
-    await tab.set_download_path(str(resolved))
+    await tab.download_path(str(resolved))
     return {"path": str(resolved)}
 
 

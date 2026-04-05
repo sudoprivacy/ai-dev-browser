@@ -4,12 +4,12 @@ This module provides async functions for common browser operations.
 Both CLI tools and Python code can use these functions.
 
 Usage:
-    from ai_dev_browser.core import goto, click_by_text, find
+    from ai_dev_browser.core import page_goto, click_by_text, page_find
 
     # In async context
-    await goto(tab, "https://example.com")
+    await page_goto(tab, "https://example.com")
     await click_by_text(tab, text="Sign in")
-    result = await find(tab, interactable_only=True)
+    result = await page_find(tab, interactable_only=True)
 """
 
 # Accessibility tree interactions
@@ -29,14 +29,14 @@ from .ax import (
 )
 
 # Browser lifecycle
-from .browser import list_browsers, start_browser, stop_browser
-from .cdp import send_cdp_command
+from .browser import browser_list, browser_start, browser_stop
+from .cdp import cdp_send
 
 # Chrome detection and launching
 from .chrome import find_chrome, launch_chrome
 
 # Cloudflare
-from .cloudflare import verify_cloudflare
+from .cloudflare import cf_verify
 from .config import (
     DEFAULT_BASE_DIR,
     DEFAULT_COOKIES_DIR,
@@ -54,13 +54,13 @@ from .config import (
 from .connection import connect_browser, get_active_tab
 
 # Cookies
-from .cookies import list_cookies, load_cookies, save_cookies
+from .cookies import cookies_list, cookies_load, cookies_save
 
 # Dialog (only tool-facing function)
-from .dialog import handle_dialog_action
+from .dialog import page_handle_dialog
 
 # Download
-from .download import download_file, set_download_path
+from .download import download_file, download_path
 
 # Login (human-in-the-loop)
 from .login import login_interactive
@@ -68,9 +68,9 @@ from .login import login_interactive
 # Elements (only tool-facing functions)
 from .elements import (
     click_by_text,
-    scroll,
+    page_scroll,
     type_by_text,
-    wait_for_element_with_info,
+    element_wait,
 )
 
 # Mouse
@@ -78,14 +78,14 @@ from .mouse import mouse_click, mouse_drag, mouse_move
 
 # Navigation (only tool-facing functions)
 from .navigation import (
-    goto,
-    reload,
-    wait_for_load,
-    wait_for_url,
+    page_goto,
+    page_reload,
+    page_wait,
+    page_wait_url,
 )
 
 # Page info
-from .page import get_page_html, get_page_info, js_exec, screenshot
+from .page import page_html, page_info, js_exec, page_screenshot
 
 # Port management
 from .port import (
@@ -102,16 +102,16 @@ from .process import get_pid_on_port, get_process_cmdline
 from .text_match import MatchResult
 
 # Snapshot (AI-friendly accessibility tree) - only tool-facing function
-from .snapshot import find
+from .snapshot import page_find
 
 # Storage
-from .storage import get_local_storage, set_local_storage
+from .storage import storage_get, storage_set
 
 # Tabs
-from .tabs import close_tab, list_tabs, new_tab, switch_tab
+from .tabs import tab_close, tab_list, tab_new, tab_switch
 
 # Window
-from .window import focus_window, resize_window, set_focus_emulation, set_window_state
+from .window import window_focus, window_resize, window_focus_emulation, window_state
 
 
 __all__ = [
@@ -127,9 +127,9 @@ __all__ = [
     "type_by_ref",
     "upload_by_ref",
     # Browser lifecycle
-    "start_browser",
-    "stop_browser",
-    "list_browsers",
+    "browser_start",
+    "browser_stop",
+    "browser_list",
     # Config
     "DEFAULT_BASE_DIR",
     "DEFAULT_PROFILE_DIR",
@@ -145,9 +145,9 @@ __all__ = [
     "find_chrome",
     "launch_chrome",
     # Cloudflare
-    "verify_cloudflare",
+    "cf_verify",
     # CDP
-    "send_cdp_command",
+    "cdp_send",
     # Port
     "is_port_in_use",
     "is_chrome_in_use",
@@ -160,50 +160,50 @@ __all__ = [
     "connect_browser",
     "get_active_tab",
     # Navigation
-    "goto",
-    "reload",
-    "wait_for_load",
-    "wait_for_url",
+    "page_goto",
+    "page_reload",
+    "page_wait",
+    "page_wait_url",
     # Elements
     "click_by_text",
     "type_by_text",
-    "scroll",
-    "wait_for_element_with_info",
+    "page_scroll",
+    "element_wait",
     # Text matching
     "MatchResult",
     # Snapshot
-    "find",
+    "page_find",
     # Tabs
-    "new_tab",
-    "list_tabs",
-    "switch_tab",
-    "close_tab",
+    "tab_new",
+    "tab_list",
+    "tab_switch",
+    "tab_close",
     # Page
-    "get_page_info",
-    "get_page_html",
+    "page_info",
+    "page_html",
     "js_exec",
-    "screenshot",
+    "page_screenshot",
     # Mouse
     "mouse_move",
     "mouse_click",
     "mouse_drag",
     # Window
-    "resize_window",
-    "set_window_state",
-    "set_focus_emulation",
-    "focus_window",
+    "window_resize",
+    "window_state",
+    "window_focus_emulation",
+    "window_focus",
     # Storage
-    "get_local_storage",
-    "set_local_storage",
+    "storage_get",
+    "storage_set",
     # Download
-    "set_download_path",
+    "download_path",
     "download_file",
     # Dialog
-    "handle_dialog_action",
+    "page_handle_dialog",
     # Login
     "login_interactive",
     # Cookies
-    "load_cookies",
-    "save_cookies",
-    "list_cookies",
+    "cookies_load",
+    "cookies_save",
+    "cookies_list",
 ]

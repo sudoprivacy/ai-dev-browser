@@ -11,7 +11,7 @@ def _get_browser(browser_or_tab: BrowserClient | Tab) -> BrowserClient:
     return browser_or_tab
 
 
-async def new_tab(
+async def tab_new(
     browser_or_tab: BrowserClient | Tab,
     url: str | None = None,
 ) -> dict:
@@ -27,7 +27,7 @@ async def new_tab(
     url = url or "about:blank"
 
     if isinstance(browser_or_tab, Tab):
-        tab = await browser_or_tab.get(url, new_tab=True)
+        tab = await browser_or_tab.get(url, tab_new=True)
     else:
         tab = await browser_or_tab.get(url)
 
@@ -36,7 +36,7 @@ async def new_tab(
     return {"url": url, "title": title, "tab": tab}
 
 
-async def list_tabs(browser_or_tab: BrowserClient | Tab) -> dict:
+async def tab_list(browser_or_tab: BrowserClient | Tab) -> dict:
     """List all open tabs.
 
     Args:
@@ -62,7 +62,7 @@ async def list_tabs(browser_or_tab: BrowserClient | Tab) -> dict:
     return {"tabs": tabs_info, "count": len(tabs_info)}
 
 
-async def switch_tab(
+async def tab_switch(
     browser_or_tab: BrowserClient | Tab,
     tab_id: int,
 ) -> dict:
@@ -93,7 +93,7 @@ async def switch_tab(
     return {"url": url, "title": title, "tab": tab}
 
 
-async def close_tab(
+async def tab_close(
     browser_or_tab: BrowserClient | Tab,
     tab_id: int | None = None,
     tab: Tab | None = None,

@@ -3,7 +3,7 @@
 from ._tab import Tab
 
 
-async def get_local_storage(
+async def storage_get(
     tab: Tab,
     key: str | None = None,
 ) -> dict:
@@ -23,7 +23,7 @@ async def get_local_storage(
     return {"items": storage, "count": len(storage)}
 
 
-async def set_local_storage(
+async def storage_set(
     tab: Tab,
     items: dict | None = None,
     key: str | None = None,

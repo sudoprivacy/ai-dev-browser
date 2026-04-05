@@ -1,8 +1,8 @@
 """Core browser workflows: page operations, element interaction, state management.
 
 Covers all non-lifecycle, non-AI-discovery workflows:
-- Navigation: goto, back/forward, reload, wait, error recovery
-- Page content: screenshot, HTML, JS eval, scroll
+- Navigation: page_goto, back/forward, page_reload, wait, error recovery
+- Page content: page_screenshot, HTML, JS eval, page_scroll
 - Element interaction: forms, mouse, dynamic content, keyboard
 - Dialog handling: alert, confirm (accept/reject), dialog+form combos
 - Window management: resize, state, focus emulation
@@ -12,7 +12,7 @@ Covers all non-lifecycle, non-AI-discovery workflows:
 - CDP: raw command, download path
 
 For browser lifecycle (start/stop/reuse/connect), see test_browser_lifecycle.py.
-For AI-style find-and-interact workflows, see test_find_and_interact_workflows.py.
+For AI-style page_find-and-interact workflows, see test_find_and_interact_workflows.py.
 """
 
 import asyncio
@@ -23,32 +23,32 @@ from pathlib import Path
 
 from ai_dev_browser.core import (
     click_by_text,
-    close_tab,
-    find,
-    focus_window,
-    get_page_html,
-    get_page_info,
-    goto,
-    handle_dialog_action,
+    tab_close,
+    page_find,
+    window_focus,
+    page_html,
+    page_info,
+    page_goto,
+    page_handle_dialog,
     js_exec,
-    list_cookies,
-    list_tabs,
-    load_cookies,
+    cookies_list,
+    tab_list,
+    cookies_load,
     mouse_click,
     mouse_drag,
     mouse_move,
-    new_tab,
-    reload,
-    resize_window,
-    save_cookies,
-    screenshot,
-    scroll,
-    send_cdp_command,
-    set_focus_emulation,
-    set_window_state,
-    switch_tab,
+    tab_new,
+    page_reload,
+    window_resize,
+    cookies_save,
+    page_screenshot,
+    page_scroll,
+    cdp_send,
+    window_focus_emulation,
+    window_state,
+    tab_switch,
     type_by_ref,
-    wait_for_load,
+    page_wait,
 )
 from ai_dev_browser.core import human
 from ai_dev_browser.core.dialog import _setup_auto_dialog_handler
@@ -80,7 +80,7 @@ async def eval_json(tab, js_expr):
 
 
 class TestNavigationWorkflow:
-    """Multi-page navigation: goto → interact → navigate → verify."""
+    """Multi-page navigation: page_goto → interact → navigate → verify."""
 
     async def test_navigation_history(self, browser):
         """Navigate between pages using back/forward."""
@@ -89,12 +89,12 @@ class TestNavigationWorkflow:
         page1 = make_data_url("<html><body><h1>Page 1</h1></body></html>")
         page2 = make_data_url("<html><body><h1>Page 2</h1></body></html>")
 
-        await goto(tab, page1)
+        await page_goto(tab, page1)
         await asyncio.sleep(0.2)
         content = await tab.evaluate("document.body.innerText")
         assert "Page 1" in content
 
-        await goto(tab, page2)
+        await page_goto(tab, page2)
         await asyncio.sleep(0.2)
 
         await _back(tab)
@@ -108,7 +108,7 @@ class TestNavigationWorkflow:
         assert "Page 2" in content
 
     async def test_reload_workflow(self, browser):
-        """Reload page and verify reload occurred."""
+        """Reload page and verify page_reload occurred."""
         tab = browser.main_tab
 
         html = make_data_url("""<!DOCTYPE html><html><body>
@@ -119,7 +119,7 @@ class TestNavigationWorkflow:
         await asyncio.sleep(0.2)
         load_time1 = await tab.evaluate("window.loadTime")
 
-        await reload(tab)
+        await page_reload(tab)
         await asyncio.sleep(0.3)
         load_time2 = await tab.evaluate("window.loadTime")
         assert load_time2 > load_time1
@@ -133,7 +133,7 @@ class TestNavigationWorkflow:
         </body></html>""")
 
         await tab.get(html)
-        ready = await wait_for_load(tab, timeout=5)
+        ready = await page_wait(tab, timeout=5)
         assert ready is True
         state = await tab.evaluate("document.readyState")
         assert state == "complete"
@@ -142,29 +142,29 @@ class TestNavigationWorkflow:
         """Navigate to non-existent page, then recover."""
         tab = browser.main_tab
 
-        await goto(tab, "http://localhost:1/nonexistent")
+        await page_goto(tab, "http://localhost:1/nonexistent")
         await asyncio.sleep(0.5)
-        await get_page_info(tab)
+        await page_info(tab)
 
         good_html = make_data_url("<html><body><h1>Recovered!</h1></body></html>")
-        await goto(tab, good_html)
+        await page_goto(tab, good_html)
         await asyncio.sleep(0.3)
         content = await tab.evaluate("document.body.innerText")
         assert "Recovered!" in content
 
     async def test_navigate_reload_navigate(self, browser):
-        """Navigate → reload → navigate to different page."""
+        """Navigate → page_reload → navigate to different page."""
         tab = browser.main_tab
 
         html1 = make_data_url("<html><body>First</body></html>")
-        await goto(tab, html1)
+        await page_goto(tab, html1)
         await asyncio.sleep(0.3)
 
-        await reload(tab)
+        await page_reload(tab)
         await asyncio.sleep(0.3)
 
         html2 = make_data_url("<html><body>Second</body></html>")
-        await goto(tab, html2)
+        await page_goto(tab, html2)
         await asyncio.sleep(0.3)
         content = await tab.evaluate("document.body.innerText")
         assert "Second" in content
@@ -176,10 +176,10 @@ class TestNavigationWorkflow:
 
 
 class TestPageOperationsWorkflow:
-    """Page capture: screenshot, HTML, info, scroll."""
+    """Page capture: page_screenshot, HTML, info, page_scroll."""
 
     async def test_page_capture_workflow(self, browser):
-        """Capture page state: screenshot, HTML, title."""
+        """Capture page state: page_screenshot, HTML, title."""
         tab = browser.main_tab
 
         html = """<!DOCTYPE html>
@@ -190,11 +190,11 @@ class TestPageOperationsWorkflow:
         await asyncio.sleep(0.2)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir) / "screenshot.png"
-            result = await screenshot(tab, path=str(path))
+            path = Path(tmpdir) / "page_screenshot.png"
+            result = await page_screenshot(tab, path=str(path))
             assert Path(result["path"]).exists()
 
-        html_result = await get_page_html(tab)
+        html_result = await page_html(tab)
         assert "Hello World" in html_result.get("html", "")
 
         title = await tab.evaluate("document.title")
@@ -215,23 +215,23 @@ class TestPageOperationsWorkflow:
         await tab.get(make_data_url(html))
         await asyncio.sleep(0.2)
 
-        await scroll(tab, direction="down", amount=500)
+        await page_scroll(tab, direction="down", amount=500)
         await asyncio.sleep(0.1)
         assert await tab.evaluate("window.scrollY") > 0
 
-        await scroll(tab, to_bottom=True)
+        await page_scroll(tab, to_bottom=True)
         await asyncio.sleep(0.1)
         at_bottom = await tab.evaluate(
             "window.scrollY + window.innerHeight >= document.body.scrollHeight - 10"
         )
         assert at_bottom is True
 
-        await scroll(tab, to_top=True)
+        await page_scroll(tab, to_top=True)
         await asyncio.sleep(0.1)
         assert await tab.evaluate("window.scrollY") == 0
 
     async def test_scroll_read_then_interact(self, browser):
-        """Scroll to read hidden info, scroll back, interact."""
+        """Scroll to read hidden info, page_scroll back, interact."""
         tab = browser.main_tab
 
         html = """<!DOCTYPE html><html><body style="height:3000px;">
@@ -244,12 +244,12 @@ class TestPageOperationsWorkflow:
         await tab.get(make_data_url(html))
         await asyncio.sleep(0.2)
 
-        await scroll(tab, to_bottom=True)
+        await page_scroll(tab, to_bottom=True)
         await asyncio.sleep(0.3)
         info = await tab.evaluate("document.getElementById('bottom-info').textContent")
         assert "42" in info
 
-        await scroll(tab, to_top=True)
+        await page_scroll(tab, to_top=True)
         await asyncio.sleep(0.3)
         await click_by_text(tab, text="Top Action")
         assert await tab.evaluate("window.topClicked") is True
@@ -263,19 +263,19 @@ class TestPageOperationsWorkflow:
                 make_data_url("<html><body style='background:red;'>Red</body></html>")
             )
             await asyncio.sleep(0.3)
-            r1 = await screenshot(tab, path=str(Path(tmpdir) / "red.png"))
+            r1 = await page_screenshot(tab, path=str(Path(tmpdir) / "red.png"))
 
             await tab.get(
                 make_data_url("<html><body style='background:blue;'>Blue</body></html>")
             )
             await asyncio.sleep(0.3)
-            r2 = await screenshot(tab, path=str(Path(tmpdir) / "blue.png"))
+            r2 = await page_screenshot(tab, path=str(Path(tmpdir) / "blue.png"))
 
             assert r1["size"] > 0 and r2["size"] > 0
             assert Path(r1["path"]).read_bytes() != Path(r2["path"]).read_bytes()
 
     async def test_full_page_screenshot(self, browser):
-        """Full-page screenshot is taller than viewport screenshot."""
+        """Full-page page_screenshot is taller than viewport page_screenshot."""
         tab = browser.main_tab
 
         html = make_data_url(
@@ -285,10 +285,10 @@ class TestPageOperationsWorkflow:
         await asyncio.sleep(0.3)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            r1 = await screenshot(
+            r1 = await page_screenshot(
                 tab, path=str(Path(tmpdir) / "vp.png"), full_page=False
             )
-            r2 = await screenshot(
+            r2 = await page_screenshot(
                 tab, path=str(Path(tmpdir) / "full.png"), full_page=True
             )
             assert r2["height"] > r1["height"] or r2["size"] > r1["size"]
@@ -393,7 +393,7 @@ class TestFormWorkflow:
         assert await tab.evaluate("window.isValid") is True
 
     async def test_multi_field_form_via_refs(self, browser):
-        """Fill multiple fields using find + type_by_ref + click_by_text."""
+        """Fill multiple fields using page_find + type_by_ref + click_by_text."""
         tab = browser.main_tab
 
         html = """<!DOCTYPE html><html><body>
@@ -409,7 +409,7 @@ class TestFormWorkflow:
         await tab.get(make_data_url(html))
         await asyncio.sleep(0.2)
 
-        result = await find(tab)
+        result = await page_find(tab)
         fields = [el for el in result["elements"] if el.get("role") == "textbox"]
         assert len(fields) >= 3
 
@@ -514,7 +514,7 @@ class TestDialogWorkflow:
         tab = browser.main_tab
         await tab.get(make_data_url("<html><body>No dialogs</body></html>"))
         await asyncio.sleep(0.2)
-        result = await handle_dialog_action(tab, accept=True, wait_timeout=0)
+        result = await page_handle_dialog(tab, accept=True, wait_timeout=0)
         assert (
             result.get("handled") is False
             or "error" in result
@@ -624,7 +624,7 @@ class TestWindowWorkflow:
         await tab.get(make_data_url("<html><body></body></html>"))
         await asyncio.sleep(0.2)
 
-        result = await resize_window(tab, width=800, height=600)
+        result = await window_resize(tab, width=800, height=600)
         assert result["width"] == 800
 
         await asyncio.sleep(0.2)
@@ -634,21 +634,21 @@ class TestWindowWorkflow:
     async def test_focus_window(self, browser):
         """Focus window."""
         tab = browser.main_tab
-        assert (await focus_window(tab)).get("focused") is True
+        assert (await window_focus(tab)).get("focused") is True
 
     async def test_window_state_transitions(self, browser):
         """Change window state: normal → maximized → normal."""
         tab = browser.main_tab
-        assert (await set_window_state(tab, state="normal"))["state"] == "normal"
-        assert (await set_window_state(tab, state="maximized"))["state"] == "maximized"
-        assert (await set_window_state(tab, state="normal"))["state"] == "normal"
+        assert (await window_state(tab, state="normal"))["state"] == "normal"
+        assert (await window_state(tab, state="maximized"))["state"] == "maximized"
+        assert (await window_state(tab, state="normal"))["state"] == "normal"
 
     async def test_focus_emulation(self, browser):
         """Enable/disable focus emulation."""
         tab = browser.main_tab
-        assert (await set_focus_emulation(tab, enabled=True))["enabled"] is True
+        assert (await window_focus_emulation(tab, enabled=True))["enabled"] is True
         assert await tab.evaluate("document.hasFocus()") is True
-        assert (await set_focus_emulation(tab, enabled=False))["enabled"] is False
+        assert (await window_focus_emulation(tab, enabled=False))["enabled"] is False
 
 
 # =============================================================================
@@ -665,18 +665,18 @@ class TestTabWorkflow:
         await tab1.get(make_data_url("<html><body><h1>Tab 1</h1></body></html>"))
         await asyncio.sleep(0.3)
 
-        result = await new_tab(browser)
+        result = await tab_new(browser)
         tab2 = result["tab"]
         await tab2.get(make_data_url("<html><body><h1>Tab 2</h1></body></html>"))
         await asyncio.sleep(0.3)
         assert "Tab 2" in await tab2.evaluate("document.body.innerText")
 
-        tabs_result = await list_tabs(browser)
+        tabs_result = await tab_list(browser)
         assert tabs_result["count"] >= 2
 
-        await switch_tab(browser, tab_id=0)
-        await close_tab(browser, tab=tab2)
-        assert (await list_tabs(browser))["count"] >= 1
+        await tab_switch(browser, tab_id=0)
+        await tab_close(browser, tab=tab2)
+        assert (await tab_list(browser))["count"] >= 1
 
     async def test_multi_tab_state_isolation(self, browser):
         """JS state in one tab does not leak to another."""
@@ -689,7 +689,7 @@ class TestTabWorkflow:
         await asyncio.sleep(0.2)
         await tab1.evaluate("window.tabState = 'tab1_value'")
 
-        result = await new_tab(browser)
+        result = await tab_new(browser)
         tab2 = result["tab"]
         await tab2.get(html)
         await asyncio.sleep(0.2)
@@ -697,7 +697,7 @@ class TestTabWorkflow:
 
         assert await tab1.evaluate("window.tabState") == "tab1_value"
         assert await tab2.evaluate("window.tabState") == "tab2_value"
-        await close_tab(browser, tab=tab2)
+        await tab_close(browser, tab=tab2)
 
     async def test_switch_back_preserves_state(self, browser):
         """Open tab2, do work, switch back to tab1 — state preserved."""
@@ -708,17 +708,17 @@ class TestTabWorkflow:
         await asyncio.sleep(0.2)
         await tab1.evaluate("document.getElementById('m').textContent = 'Modified'")
 
-        result = await new_tab(browser)
+        result = await tab_new(browser)
         tab2 = result["tab"]
         await tab2.get(make_data_url("<html><body>Tab2</body></html>"))
         await asyncio.sleep(0.2)
 
-        await switch_tab(browser, tab_id=0)
+        await tab_switch(browser, tab_id=0)
         assert (
             await tab1.evaluate("document.getElementById('m').textContent")
             == "Modified"
         )
-        await close_tab(browser, tab=tab2)
+        await tab_close(browser, tab=tab2)
 
 
 # =============================================================================
@@ -737,19 +737,19 @@ class TestCookieWorkflow:
             cookie_path = f.name
 
         try:
-            save_result = await save_cookies(tab, path=cookie_path)
+            save_result = await cookies_save(tab, path=cookie_path)
             assert save_result.get("saved") is True
             assert Path(cookie_path).exists()
 
-            load_result = await load_cookies(tab, path=cookie_path)
+            load_result = await cookies_load(tab, path=cookie_path)
             assert load_result.get("loaded") is True
         finally:
             Path(cookie_path).unlink(missing_ok=True)
 
     async def test_list_cookies_structure(self, browser):
-        """list_cookies returns proper structure."""
+        """cookies_list returns proper structure."""
         tab = browser.main_tab
-        result = await list_cookies(tab)
+        result = await cookies_list(tab)
         assert isinstance(result["cookies"], list)
         assert isinstance(result["count"], int)
 
@@ -760,18 +760,18 @@ class TestCookieWorkflow:
 
 
 class TestStorageWorkflow:
-    """LocalStorage: set → reload → verify → clear."""
+    """LocalStorage: set → page_reload → verify → clear."""
 
     async def test_set_reload_verify_clear(self, browser):
-        """Set localStorage, reload, verify persistence, clear."""
+        """Set localStorage, page_reload, verify persistence, clear."""
         tab = browser.main_tab
-        await goto(tab, "https://example.com")
+        await page_goto(tab, "https://example.com")
         await asyncio.sleep(0.5)
 
         await tab.evaluate("localStorage.setItem('testKey', 'testValue123')")
         assert await tab.evaluate("localStorage.getItem('testKey')") == "testValue123"
 
-        await tab.reload()
+        await tab.page_reload()
         await asyncio.sleep(0.5)
         assert await tab.evaluate("localStorage.getItem('testKey')") == "testValue123"
 
@@ -781,7 +781,7 @@ class TestStorageWorkflow:
     async def test_batch_local_storage(self, browser):
         """Set multiple localStorage items, verify all."""
         tab = browser.main_tab
-        await goto(tab, "https://example.com")
+        await page_goto(tab, "https://example.com")
         await asyncio.sleep(0.5)
 
         await tab.evaluate("""
@@ -798,13 +798,13 @@ class TestStorageWorkflow:
     async def test_storage_via_cdp_api(self, browser):
         """Set/get localStorage using the CDP-based API."""
         tab = browser.main_tab
-        await goto(tab, "https://example.com")
+        await page_goto(tab, "https://example.com")
         await asyncio.sleep(0.5)
 
-        from ai_dev_browser.core import get_local_storage, set_local_storage
+        from ai_dev_browser.core import storage_get, storage_set
 
-        await set_local_storage(tab, key="cdp_key", value="cdp_value")
-        result = await get_local_storage(tab, key="cdp_key")
+        await storage_set(tab, key="cdp_key", value="cdp_value")
+        result = await storage_get(tab, key="cdp_key")
         assert result.get("value") == "cdp_value"
         await tab.evaluate("localStorage.clear()")
 
@@ -816,15 +816,15 @@ class TestDownloadAndCdpWorkflow:
         """Set download path."""
         tab = browser.main_tab
         with tempfile.TemporaryDirectory() as tmpdir:
-            from ai_dev_browser.core import set_download_path
+            from ai_dev_browser.core import download_path
 
-            result = await set_download_path(tab, path=tmpdir)
+            result = await download_path(tab, path=tmpdir)
             assert Path(result["path"]).exists()
 
     async def test_cdp_get_version(self, browser):
         """Send raw CDP Browser.getVersion."""
         tab = browser.main_tab
-        result = await send_cdp_command(tab, method="Browser.getVersion")
+        result = await cdp_send(tab, method="Browser.getVersion")
         assert "result" in result
 
     async def test_cdp_evaluate_expression(self, browser):
@@ -832,7 +832,7 @@ class TestDownloadAndCdpWorkflow:
         tab = browser.main_tab
         await tab.get(make_data_url("<html><body>CDP</body></html>"))
         await asyncio.sleep(0.2)
-        result = await send_cdp_command(
+        result = await cdp_send(
             tab, method="Runtime.evaluate", params='{"expression": "1 + 2 + 3"}'
         )
         assert "result" in result

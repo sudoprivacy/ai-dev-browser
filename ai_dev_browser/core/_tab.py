@@ -214,7 +214,7 @@ class Tab:
     # Element finding
     # =========================================================================
 
-    async def find(self, text: str, best_match: bool = True, timeout: float = 10):
+    async def page_find(self, text: str, best_match: bool = True, timeout: float = 10):
         """Find single element by text, with retry until timeout."""
         loop = asyncio.get_running_loop()
         start = loop.time()
@@ -490,12 +490,12 @@ class Tab:
     # =========================================================================
 
     async def get(
-        self, url: str = "about:blank", new_tab: bool = False, new_window: bool = False
+        self, url: str = "about:blank", tab_new: bool = False, new_window: bool = False
     ):
         """Navigate to URL or open in new tab."""
-        if new_tab or new_window:
+        if tab_new or new_window:
             if self._browser:
-                return await self._browser.get(url, new_tab, new_window)
+                return await self._browser.get(url, tab_new, new_window)
         frame_id, loader_id, *_ = await self.send(page.navigate(url))
         await asyncio.sleep(0.5)
         return self
@@ -508,7 +508,7 @@ class Tab:
         """Go forward in history."""
         await self.evaluate("window.history.forward()")
 
-    async def reload(
+    async def page_reload(
         self, ignore_cache: bool = True, script_to_evaluate_on_load: str = None
     ):
         """Reload page."""
@@ -529,7 +529,7 @@ class Tab:
         format: str = "jpeg",
         full_page: bool = False,
     ) -> str:
-        """Take screenshot and save to file. Returns file path."""
+        """Take page_screenshot and save to file. Returns file path."""
         if format.lower() in ("jpg", "jpeg"):
             ext, format_ = ".jpg", "jpeg"
         else:
@@ -548,7 +548,7 @@ class Tab:
             page.capture_screenshot(format_=format_, capture_beyond_viewport=full_page)
         )
         if not data:
-            raise ProtocolException("Could not take screenshot")
+            raise ProtocolException("Could not take page_screenshot")
 
         path.write_bytes(base64.b64decode(data))
         return str(path)
@@ -616,7 +616,7 @@ class Tab:
     # Download
     # =========================================================================
 
-    async def set_download_path(self, path):
+    async def download_path(self, path):
         """Set download directory."""
         p = pathlib.Path(path)
         p.mkdir(parents=True, exist_ok=True)
@@ -632,7 +632,7 @@ class Tab:
         if not self._download_behavior:
             directory = pathlib.Path.cwd() / "downloads"
             directory.mkdir(exist_ok=True)
-            await self.set_download_path(directory)
+            await self.download_path(directory)
         if not filename:
             filename = url.rsplit("/", 1)[-1].split("?", 1)[0]
 
@@ -681,7 +681,7 @@ class Tab:
         url = self._target.url or ""
         return "/".join(url.split("/", 3)[:3])
 
-    async def get_local_storage(self) -> dict:
+    async def storage_get(self) -> dict:
         """Get localStorage items as dict."""
         origin = await self._get_origin()
         items = await self.send(
@@ -691,7 +691,7 @@ class Tab:
         )
         return {item[0]: item[1] for item in items} if items else {}
 
-    async def set_local_storage(self, items: dict):
+    async def storage_set(self, items: dict):
         """Set localStorage items."""
         origin = await self._get_origin()
         await asyncio.gather(

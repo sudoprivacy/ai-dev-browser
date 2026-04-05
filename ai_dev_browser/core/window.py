@@ -5,7 +5,7 @@ from ai_dev_browser.cdp import emulation as cdp_emulation
 from ._tab import Tab
 
 
-async def resize_window(
+async def window_resize(
     tab: Tab,
     width: int = 1280,
     height: int = 720,
@@ -28,7 +28,7 @@ async def resize_window(
     return {"width": width, "height": height, "left": left, "top": top}
 
 
-async def set_window_state(
+async def window_state(
     tab: Tab,
     state: str = "normal",
 ) -> dict:
@@ -52,7 +52,7 @@ async def set_window_state(
     return {"state": state}
 
 
-async def set_focus_emulation(
+async def window_focus_emulation(
     tab: Tab,
     enabled: bool = True,
 ) -> dict:
@@ -73,7 +73,7 @@ async def set_focus_emulation(
     return {"enabled": enabled}
 
 
-async def focus_window(tab: Tab) -> dict:
+async def window_focus(tab: Tab) -> dict:
     """Bring the browser window to front.
 
     Args:

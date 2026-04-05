@@ -1,9 +1,9 @@
-"""AUTO-GENERATED from ai_dev_browser.core.window.focus_window
+"""AUTO-GENERATED from ai_dev_browser.core — window_focus
 DO NOT EDIT - modify the core function instead, then run:
     python -m ai_dev_browser.tools._generate
 """
 
-from ai_dev_browser.core.window import focus_window as _core_func
+from ai_dev_browser.core import window_focus as _core_func
 
 from .._cli import as_cli, wrap_core
 

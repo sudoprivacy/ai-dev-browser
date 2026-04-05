@@ -1,10 +1,10 @@
 """Browser lifecycle integration tests.
 
 Tests the full start -> reuse -> connect -> stop workflow:
-- start_browser reuse behavior (same profile, different profiles)
+- browser_start reuse behavior (same profile, different profiles)
 - CLI auto-detection (no --port specified)
-- stop_browser cleanup
-- list_browsers visibility
+- browser_stop cleanup
+- browser_list visibility
 
 These tests launch REAL Chrome instances (headless) and verify port/profile behavior.
 """
@@ -13,7 +13,7 @@ import asyncio
 
 import pytest
 
-from ai_dev_browser.core.browser import list_browsers, start_browser, stop_browser
+from ai_dev_browser.core.browser import browser_list, browser_start, browser_stop
 from ai_dev_browser.core.port import (
     find_debug_chromes,
     is_chrome_in_use,
@@ -27,7 +27,7 @@ TEST_PROFILE = "test-lifecycle"
 
 def _stop_chrome_on_port(port: int):
     """Stop a specific Chrome and wait for port to free."""
-    stop_browser(port=port)
+    browser_stop(port=port)
 
 
 @pytest.fixture(autouse=True)
@@ -53,30 +53,30 @@ async def track_and_cleanup_test_chromes():
 
 
 class TestStartBrowserReuse:
-    """Test that start_browser correctly reuses existing Chrome instances."""
+    """Test that browser_start correctly reuses existing Chrome instances."""
 
     async def test_second_start_reuses_first(self):
-        """Calling start_browser twice should reuse the first Chrome."""
-        result1 = start_browser(headless=True, profile=f"{TEST_PROFILE}-reuse1")
+        """Calling browser_start twice should reuse the first Chrome."""
+        result1 = browser_start(headless=True, profile=f"{TEST_PROFILE}-reuse1")
         assert "error" not in result1, f"First start failed: {result1}"
         port1 = result1["port"]
         assert result1["reused"] is False
 
         # Second call - should reuse
-        result2 = start_browser(headless=True, profile=f"{TEST_PROFILE}-reuse1")
+        result2 = browser_start(headless=True, profile=f"{TEST_PROFILE}-reuse1")
         assert "error" not in result2, f"Second start failed: {result2}"
         assert result2["reused"] is True
         assert result2["port"] == port1, "Should reuse same port"
 
     async def test_reuse_finds_idle_chrome_regardless_of_profile(self):
         """Default reuse strategy finds ANY idle Chrome, even with different profile."""
-        result1 = start_browser(headless=True, profile=f"{TEST_PROFILE}-profA")
+        result1 = browser_start(headless=True, profile=f"{TEST_PROFILE}-profA")
         assert "error" not in result1
         port1 = result1["port"]
         assert result1["reused"] is False
 
         # Different profile, but default reuse="any" finds idle profA Chrome
-        result2 = start_browser(headless=True, profile=f"{TEST_PROFILE}-profB")
+        result2 = browser_start(headless=True, profile=f"{TEST_PROFILE}-profB")
         assert "error" not in result2
         assert result2["reused"] is True
         assert result2["port"] == port1, (
@@ -85,13 +85,13 @@ class TestStartBrowserReuse:
 
     async def test_reuse_none_with_same_profile_still_reuses(self):
         """reuse='none' skips reuse scan, but profile check still catches existing Chrome."""
-        result1 = start_browser(headless=True, profile=f"{TEST_PROFILE}-force")
+        result1 = browser_start(headless=True, profile=f"{TEST_PROFILE}-force")
         assert "error" not in result1
         port1 = result1["port"]
 
         # reuse='none' skips _find_reusable_chrome, but _find_chrome_using_profile
         # detects the same profile dir is already in use
-        result2 = start_browser(
+        result2 = browser_start(
             headless=True, profile=f"{TEST_PROFILE}-force", reuse="none"
         )
         assert "error" not in result2
@@ -100,14 +100,14 @@ class TestStartBrowserReuse:
 
     async def test_reuse_none_different_profile_gets_new_chrome(self):
         """reuse='none' + different profile = truly new Chrome."""
-        result1 = start_browser(
+        result1 = browser_start(
             headless=True, profile=f"{TEST_PROFILE}-newA", reuse="none"
         )
         assert "error" not in result1
         port1 = result1["port"]
         assert result1["reused"] is False
 
-        result2 = start_browser(
+        result2 = browser_start(
             headless=True, profile=f"{TEST_PROFILE}-newB", reuse="none"
         )
         assert "error" not in result2
@@ -119,11 +119,11 @@ class TestStartBrowserReuse:
 
 
 class TestAutoDetection:
-    """Test CLI auto-detection: when no port specified, find idle Chrome."""
+    """Test CLI auto-detection: when no port specified, page_find idle Chrome."""
 
     async def test_find_idle_chrome(self):
-        """Auto-detection should find an idle Chrome in the port range."""
-        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-detect")
+        """Auto-detection should page_find an idle Chrome in the port range."""
+        result = browser_start(headless=True, profile=f"{TEST_PROFILE}-detect")
         assert "error" not in result
         port = result["port"]
 
@@ -136,7 +136,7 @@ class TestAutoDetection:
 
     async def test_auto_detect_skips_in_use_chrome(self):
         """Auto-detection should skip Chromes that have attached debuggers."""
-        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-skip")
+        result = browser_start(headless=True, profile=f"{TEST_PROFILE}-skip")
         assert "error" not in result
         port = result["port"]
 
@@ -150,24 +150,24 @@ class TestAutoDetection:
         assert is_chrome_in_use(port), "Connected Chrome should be in use"
 
         # Start another Chrome - auto-detection should skip the in-use one
-        result2 = start_browser(headless=True, profile=f"{TEST_PROFILE}-skip2")
+        result2 = browser_start(headless=True, profile=f"{TEST_PROFILE}-skip2")
         assert "error" not in result2
         port2 = result2["port"]
         assert port2 != port, "Should get a different port since first is in use"
 
 
 class TestStopBrowser:
-    """Test stop_browser cleanup."""
+    """Test browser_stop cleanup."""
 
     async def test_stop_frees_port(self):
         """Stopping a browser should free its port."""
-        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-stop")
+        result = browser_start(headless=True, profile=f"{TEST_PROFILE}-stop")
         assert "error" not in result
         port = result["port"]
 
         assert is_port_in_use(port=port), "Chrome should be listening"
 
-        stop_result = stop_browser(port=port)
+        stop_result = browser_stop(port=port)
         assert stop_result["stopped"] is True
         assert stop_result["count"] == 1
 
@@ -181,42 +181,42 @@ class TestStopBrowser:
 
     async def test_restart_after_stop(self):
         """Can start a new Chrome after stopping the previous one."""
-        result1 = start_browser(headless=True, profile=f"{TEST_PROFILE}-restart")
+        result1 = browser_start(headless=True, profile=f"{TEST_PROFILE}-restart")
         assert "error" not in result1
         port1 = result1["port"]
 
-        stop_browser(port=port1)
+        browser_stop(port=port1)
         for _ in range(20):
             if not is_port_in_use(port=port1):
                 break
             await asyncio.sleep(0.3)
 
         # Start again with same profile
-        result2 = start_browser(headless=True, profile=f"{TEST_PROFILE}-restart")
+        result2 = browser_start(headless=True, profile=f"{TEST_PROFILE}-restart")
         assert "error" not in result2
         assert result2["reused"] is False, "Should be a fresh Chrome after stop"
 
 
 class TestListBrowsers:
-    """Test list_browsers visibility."""
+    """Test browser_list visibility."""
 
     async def test_started_chrome_visible_in_list(self):
-        """Chrome started by us should appear in list_browsers."""
-        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-list")
+        """Chrome started by us should appear in browser_list."""
+        result = browser_start(headless=True, profile=f"{TEST_PROFILE}-list")
         assert "error" not in result
         port = result["port"]
 
-        listing = list_browsers()
+        listing = browser_list()
         all_ports = [b["port"] for b in listing.get("browsers", [])]
         assert port in all_ports, f"Port {port} not in list: {listing}"
 
     async def test_list_shows_can_connect_status(self):
-        """list_browsers should show correct can_connect status."""
-        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-connect")
+        """browser_list should show correct can_connect status."""
+        result = browser_start(headless=True, profile=f"{TEST_PROFILE}-connect")
         assert "error" not in result
         port = result["port"]
 
-        listing = list_browsers()
+        listing = browser_list()
         for b in listing.get("browsers", []):
             if b["port"] == port:
                 assert b["can_connect"] is True, "Idle Chrome should be connectable"
@@ -233,9 +233,9 @@ class TestCLIAutoDetectFlow:
     """
 
     async def test_cli_auto_detect_finds_chrome(self):
-        """Simulate CLI auto-detection: find idle Chrome without --port."""
+        """Simulate CLI auto-detection: page_find idle Chrome without --port."""
         # Start a Chrome
-        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-cli")
+        result = browser_start(headless=True, profile=f"{TEST_PROFILE}-cli")
         assert "error" not in result
         expected_port = result["port"]
 
@@ -251,7 +251,7 @@ class TestCLIAutoDetectFlow:
 
     async def test_cli_auto_detect_connects_successfully(self):
         """Auto-detected port should be connectable."""
-        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-cli2")
+        result = browser_start(headless=True, profile=f"{TEST_PROFILE}-cli2")
         assert "error" not in result
 
         # Auto-detect
@@ -275,7 +275,7 @@ class TestCLIAutoDetectFlow:
         assert result == 2
 
     async def test_no_chrome_returns_none(self):
-        """When no Chrome is running, auto-detection should find nothing."""
+        """When no Chrome is running, auto-detection should page_find nothing."""
         for candidate, _pid in find_debug_chromes():
             if not is_chrome_in_use(candidate):
                 break
@@ -293,7 +293,7 @@ class TestConnectionReuse:
 
     async def test_repeated_connect_reuses_instance(self):
         """Multiple connect_browser() to same port returns same instance."""
-        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-reuse-conn")
+        result = browser_start(headless=True, profile=f"{TEST_PROFILE}-reuse-conn")
         assert "error" not in result
         port = result["port"]
 
@@ -310,7 +310,7 @@ class TestConnectionReuse:
 
     async def test_close_then_reconnect(self):
         """After close(), next connect_browser() creates fresh instance."""
-        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-close-recon")
+        result = browser_start(headless=True, profile=f"{TEST_PROFILE}-close-recon")
         assert "error" not in result
         port = result["port"]
 
@@ -328,7 +328,7 @@ class TestConnectionReuse:
 
     async def test_context_manager_cleanup(self):
         """async with connect_browser() cleans up on exit."""
-        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-ctx")
+        result = browser_start(headless=True, profile=f"{TEST_PROFILE}-ctx")
         assert "error" not in result
         port = result["port"]
 
@@ -349,7 +349,7 @@ class TestConnectionReuse:
 
     async def test_repeated_connect_all_work(self):
         """5 sequential connect_browser() calls all produce working tabs."""
-        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-multi")
+        result = browser_start(headless=True, profile=f"{TEST_PROFILE}-multi")
         assert "error" not in result
         port = result["port"]
 
@@ -363,7 +363,7 @@ class TestConnectionReuse:
 
     async def test_tab_reconnects_after_websocket_disconnect(self):
         """Tab auto-reconnects when its WebSocket is broken."""
-        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-tab-recon")
+        result = browser_start(headless=True, profile=f"{TEST_PROFILE}-tab-recon")
         assert "error" not in result
         port = result["port"]
 
@@ -386,25 +386,25 @@ class TestConnectionReuse:
 
     async def test_screenshot_works_after_reconnect(self):
         """Page.captureScreenshot requires Page.enable() after reconnect."""
-        result = start_browser(headless=True, profile=f"{TEST_PROFILE}-ss-recon")
+        result = browser_start(headless=True, profile=f"{TEST_PROFILE}-ss-recon")
         assert "error" not in result
         port = result["port"]
 
         from ai_dev_browser.core.connection import connect_browser, get_active_tab
-        from ai_dev_browser.core.page import screenshot
+        from ai_dev_browser.core.page import page_screenshot
 
         browser = await connect_browser(port=port)
         tab = await get_active_tab(browser)
 
         # Screenshot before disconnect
-        r1 = await screenshot(tab, path="test_recon1.png")
+        r1 = await page_screenshot(tab, path="test_recon1.png")
         assert r1["size"] > 0
 
         # Kill tab WebSocket
         await tab._connection.disconnect()
 
         # Screenshot after reconnect — Page domain must be re-enabled
-        r2 = await screenshot(tab, path="test_recon2.png")
+        r2 = await page_screenshot(tab, path="test_recon2.png")
         assert r2["size"] > 0
 
         import os

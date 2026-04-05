@@ -286,21 +286,21 @@ async def click_by_ref(
     tab: Tab,
     ref: str,
 ) -> dict:
-    """Click element by ref from find().
+    """Click element by ref from page_find().
 
-    This is the primary way for AI to click elements by ref. Use find() first
+    This is the primary way for AI to click elements by ref. Use page_find() first
     to get element refs, then click_by_ref with the ref string.
 
     Args:
         tab: Tab instance
-        ref: Element ref from find() (e.g., "5#214" or "FRAME_ABC123:5#214")
+        ref: Element ref from page_find() (e.g., "5#214" or "FRAME_ABC123:5#214")
 
     Returns:
         dict with clicked status and element info
 
     Example:
-        # First find elements
-        result = find()
+        # First page_find elements
+        result = page_find()
         # Then click by ref
         click_by_ref("5#214")
     """
@@ -311,15 +311,15 @@ async def focus_by_ref(
     tab: Tab,
     ref: str,
 ) -> dict:
-    """Focus element by ref from find().
+    """Focus element by ref from page_find().
 
-    Use find() first to get element refs, then focus_by_ref.
+    Use page_find() first to get element refs, then focus_by_ref.
     Useful when you need to focus without clicking (e.g., to avoid
     triggering click handlers).
 
     Args:
         tab: Tab instance
-        ref: Element ref from find() (e.g., "5#214")
+        ref: Element ref from page_find() (e.g., "5#214")
 
     Returns:
         dict with focused status
@@ -347,13 +347,13 @@ async def type_by_ref(
     text: str,
     clear: bool = False,
 ) -> dict:
-    """Type text into element by ref from find().
+    """Type text into element by ref from page_find().
 
-    Use find() first to get element refs, then type_by_ref.
+    Use page_find() first to get element refs, then type_by_ref.
 
     Args:
         tab: Tab instance
-        ref: Element ref from find() (e.g., "5#214")
+        ref: Element ref from page_find() (e.g., "5#214")
         text: Text to type into the element
         clear: If True, clear existing content first
 
