@@ -61,11 +61,18 @@ jobs:
           print('Chrome found:', chrome)
           proc = launch_chrome(port=9399, headless=True)
           print('Started PID', proc.pid, 'on port 9399')
-          time.sleep(2)
 
-          pid = get_pid_on_port(9399)
+          # Poll for port (CI machines can be slow)
+          pid = None
+          for i in range(10):
+              time.sleep(1)
+              pid = get_pid_on_port(9399)
+              if pid:
+                  break
+              print(f'Waiting for Chrome to bind port... ({i+1}s)')
+
           print('PID on port 9399:', pid)
-          assert pid is not None, 'Chrome not listening on port'
+          assert pid is not None, 'Chrome not listening on port after 10s'
 
           _kill_process_tree(proc.pid)
           print('Killed. Smoke test passed.')
