@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+
+      # ── Launcher test (platform-specific) ──
+      - name: Test adb launcher (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          chmod +x ./adb
+          ./adb --help
+          ./adb --list
+
+      - name: Test adb launcher (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          adb.cmd --help
+          adb.cmd --list
+
+      # ── Python cross-platform tests ──
+      - name: Test tool dispatch
+        run: |
+          uv run python -m ai_dev_browser --help
+          uv run python -m ai_dev_browser --list
+
+      - name: Test tool help
+        run: uv run python -m ai_dev_browser page-find --help
+
+      - name: Test Chrome detection
+        run: uv run python -c "from ai_dev_browser.core.chrome import find_chrome; print('Chrome:', find_chrome())"
+
+      - name: Test port utilities
+        run: uv run python -c "from ai_dev_browser.core.port import is_port_in_use; print('Port 9222 in use:', is_port_in_use(port=9222))"
+
+      - name: Test browser-start help
+        run: uv run python -m ai_dev_browser browser-start --help
+
+      # ── Headless browser smoke test ──
+      - name: Smoke test headless browser
+        run: |
+          uv run python -c "
+          from ai_dev_browser.core.chrome import find_chrome, launch_chrome
+          from ai_dev_browser.core.process import get_pid_on_port, _kill_process_tree
+          import time
+
+          chrome = find_chrome()
+          if not chrome:
+              print('SKIP: Chrome not installed')
+              exit(0)
+
+          print('Chrome found:', chrome)
+          proc = launch_chrome(port=9399, headless=True)
+          print('Started PID', proc.pid, 'on port 9399')
+          time.sleep(2)
+
+          pid = get_pid_on_port(9399)
+          print('PID on port 9399:', pid)
+          assert pid is not None, 'Chrome not listening on port'
+
+          _kill_process_tree(proc.pid)
+          print('Killed. Smoke test passed.')
+          "

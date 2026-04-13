@@ -44,6 +44,9 @@ fuzzy = [
     "rapidfuzz>=3.0",  # Fast C-based Levenshtein for fuzzy_find/fuzzy_click
 ]
 
+[project.scripts]
+adb = "ai_dev_browser.__main__:main"
+
 [project.urls]
 Homepage = "https://github.com/sudoprivacy/ai-dev-browser"
 Repository = "https://github.com/sudoprivacy/ai-dev-browser"
