@@ -33,22 +33,17 @@ jobs:
           adb.cmd --list
 
       # ── Python cross-platform tests ──
-      - name: Test tool dispatch
+      - name: Test dispatcher and tool help
         run: |
           uv run python -m ai_dev_browser --help
           uv run python -m ai_dev_browser --list
-
-      - name: Test tool help
-        run: uv run python -m ai_dev_browser page-find --help
+          uv run python -m ai_dev_browser browser-start --help
 
       - name: Test Chrome detection
         run: uv run python -c "from ai_dev_browser.core.chrome import find_chrome; print('Chrome:', find_chrome())"
 
       - name: Test port utilities
         run: uv run python -c "from ai_dev_browser.core.port import is_port_in_use; print('Port 9222 in use:', is_port_in_use(port=9222))"
-
-      - name: Test browser-start help
-        run: uv run python -m ai_dev_browser browser-start --help
 
       # ── Headless browser smoke test ──
       - name: Smoke test headless browser
