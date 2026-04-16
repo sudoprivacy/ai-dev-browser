@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main, dev]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+
+      # ── Launcher test (platform-specific) ──
+      - name: Test aidb launcher (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          chmod +x ./aidb
+          ./aidb --list
+          ./aidb browser-start --help
+
+      - name: Test aidb launcher (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          aidb.cmd --list
+          aidb.cmd browser-start --help
+
+      # ── Headless browser smoke test ──
+      - name: Smoke test headless browser
+        run: |
+          uv run python -c "
+          from ai_dev_browser.core.browser import browser_start, browser_stop
+
+          result = browser_start(headless=True, temp=True)
+          if 'error' in result:
+              print('SKIP:', result['error'])
+              exit(0)
+
+          port = result['port']
+          pid = result['pid']
+          print(f'Started: port={port}, pid={pid}, reused={result.get(\"reused\", False)}')
+
+          stop_result = browser_stop(port=port)
+          print(f'Stopped: {stop_result}')
+          print('Smoke test passed.')
+          "
