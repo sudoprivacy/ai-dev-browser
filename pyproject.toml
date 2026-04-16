@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=61.0", "wheel", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-dev-browser"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A browser for AI to develop web automation — human-like automation that works seamlessly in a world designed for humans"
 readme = "README.md"
 license = {text = "AGPL-3.0"}
@@ -62,3 +62,8 @@ exclude = ["ai_dev_browser/cdp"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+
+# Version is derived from the latest git tag (SSOT).
+# Never hand-edit a version string anywhere — just `git tag vX.Y.Z`.
+[tool.setuptools_scm]
+fallback_version = "0.0.0"

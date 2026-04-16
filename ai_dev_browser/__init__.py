@@ -5,6 +5,8 @@ AI-first design for intuitive browser automation.
     from ai_dev_browser import cdp, connect_browser, browser_start
 """
 
+from ._version import __version__
+
 # Core operations (all shared code lives here)
 # Core browser operations (shared by tools/ and Python code)
 from . import core
@@ -50,8 +52,6 @@ from .pool import (
 # Profile management
 from .profile import ProfileManager, ProfileMode
 
-
-__version__ = "0.1.0"
 
 __all__ = [
     # Version
