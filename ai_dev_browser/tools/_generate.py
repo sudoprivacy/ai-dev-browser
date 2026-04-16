@@ -20,7 +20,6 @@ INTERNAL = {
     "find_debug_chromes",
     "get_available_port",
     "get_pid_on_port",
-    "get_process_cmdline",
     "connect_browser",
     "get_active_tab",
 }

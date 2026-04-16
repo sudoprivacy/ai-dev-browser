@@ -15,7 +15,7 @@ Coverage: 19/19 real workflows (100%)
 Identified using AI scenario recognition with complete code generation
 
 Coverage Report:
-  ✅ Start Chrome → Read cmdline → Verify workspace tag matches cwd
+  ✅ Start Chrome → Read cmdline via CDP → Verify workspace tag matches cwd
   ✅ Generate slug for cwd → Generate slug for different path → Verify they differ but cwd slug is stable
   ✅ Get profile dir for workspace A → Get profile dir for workspace B → Verify they differ
   ✅ Start Chrome → Verify find_workspace_chromes finds it → Verify find_debug_chromes shows workspace
@@ -57,11 +57,11 @@ from ai_dev_browser.core.connection import (
 )
 from ai_dev_browser.core.page import page_screenshot
 from ai_dev_browser.core.port import (
+    _query_chrome_cmdline,
     find_debug_chromes,
     find_workspace_chromes,
     is_port_in_use,
 )
-from ai_dev_browser.core.process import get_process_cmdline
 
 # Integration guard: allow CI to opt-out with SKIP_INTEGRATION=1
 SKIP_INTEGRATION = os.environ.get("SKIP_INTEGRATION", "").lower() in (
@@ -98,25 +98,27 @@ def test_workspace_tag_in_chrome_cmdline(cleanup_test_chromes):
     """
     Real scenario: Verify workspace tag appears in Chrome's command line
 
-    Workflow: Start Chrome → Read cmdline → Verify workspace tag matches cwd
+    Workflow: Start Chrome → Read cmdline via CDP → Verify workspace tag matches cwd
 
     User problem: When multiple AI agents run on the same machine, each Chrome must be tagged with the owning workspace so they don't steal each other's instances
 
     Data flow:
       1. browser_start operation
-      2. get_process_cmdline operation
+      2. _query_chrome_cmdline via CDP
     """
     # Step 1: Execute operation
     result = browser_start(headless=True, profile="test-ws-tag")
     assert "error" not in result
     assert result["reused"] is False
-    pid = result["pid"]  # Extract for next step
+    port = result["port"]
 
-    # Step 2: Execute operation
-    cmdline = get_process_cmdline(pid=pid)
+    # Step 2: Query command line via CDP (platform-independent)
+    cmdline = _query_chrome_cmdline(port)
     assert cmdline is not None
-    assert "--ai-dev-browser-workspace=" in cmdline
-    assert os.path.normcase(os.getcwd()) in os.path.normcase(cmdline)
+    ws_args = [a for a in cmdline if a.startswith("--ai-dev-browser-workspace=")]
+    assert len(ws_args) == 1
+    ws_value = ws_args[0].split("=", 1)[1]
+    assert os.path.normcase(os.getcwd()) == os.path.normcase(ws_value)
 
 
 def test_workspace_slug_deterministic_and_unique():

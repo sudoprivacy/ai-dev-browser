@@ -189,6 +189,7 @@ def launch_chrome(
         f"--remote-debugging-port={port}",
         f"--user-data-dir={user_data_dir}",
         "--remote-allow-origins=*",  # Allow CDP connections for in-use detection
+        "--enable-automation",  # Required for CDP Browser.getBrowserCommandLine()
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-background-networking",
@@ -205,8 +206,7 @@ def launch_chrome(
     ]
 
     # Workspace tag: identifies which working directory owns this Chrome.
-    # Placed before other --flags so the regex in port.py can reliably
-    # terminate at the next ` --` boundary.
+    # Read back via CDP Browser.getBrowserCommandLine() in port.py.
     args.append(f"--ai-dev-browser-workspace={os.getcwd()}")
 
     # Session restore behavior (default: suppress for clean automation state)

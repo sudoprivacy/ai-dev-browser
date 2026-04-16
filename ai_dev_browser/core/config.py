@@ -27,9 +27,7 @@ DEFAULT_PROFILE_PREFIX = "ai_dev_browser_"
 # Screenshots (relative to cwd — follows the consuming project)
 DEFAULT_SCREENSHOT_DIR = Path("screenshots")
 
-# Debug port range
-# Note: Windows Hyper-V reserves dynamic port ranges that change on reboot.
-# get_available_port() uses _is_port_bindable() to skip reserved ports at runtime.
+# Debug port range for scanning and allocation
 DEFAULT_DEBUG_HOST = "127.0.0.1"
 DEFAULT_DEBUG_PORT = 9350
 DEFAULT_PORT_RANGE = (9350, 9450)

@@ -1,55 +1,88 @@
 """Port management for Chrome debugging.
 
-This module provides port scanning and availability detection:
-- is_port_in_use: Check if a port is occupied
-- get_available_port: Find an available debugging port
-- find_debug_chromes: Find all debugging Chrome instances
+Discovery uses port scanning + CDP (no process enumeration):
+  1. Scan port range for listening ports (socket.connect)
+  2. Hit /json/version to confirm Chrome debug port
+  3. CDP Browser.getBrowserCommandLine() to read workspace tag
 
 Example:
     port = get_available_port()
-    print(f"Available port: {port}")
+    chromes = find_debug_chromes()
 """
 
+import json
 import logging
 import os
 import shutil
 import socket
 import tempfile
+import urllib.request
 from pathlib import Path
 
 from .config import (
     DEFAULT_DEBUG_HOST,
-    DEFAULT_DEBUG_PORT,
     DEFAULT_PORT_RANGE,
     DEFAULT_PROFILE_PREFIX,
 )
-from .process import _find_chrome_processes, get_pid_on_port, get_process_cmdline
+from .process import get_pid_on_port
 
 
 logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Shared Helpers (DRY)
+# CDP-based Chrome Discovery
 # =============================================================================
 
 
-def _is_chrome_process(cmdline: str | None) -> bool:
-    """Check if cmdline indicates a Chrome process."""
-    return cmdline is not None and "chrome" in cmdline.lower()
+def _query_chrome_cmdline(
+    port: int,
+    host: str = DEFAULT_DEBUG_HOST,
+    timeout: float = 2.0,
+) -> list[str] | None:
+    """Query Chrome's command line via CDP Browser.getBrowserCommandLine.
 
+    Two-step: HTTP /json/version to get WebSocket URL, then sync
+    WebSocket CDP call to get command line arguments.
 
-def _get_chrome_info_on_port(port: int) -> tuple[int | None, str | None]:
-    """Get PID and cmdline for process on port.
+    Args:
+        port: Chrome debug port to query.
+        host: Host address.
+        timeout: Timeout for HTTP and WebSocket operations.
 
     Returns:
-        Tuple of (pid, cmdline). Both None if no process found.
+        List of command line arguments, or None if not a Chrome debug port.
     """
-    pid = get_pid_on_port(port)
-    if pid is None:
-        return None, None
-    cmdline = get_process_cmdline(pid)
-    return pid, cmdline
+    try:
+        # Step 1: HTTP — confirm Chrome debug port, get WebSocket URL
+        resp = urllib.request.urlopen(
+            f"http://{host}:{port}/json/version", timeout=timeout
+        )
+        info = json.loads(resp.read())
+        ws_url = info.get("webSocketDebuggerUrl")
+        if not ws_url:
+            return None
+
+        # Step 2: Sync WebSocket — CDP Browser.getBrowserCommandLine
+        import websocket  # websocket-client (sync)
+
+        ws = websocket.create_connection(ws_url, timeout=timeout)
+        try:
+            ws.send(json.dumps({"id": 1, "method": "Browser.getBrowserCommandLine"}))
+            result = json.loads(ws.recv())
+            return result.get("result", {}).get("arguments", [])
+        finally:
+            ws.close()
+    except Exception:
+        return None
+
+
+def _extract_workspace(cmdline: list[str]) -> str | None:
+    """Extract --ai-dev-browser-workspace= value from command line args."""
+    for arg in cmdline:
+        if arg.startswith("--ai-dev-browser-workspace="):
+            return arg.split("=", 1)[1].strip().strip('"').strip("'")
+    return None
 
 
 # =============================================================================
@@ -57,9 +90,7 @@ def _get_chrome_info_on_port(port: int) -> tuple[int | None, str | None]:
 # =============================================================================
 
 
-def _is_port_bindable(
-    host: str = DEFAULT_DEBUG_HOST, port: int = DEFAULT_DEBUG_PORT
-) -> bool:
+def _is_port_bindable(host: str = DEFAULT_DEBUG_HOST, port: int = 9350) -> bool:
     """Check if a port can actually be bound (not reserved by the OS).
 
     On Windows, Hyper-V reserves dynamic port ranges that appear "unused"
@@ -76,7 +107,7 @@ def _is_port_bindable(
 
 def is_port_in_use(
     host: str = DEFAULT_DEBUG_HOST,
-    port: int = DEFAULT_DEBUG_PORT,
+    port: int = 9350,
     timeout: float = 0.1,
 ) -> bool:
     """Check if a port is in use (Chrome might be listening).
@@ -85,7 +116,7 @@ def is_port_in_use(
 
     Args:
         host: Host to check (default: 127.0.0.1)
-        port: Port to check (default: DEFAULT_DEBUG_PORT)
+        port: Port to check
         timeout: Connection timeout in seconds
 
     Returns:
@@ -166,42 +197,36 @@ def get_available_port(
     )
 
 
+# =============================================================================
+# Chrome Instance Discovery (port scan + CDP)
+# =============================================================================
+
+
 def find_debug_chromes(
     port_range: tuple[int, int] = DEFAULT_PORT_RANGE,
-) -> list[tuple[int, int, str | None]]:
-    """Find all Chrome instances with --remote-debugging-port.
+) -> list[tuple[int, int | None, str | None]]:
+    """Find all Chrome instances with remote debugging enabled.
 
-    Uses process enumeration instead of port scanning.
+    Scans port range and uses CDP to identify Chrome instances and
+    extract their workspace tags. No process enumeration needed.
 
     Args:
-        port_range: Tuple of (start_port, end_port) to filter results
+        port_range: Tuple of (start_port, end_port) to scan
 
     Returns:
         List of (port, pid, workspace) tuples for each found Chrome.
         workspace is the --ai-dev-browser-workspace value, or None if absent.
     """
-    import re
-
     chromes = []
-    for pid, cmdline in _find_chrome_processes():
-        # Skip child processes (renderers, GPU, etc.)
-        if "--type=" in cmdline:
+    for port in range(port_range[0], port_range[1]):
+        if not is_port_in_use(port=port):
             continue
-        # Extract --remote-debugging-port=XXXX
-        match = re.search(r"--remote-debugging-port=(\d+)", cmdline)
-        if not match:
+        cmdline = _query_chrome_cmdline(port)
+        if cmdline is None:
             continue
-        port = int(match.group(1))
-        if port_range[0] <= port < port_range[1]:
-            # Extract workspace tag.
-            # Value runs until next ` --` flag, a URL (about:, http:), or end of string.
-            ws_match = re.search(
-                r"--ai-dev-browser-workspace=(.+?)(?=\s+--|\s+[a-z]+:|$)", cmdline
-            )
-            workspace = (
-                ws_match.group(1).strip().strip('"').strip("'") if ws_match else None
-            )
-            chromes.append((port, pid, workspace))
+        workspace = _extract_workspace(cmdline)
+        pid = get_pid_on_port(port)
+        chromes.append((port, pid, workspace))
 
     return chromes
 
@@ -209,12 +234,12 @@ def find_debug_chromes(
 def find_workspace_chromes(
     workspace: str | None = None,
     port_range: tuple[int, int] = DEFAULT_PORT_RANGE,
-) -> list[tuple[int, int]]:
+) -> list[tuple[int, int | None]]:
     """Find debug Chromes belonging to the given workspace.
 
     Args:
         workspace: Working directory to match. Defaults to os.getcwd().
-        port_range: Tuple of (start_port, end_port) to filter results
+        port_range: Tuple of (start_port, end_port) to scan
 
     Returns:
         List of (port, pid) tuples for Chromes matching the workspace.
@@ -228,6 +253,11 @@ def find_workspace_chromes(
         if ws is not None and os.path.normcase(os.path.normpath(ws)) == workspace:
             results.append((port, pid))
     return results
+
+
+# =============================================================================
+# Temp Profile Cleanup
+# =============================================================================
 
 
 def _cleanup_temp_profile(

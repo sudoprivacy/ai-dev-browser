@@ -25,7 +25,6 @@ from .core import (
     get_available_port,
     # Process management
     get_pid_on_port,
-    get_process_cmdline,
     # Port management
     is_port_in_use,
     launch_chrome,
@@ -76,7 +75,6 @@ __all__ = [
     "get_available_port",
     # Process
     "get_pid_on_port",
-    "get_process_cmdline",
     # Worker pool
     "BrowserPool",
     "Job",

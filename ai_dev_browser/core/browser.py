@@ -14,33 +14,30 @@ from .config import (
 from .connection import graceful_close_browser
 from .port import (
     _cleanup_temp_profile,
+    _query_chrome_cmdline,
     find_debug_chromes,
     find_workspace_chromes,
     get_available_port,
     get_pid_on_port,
     is_port_in_use,
 )
-from .process import _find_chrome_processes, _kill_process_tree, get_process_cmdline
+from .process import _kill_process_tree
 
 
-def _find_chrome_using_profile(profile_dir: Path) -> tuple[int, int] | None:
-    """Find a debugging Chrome using the specified profile.
+def _find_chrome_using_profile(profile_dir: Path) -> tuple[int, int | None] | None:
+    """Find a debugging Chrome using the specified profile via CDP.
 
-    Scans debug port range (9350-9450) for Chrome with matching profile dir.
+    Scans debug port range and queries each Chrome's command line
+    to check if --user-data-dir matches the given profile directory.
 
     Returns:
-        (port, pid) tuple if found, None otherwise
+        (port, pid) tuple if found, None otherwise.
     """
     profile_str = str(profile_dir)
-
     for port, pid, _ws in find_debug_chromes():
-        try:
-            cmdline = get_process_cmdline(pid)
-            if cmdline and profile_str in cmdline:
-                return (port, pid)
-        except Exception:
-            pass
-
+        cmdline = _query_chrome_cmdline(port)
+        if cmdline and any(profile_str in arg for arg in cmdline):
+            return (port, pid)
     return None
 
 
@@ -110,12 +107,11 @@ def browser_start(
         user_data_dir = get_workspace_profile_dir(profile_name)
         user_data_dir.mkdir(parents=True, exist_ok=True)
 
-        # Always check for existing Chrome using this profile
-        # Lock file may be missing even when Chrome is running (e.g., on macOS)
+        # Safety: if another Chrome is already using this profile, reuse it
+        # (launching two Chromes with the same user-data-dir causes crashes)
         existing = _find_chrome_using_profile(user_data_dir)
         if existing:
             existing_port, existing_pid = existing
-            # Auto-reuse the existing Chrome with this profile
             return {
                 "port": existing_port,
                 "pid": existing_pid,
@@ -168,41 +164,6 @@ def browser_start(
         "reused": False,
         "message": f"Browser started on port {port}",
     }
-
-
-def _find_zombie_chromes(
-    known_pids: set[int] | None = None,
-) -> list[dict]:
-    """Find debugging Chromes not visible via port scanning.
-
-    These are Chrome processes that have --remote-debugging-port in their
-    command line but failed to bind the port (e.g., due to Hyper-V reserved
-    ports) or are listening outside our scanned range.
-
-    Any Chrome with --remote-debugging-port is a debugging Chrome created
-    by automation — regular user Chromes never have this flag.
-
-    Args:
-        known_pids: PIDs already found via port scanning (to deduplicate)
-
-    Returns:
-        List of {"pid": int} dicts for zombie Chromes.
-    """
-    known_pids = known_pids or set()
-    zombies = []
-
-    for pid, cmdline in _find_chrome_processes():
-        if pid in known_pids:
-            continue
-        # Any Chrome with --remote-debugging-port is a debugging Chrome
-        if "--remote-debugging-port" not in cmdline:
-            continue
-        # Skip renderer/gpu/utility child processes — only main process matters
-        if "--type=" in cmdline:
-            continue
-        zombies.append({"pid": pid})
-
-    return zombies
 
 
 def _graceful_stop(port: int, pid: int, timeout: float = 5.0) -> dict:
@@ -260,7 +221,7 @@ def browser_stop(
 
     Args:
         port: Port of browser to stop
-        stop_all: Stop all debugging Chrome instances (port-bound + zombies)
+        stop_all: Stop all debugging Chrome instances
 
     Returns:
         dict with stopped status, count, browsers list
@@ -271,19 +232,14 @@ def browser_stop(
     stopped = []
 
     if stop_all:
-        known_pids = set()
         for p, pid, _ws in find_debug_chromes():
+            if pid is None:
+                continue
             try:
-                known_pids.add(pid)
                 result = _graceful_stop(p, pid)
                 stopped.append(result)
             except Exception:
                 pass
-
-        # Also kill zombie Chromes (no port bound but process exists)
-        for zombie in _find_zombie_chromes(known_pids):
-            _kill_process_tree(zombie["pid"])
-            stopped.append({"port": None, "pid": zombie["pid"], "zombie": True})
     else:
         pid = get_pid_on_port(port)
         if pid:
@@ -303,9 +259,6 @@ def browser_list(all_workspaces: bool = False) -> dict:
     By default, shows only Chromes belonging to the current workspace.
     Use all_workspaces=True to see all debugging Chromes.
 
-    Combines port-based discovery (working Chromes) with process-based
-    discovery (zombie Chromes that failed to bind their debug port).
-
     Args:
         all_workspaces: Show Chromes from all workspaces (default: current only)
 
@@ -313,35 +266,24 @@ def browser_list(all_workspaces: bool = False) -> dict:
         dict with browsers list and count
     """
     browsers = []
-    known_pids = set()
 
     if all_workspaces:
-        chrome_list = find_debug_chromes()
-    else:
-        chrome_list = [(p, pid, None) for p, pid in find_workspace_chromes()]
-
-    for entry in chrome_list:
-        p, pid = entry[0], entry[1]
-        workspace = entry[2] if len(entry) > 2 else None
-        known_pids.add(pid)
-        info: dict = {
-            "port": p,
-            "pid": pid,
-        }
-        if all_workspaces and workspace:
-            info["workspace"] = workspace
-        browsers.append(info)
-
-    # Process-based discovery (zombie Chromes) — always show these
-    for zombie in _find_zombie_chromes(known_pids):
-        browsers.append(
-            {
-                "port": None,
-                "pid": zombie["pid"],
-                "can_connect": False,
-                "zombie": True,
+        for p, pid, workspace in find_debug_chromes():
+            info: dict = {
+                "port": p,
+                "pid": pid,
             }
-        )
+            if workspace:
+                info["workspace"] = workspace
+            browsers.append(info)
+    else:
+        for p, pid in find_workspace_chromes():
+            browsers.append(
+                {
+                    "port": p,
+                    "pid": pid,
+                }
+            )
 
     return {
         "browsers": browsers,

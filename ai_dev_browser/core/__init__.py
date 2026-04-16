@@ -98,7 +98,7 @@ from .port import (
 )
 
 # Process management
-from .process import get_pid_on_port, get_process_cmdline
+from .process import get_pid_on_port
 
 # Text matching (only the dataclass is public)
 from .text_match import MatchResult
@@ -159,7 +159,6 @@ __all__ = [
     "get_available_port",
     # Process
     "get_pid_on_port",
-    "get_process_cmdline",
     # Connection
     "connect_browser",
     "get_active_tab",
