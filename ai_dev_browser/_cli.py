@@ -90,6 +90,7 @@ def _parse_docstring_args(docstring: str) -> dict[str, str]:
 
 def _get_param_type(hint) -> type | Callable[[str], bool]:
     """Convert type hint to argparse type."""
+    import types
     from typing import Union
 
     if hint is bool:
@@ -99,10 +100,12 @@ def _get_param_type(hint) -> type | Callable[[str], bool]:
     # For Literal, use str (choices will constrain values)
     if get_origin(hint) is Literal:
         return str
-    # Handle Union types like int | None, str | None
-    # Extract the non-None type from the union
+    # Handle Union types like int | None, str | None.
+    # PEP 604 `int | None` has origin types.UnionType; classic
+    # `Union[int, None]` has origin typing.Union — accept both.
     origin = get_origin(hint)
-    if origin is Union:
+    union_origins = (Union, getattr(types, "UnionType", ()))
+    if origin in union_origins:
         args = get_args(hint)
         non_none_args = [a for a in args if a is not type(None)]
         if len(non_none_args) == 1:
