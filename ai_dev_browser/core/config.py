@@ -32,6 +32,20 @@ DEFAULT_DEBUG_HOST = "127.0.0.1"
 DEFAULT_DEBUG_PORT = 9350
 DEFAULT_PORT_RANGE = (9350, 9450)
 
+# OS ephemeral / dynamic port range — scanned by the slow-path tier of
+# find_debug_chromes() when the preferred range turns up empty.
+#
+# The OS's dynamic port range varies by platform and configuration:
+#   - Linux default:   32768-60999
+#   - macOS default:   49152-65535
+#   - Windows default: 49152-65535, but Windows Server / custom setups
+#                      can start as low as 1024 (seen in the wild)
+#
+# Using (1024, 65536) is a superset that covers every real-world setting,
+# so bind(0) fallback ports are always discoverable. Scan cost is kept
+# sane by parallelism + short timeouts in _scan_ports_for_chrome().
+DEFAULT_EPHEMERAL_RANGE = (1024, 65536)
+
 # Browser reuse strategy
 # - none: Always start new Chrome
 # - any: Reuse any idle debugging Chrome
