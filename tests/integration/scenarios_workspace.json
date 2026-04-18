@@ -309,10 +309,10 @@
       ]
     },
     {
-      "name": "reuse_across_profiles_in_same_workspace",
-      "title": "Default reuse finds idle Chrome even with different profile name",
-      "workflow": "Start Chrome (profile A) → Start Chrome (profile B, reuse=any) → Verify reused same port",
-      "user_problem": "Within the same workspace, default reuse strategy should find any idle Chrome before creating a new one",
+      "name": "distinct_profiles_yield_distinct_chromes",
+      "title": "browser_start respects profile identity — different profiles → different Chromes",
+      "workflow": "Start Chrome (profile A) → Start Chrome (profile B, reuse=any) → Verify distinct ports, neither reused",
+      "user_problem": "A worker pool relies on per-profile Chrome isolation. If reuse=any silently hands back a Chrome running another profile, all workers collapse onto one Chrome and per-profile state leaks.",
       "fixtures": ["cleanup_test_chromes"],
       "steps": [
         {
@@ -332,8 +332,8 @@
           "var_name": "result2",
           "assertions": [
             "'error' not in result2",
-            "result2['reused'] is True",
-            "result2['port'] == port1"
+            "result2['reused'] is False",
+            "result2['port'] != port1"
           ]
         }
       ]

@@ -41,12 +41,26 @@ def _find_chrome_using_profile(profile_dir: Path) -> tuple[int, int | None] | No
     return None
 
 
-def _find_reusable_chrome() -> int | None:
+def _find_reusable_chrome(profile: str | None = None) -> int | None:
     """Find a debugging Chrome in the current workspace to reuse.
 
+    When `profile` is given, only reuse a Chrome already using that
+    profile's user-data-dir — otherwise two browser_start calls with
+    different profiles would silently share the same Chrome, defeating
+    per-profile isolation (e.g. a parallel worker pool).
+
+    When `profile` is None the caller has no profile preference, so any
+    idle debugging Chrome in this workspace is reused (legacy behaviour
+    for default invocations).
+
     Returns:
-        Port number if found, None otherwise
+        Port number if a suitable Chrome is found, None otherwise.
     """
+    if profile is not None:
+        user_data_dir = get_workspace_profile_dir(profile)
+        existing = _find_chrome_using_profile(user_data_dir)
+        return existing[0] if existing else None
+
     for port, _pid in find_workspace_chromes():
         return port
     return None
@@ -74,21 +88,30 @@ def browser_start(
     Returns:
         dict with port, pid, headless, url, profile, reused, message
     """
-    # Try to reuse existing Chrome
-    if reuse != "none":
-        reused_port = _find_reusable_chrome()
+    # Try to reuse an existing Chrome. Profile-aware: if the caller asked
+    # for a specific profile we must not hand back a Chrome running a
+    # different profile (that would break parallel workers using distinct
+    # profiles for isolation). `temp=True` always wants a fresh session,
+    # so skip reuse entirely for that.
+    if reuse != "none" and not temp:
+        reused_port = _find_reusable_chrome(profile=profile)
         if reused_port:
             pid = get_pid_on_port(reused_port)
             return {
                 "port": reused_port,
                 "pid": pid,
+                "profile": profile or "default",
                 "reused": True,
                 "message": f"Reusing existing Chrome on port {reused_port}",
             }
 
-    # No reusable Chrome found, start new one
+    # No reusable Chrome found above (or reuse was skipped for
+    # temp/profile/none). Top-level has already decided reuse semantics, so
+    # ask get_available_port for a fresh port only — otherwise it would
+    # silently hand back the same workspace Chrome we just declined to
+    # reuse.
     if port is None:
-        port = get_available_port(reuse=(reuse != "none"))
+        port = get_available_port(reuse=False)
     else:
         # User specified a port - check if it's available
         if is_port_in_use(port=port):
@@ -175,21 +198,30 @@ def _graceful_stop(port: int, pid: int, timeout: float = 5.0) -> dict:
     Returns:
         dict with port, pid, and method used ("graceful" or "force").
     """
-    # Try graceful shutdown via CDP
+    # Try graceful shutdown via CDP. Detect whether we're already inside a
+    # running event loop BEFORE constructing the coroutine — otherwise
+    # calling graceful_close_browser(port=port) eagerly creates a coroutine
+    # object, and if asyncio.run rejects it (in-loop), the coroutine is
+    # never awaited and Python emits
+    # "RuntimeWarning: coroutine ... was never awaited".
     try:
-        sent = asyncio.run(graceful_close_browser(port=port))
+        asyncio.get_running_loop()
+        in_loop = True
     except RuntimeError:
-        # Already inside a running event loop — use a thread with its own loop
-        import concurrent.futures
+        in_loop = False
 
-        def _run_close():
-            return asyncio.run(graceful_close_browser(port=port))
+    try:
+        if in_loop:
+            # Can't asyncio.run here — offload to a thread with its own loop
+            import concurrent.futures
 
-        try:
+            def _run_close():
+                return asyncio.run(graceful_close_browser(port=port))
+
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 sent = pool.submit(_run_close).result(timeout=timeout)
-        except Exception:
-            sent = False
+        else:
+            sent = asyncio.run(graceful_close_browser(port=port))
     except Exception:
         sent = False
 

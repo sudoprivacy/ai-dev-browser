@@ -321,13 +321,13 @@ def test_workspace_reuse_only_own_chrome(cleanup_test_chromes):
     assert result2["port"] == first_port
 
 
-def test_reuse_across_profiles_in_same_workspace(cleanup_test_chromes):
+def test_distinct_profiles_yield_distinct_chromes(cleanup_test_chromes):
     """
-    Real scenario: Default reuse finds idle Chrome even with different profile name
+    Real scenario: browser_start respects profile identity — different profiles → different Chromes
 
-    Workflow: Start Chrome (profile A) → Start Chrome (profile B, reuse=any) → Verify reused same port
+    Workflow: Start Chrome (profile A) → Start Chrome (profile B, reuse=any) → Verify distinct ports, neither reused
 
-    User problem: Within the same workspace, default reuse strategy should find any idle Chrome before creating a new one
+    User problem: A worker pool relies on per-profile Chrome isolation. If reuse=any silently hands back a Chrome running another profile, all workers collapse onto one Chrome and per-profile state leaks.
 
     Data flow:
       1. browser_start operation
@@ -342,8 +342,8 @@ def test_reuse_across_profiles_in_same_workspace(cleanup_test_chromes):
     # Step 2: Execute operation
     result2 = browser_start(headless=True, profile="test-profB")
     assert "error" not in result2
-    assert result2["reused"] is True
-    assert result2["port"] == port1
+    assert result2["reused"] is False
+    assert result2["port"] != port1
 
 
 def test_reuse_none_same_profile_still_detects(cleanup_test_chromes):
