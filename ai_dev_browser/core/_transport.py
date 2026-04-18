@@ -18,6 +18,8 @@ import websockets.exceptions
 
 from ai_dev_browser import cdp
 
+from ._case import camel_to_snake
+
 logger = logging.getLogger(__name__)
 
 MAX_SIZE: int = 2**28
@@ -176,25 +178,25 @@ class CDPConnection:
         response with the same typed protocol as normal send().
         """
         # Reconstruct the CDP generator from method name + params
-        # e.g., "Page.captureScreenshot" → cdp.page.capture_screenshot(**params)
-        import re
-
+        # e.g. "Page.captureScreenshot" → cdp.page.capture_screenshot(**params)
         domain_name, cmd_name = method.split(".")
-        cmd_snake = re.sub(r"(?<!^)(?=[A-Z])", "_", cmd_name).lower()
         domain_mod = _cdp_get_module(domain_name.lower())
-        cmd_func = getattr(domain_mod, cmd_snake)
+        cmd_func = getattr(domain_mod, camel_to_snake(cmd_name))
 
-        # Convert params from camelCase to snake_case for the function call
-        def to_snake(name: str) -> str:
-            return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+        snake_params = (
+            {camel_to_snake(k): v for k, v in params.items()} if params else {}
+        )
 
-        snake_params = {to_snake(k): v for k, v in params.items()} if params else {}
-
+        # Fail fast with full context if cdp-python rejects a kwarg —
+        # masking the TypeError and retrying with cmd_func() (the previous
+        # behaviour) hid case-conversion bugs behind misleading "missing
+        # required positional argument" errors from the empty retry.
         try:
             cdp_obj = cmd_func(**snake_params)
-        except TypeError:
-            # If param conversion fails, try without params
-            cdp_obj = cmd_func()
+        except TypeError as e:
+            raise TypeError(
+                f"CDP {method}: cdp-python rejected kwargs {sorted(snake_params)} — {e}"
+            ) from e
 
         return await self.send(cdp_obj, _is_update=True)
 

@@ -1,16 +1,11 @@
 """CDP (Chrome DevTools Protocol) command operations."""
 
 import json
-import re
 
 from ai_dev_browser import cdp as cdp_module
 
+from ._case import camel_to_snake
 from ._tab import Tab
-
-
-def _camel_to_snake(name: str) -> str:
-    """Convert camelCase to snake_case."""
-    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
 
 
 def _get_cdp_command(method: str, params: dict):
@@ -24,8 +19,8 @@ def _get_cdp_command(method: str, params: dict):
         CDP command generator
     """
     domain, cmd = method.split(".")
-    domain_snake = _camel_to_snake(domain)
-    cmd_snake = _camel_to_snake(cmd)
+    domain_snake = camel_to_snake(domain)
+    cmd_snake = camel_to_snake(cmd)
 
     # Get the domain module (e.g., cdp.browser)
     domain_mod = getattr(cdp_module, domain_snake)
