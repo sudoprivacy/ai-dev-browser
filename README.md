@@ -84,6 +84,16 @@ Verbs currently in use: `click`, `type`, `focus`, `hover`, `drag`, `highlight`,
 
 ```bash
 pip install ai-dev-browser
+# or pin a specific version
+pip install "ai-dev-browser>=0.5,<0.6"
+# or with uv
+uv add ai-dev-browser
+```
+
+Want the unreleased `master` or a specific commit?
+
+```bash
+pip install "ai-dev-browser @ git+https://github.com/sudoprivacy/ai-dev-browser.git@master"
 ```
 
 ```python
