@@ -80,6 +80,31 @@ Verbs currently in use: `click`, `type`, `focus`, `hover`, `drag`, `highlight`,
 `page_discover`, `page_scroll`). `page_discover` is broad exploration;
 `find_by_*` is targeted single-element lookup.
 
+### Docstring First-Line Convention
+
+Every tool's docstring **first sentence is a decision signal, not a
+description**. Two halves, always in this order:
+
+1. **Input (when to pick me)** — the condition that makes *this* tool the
+   right choice. "Use when: you know the html id…", "Use when: no
+   specific tool fits — last resort…"
+2. **Output (what the return unlocks)** — what the caller does with the
+   return value. "Returns `{found, tag, …}` you branch on — pair with
+   `click_by_html_id` to act."
+
+Why: LLMs ranking tools glance at the first line only. A pure
+description (`"Click an element located by html id, …"`) reads the same
+as a lower-level alternative and gives no priority signal. A decision
+signal (`"Use when: you already know the html id. Prefer over
+click_by_ref when possible."`) tells the LLM when to pick this tool
+*and* what to do next. Measured effect on real LLM traces: the
+intended tool goes from near-zero uptake to the obvious first choice
+for its scenario.
+
+When you add a new tool, write the first line in this shape before
+touching anything else. Everything after it (Args / Returns / Example)
+can stay conventional.
+
 ## Quick Start
 
 ```bash

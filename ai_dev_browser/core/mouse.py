@@ -32,7 +32,10 @@ async def mouse_move(
     steps: int = 10,
     human_like: bool = None,
 ) -> bool:
-    """Move mouse to coordinates.
+    """Use when: you need the cursor at specific coordinates without
+    clicking — hover effects that need dwell, or positioning before a
+    planned click/drag. Usually not needed standalone; prefer
+    `hover_by_ref` (element-level) or `mouse_click` (one-shot).
 
     Args:
         tab: Tab instance
@@ -70,7 +73,11 @@ async def mouse_click(
     double: bool = False,
     human_like: bool = None,
 ) -> bool:
-    """Click at coordinates.
+    """Use when: you need to click at raw screen coordinates — reading
+    them off a `page_screenshot` (pass the same `screenshot` path here
+    and coords auto-scale), or clicking on canvas / SVG / custom-rendered
+    UI that has no DOM element to locate. For DOM elements, prefer the
+    `click_by_*` tools — they're atomic and return navigation feedback.
 
     Args:
         tab: Tab instance
@@ -118,7 +125,10 @@ async def mouse_drag(
     screenshot: str | None = None,
     steps: int = 10,
 ) -> bool:
-    """Drag from one point to another.
+    """Use when: you're drawing on a canvas, resizing via a handle, or
+    manipulating a custom UI with no draggable DOM element. For a
+    specific element drag (reorder, drop on target), prefer `drag_by_ref`
+    — it doesn't need coordinates.
 
     Args:
         tab: Tab instance

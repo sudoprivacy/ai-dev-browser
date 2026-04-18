@@ -62,10 +62,12 @@ def read_screenshot_metadata(path: str) -> dict:
 
 
 async def js_evaluate(tab: Tab, expression: str) -> dict:
-    """Execute JavaScript in the page context.
+    """Use when: NO specific tool fits — this is the last-resort raw JS
+    escape hatch. Returns `{result}` with whatever the expression evaluated
+    to (or `{error}`). Next step is interpreting that value yourself.
 
-    Before reaching for raw JS, check whether a CLI tool already covers your
-    intent — most locator / action cases do:
+    Before picking this: the locate+act combinations below cover almost all
+    intents atomically (and give you navigation feedback on clicks):
 
       - Locate + act by html id:    `click_by_html_id` / `find_by_html_id`
       - Locate + act by XPath:      `click_by_xpath` / `find_by_xpath`
@@ -73,9 +75,8 @@ async def js_evaluate(tab: Tab, expression: str) -> dict:
       - Locate + act by AX ref:     `click_by_ref` / `type_by_ref` (after
                                     `page_discover`)
 
-    Use `js_evaluate` only for genuinely custom JS that none of the above
-    express. For **multi-line** scripts the shell quoting in
-    `--expression "..."` gets painful fast — prefer the Python API:
+    For **multi-line** custom JS the shell quoting in `--expression "..."`
+    gets painful — prefer the Python API:
 
         from ai_dev_browser.core import js_evaluate
         result = await js_evaluate(tab, expression='''
@@ -106,7 +107,15 @@ async def page_screenshot(
     max_long_edge: int = MAX_SCREENSHOT_LONG_EDGE,
     max_total_pixels: int = MAX_SCREENSHOT_TOTAL_PIXELS,
 ) -> dict:
-    """Take a page_screenshot of the page.
+    """Use when: you need pixels for visual reasoning, coordinate-based
+    clicking (feed the path back to `mouse_click --screenshot` for
+    auto-scaling), or evidence of current state. Returns
+    `{path, size, width, height}` — the path is the saved PNG you can
+    read with vision.
+
+    For verifying a click caused navigation, the click_* tools already
+    return `navigated` / `url_after` — screenshot is only needed when
+    you actually need to see pixels.
 
     Args:
         tab: Tab instance
@@ -235,7 +244,10 @@ async def page_screenshot(
 
 
 async def page_info(tab: Tab) -> dict:
-    """Get current page information.
+    """Use when: you need to confirm the current URL / title / readyState
+    without triggering a full `page_discover`. Returns `{url, title,
+    ready, state}`. Cheap; typical next step is branching on url/title
+    to decide the next action.
 
     Args:
         tab: Tab instance
@@ -283,7 +295,10 @@ async def page_html(
     tab: Tab,
     outer: bool = False,
 ) -> dict:
-    """Get page HTML content with metadata.
+    """Use when: `page_discover` doesn't surface what you need (e.g. data
+    hidden in custom attributes, script tags, microdata) and you need
+    the raw page source to inspect or parse. Returns `{html, length}`.
+    For a single element's HTML, use `html_by_ref` instead.
 
     Args:
         tab: Tab instance

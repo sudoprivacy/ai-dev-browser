@@ -286,10 +286,14 @@ async def click_by_ref(
     tab: Tab,
     ref: str,
 ) -> dict:
-    """Click element by ref from page_discover().
+    """Use when: you already called `page_discover()` and have a ref
+    (there was no natural id / xpath / text locator). Atomic click +
+    navigation feedback — returns `{clicked, ref, role, name,
+    url_before, url_after, title_after, navigated}`.
 
-    This is the primary way for AI to click elements by ref. Use page_discover() first
-    to get element refs, then click_by_ref with the ref string.
+    If you know the element's html id / xpath / unique text, skip
+    `page_discover` and go directly to `click_by_html_id` /
+    `click_by_xpath` / `click_by_text` (one call vs two).
 
     Args:
         tab: Tab instance
@@ -331,11 +335,9 @@ async def focus_by_ref(
     tab: Tab,
     ref: str,
 ) -> dict:
-    """Focus element by ref from page_discover().
-
-    Use page_discover() first to get element refs, then focus_by_ref.
-    Useful when you need to focus without clicking (e.g., to avoid
-    triggering click handlers).
+    """Use when: you want an input focused but NOT clicked (to avoid firing
+    click handlers / dropdowns). Prereq: a `ref` from `page_discover()`.
+    Returns `{focused, ref}` — follow with `type_by_ref` to enter text.
 
     Args:
         tab: Tab instance
@@ -367,9 +369,11 @@ async def type_by_ref(
     text: str,
     clear: bool = False,
 ) -> dict:
-    """Type text into element by ref from page_discover().
+    """Use when: you have a `ref` from `page_discover()` and want to type
+    into that specific input. Returns `{typed, ref, text}`.
 
-    Use page_discover() first to get element refs, then type_by_ref.
+    If you can identify the input by its visible label / placeholder, skip
+    `page_discover` and use `type_by_text` directly.
 
     Args:
         tab: Tab instance
@@ -439,9 +443,11 @@ async def hover_by_ref(
     tab: Tab,
     ref: str,
 ) -> dict:
-    """Move mouse to element (hover) by ref from page_discover().
-
-    Useful for triggering hover menus, tooltips, or dropdown previews.
+    """Use when: you need to trigger a hover-only UI (hover menus, tooltips,
+    dropdown previews) without clicking. Prereq: `ref` from `page_discover()`.
+    Returns `{hovered, ref}`. Typical next step: `page_discover` again to
+    see the newly-revealed elements, or `click_by_text` on the hover-shown
+    item.
 
     Args:
         tab: Tab instance
@@ -462,9 +468,11 @@ async def highlight_by_ref(
     ref: str,
     duration: float = 2.0,
 ) -> dict:
-    """Highlight element with colored overlay by ref from page_discover().
-
-    Useful for visual debugging — confirms which element was found.
+    """Use when: you want visual confirmation that a `ref` resolves to the
+    element you think it does (debugging / verifying before an action).
+    Draws a colored overlay on the page for `duration` seconds. Returns
+    `{highlighted, ref}`. Follow with `page_screenshot` to capture the
+    overlay.
 
     Args:
         tab: Tab instance
@@ -485,7 +493,9 @@ async def html_by_ref(
     tab: Tab,
     ref: str,
 ) -> dict:
-    """Get outerHTML of element by ref from page_discover().
+    """Use when: `page_discover`'s summarized text isn't enough and you need
+    the raw outerHTML of a specific element (inspect attributes, nested
+    structure). Prereq: `ref` from `page_discover()`. Returns `{html}`.
 
     Args:
         tab: Tab instance
@@ -506,7 +516,9 @@ async def screenshot_by_ref(
     ref: str,
     path: str | None = None,
 ) -> dict:
-    """Take screenshot of just this element's region by ref from page_discover().
+    """Use when: you need just one element's pixels (not the whole page) —
+    smaller file, tighter crop for LLM vision. Prereq: `ref` from
+    `page_discover()`. Returns `{path, size, ref}`.
 
     Args:
         tab: Tab instance
@@ -537,10 +549,10 @@ async def select_by_ref(
     tab: Tab,
     ref: str,
 ) -> dict:
-    """Select a dropdown option by ref from page_discover().
-
-    For <select> elements: use page_discover() to see options, then select_by_ref
-    on the <option> element.
+    """Use when: you're picking an option inside a native `<select>`.
+    Prereq: `page_discover()` → find the `<option>`'s ref → pass it here.
+    Returns `{selected, ref}`. Don't use this for custom JS dropdowns
+    (those aren't `<option>` elements — use `click_by_text` instead).
 
     Args:
         tab: Tab instance
@@ -561,7 +573,11 @@ async def upload_by_ref(
     ref: str,
     paths: str,
 ) -> dict:
-    """Upload file(s) to a file input by ref from page_discover().
+    """Use when: you're filling a native `<input type="file">`. Prereq:
+    `page_discover()` → find the file input's ref → pass it here with
+    comma-separated absolute paths. Returns `{uploaded, ref, files}`.
+    Don't use this for drag-and-drop upload zones (those aren't file
+    inputs — use `mouse_drag` or a click + native dialog pattern).
 
     Args:
         tab: Tab instance
@@ -586,7 +602,10 @@ async def drag_by_ref(
     to_y: float,
     steps: int = 10,
 ) -> dict:
-    """Drag element to destination coordinates by ref from page_discover().
+    """Use when: you need to reorder a list item, drag-drop a file onto a
+    zone, or move a draggable. Prereq: `ref` of the source element +
+    destination coordinates. Returns `{dragged, ref}`. For arbitrary
+    coord-to-coord drags (no source element), use `mouse_drag`.
 
     Args:
         tab: Tab instance

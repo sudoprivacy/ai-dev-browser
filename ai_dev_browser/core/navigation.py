@@ -13,7 +13,10 @@ async def page_goto(
     tab_new: bool = False,
     wait: bool = True,
 ) -> dict:
-    """Navigate to URL.
+    """Use when: you want to load a specific URL (first navigation, jumping
+    directly to a page, opening in a new tab). Returns `{url, title,
+    success}` — next step is typically `page_discover` or a targeted
+    `click_by_*` / `find_by_*`.
 
     Args:
         tab: Tab instance
@@ -54,7 +57,9 @@ async def _forward(tab: Tab) -> bool:
 
 
 async def page_reload(tab: Tab, ignore_cache: bool = True) -> bool:
-    """Reload the page.
+    """Use when: page got into a bad state and you want a fresh render, or
+    you need to re-trigger the page's initial data load. Returns `True`
+    on success. Typically followed by `page_wait_ready` + `page_discover`.
 
     Args:
         tab: Tab instance
@@ -72,7 +77,10 @@ async def page_wait_ready(
     timeout: float = 30,
     idle_time: float = 0.5,
 ) -> bool:
-    """Wait for page to finish loading.
+    """Use when: you kicked off a navigation / action and need to block
+    until `document.readyState === "complete"` before reading DOM or
+    acting further. Returns `True` on load, `False` on timeout. Typical
+    next step is `page_discover` or a targeted locator.
 
     Args:
         tab: Tab instance
@@ -103,7 +111,13 @@ async def page_wait_url(
     exact: str | None = None,
     timeout: float = 30,
 ) -> dict:
-    """Wait for URL to match pattern.
+    """Use when: you triggered a navigation (click, form submit) and need
+    to block until the URL matches — common in OAuth / redirect /
+    multi-step SPA flows. Returns `{matched, url, elapsed}`.
+
+    If you only need "did the click cause ANY navigation?", the click_*
+    tools now return `navigated` / `url_after` directly — no need for
+    this wait.
 
     Args:
         tab: Tab instance

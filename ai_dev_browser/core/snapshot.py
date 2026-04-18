@@ -332,18 +332,14 @@ async def page_discover(
     include_coordinates: bool = True,
     include_iframes: bool = True,
 ) -> dict:
-    """Find elements on the page - the main discovery tool for AI.
+    """Use when: you DON'T know what's on the page yet — broad exploration
+    of interactable elements. Returns a catalog of elements each with a
+    `ref` you feed into `click_by_ref` / `type_by_ref` / `focus_by_ref`
+    / etc. and `x`/`y` coords you feed into `mouse_click`.
 
-    Returns interactive elements with their refs (for click_ref) and
-    coordinates (for mouse_click). Use this to discover what's on the page
-    before clicking.
-
-    For **targeted single-element lookup** when you already know a specific
-    locator, prefer the narrower tools instead of scanning the whole tree:
-      - `find_by_html_id(html_id)` — element with a known `id` attribute
-      - `find_by_xpath(xpath)` — arbitrary XPath query (things the AX tree
-        can't express)
-    Both recurse into same-origin iframes.
+    Skip this when you already know how to locate your target — go
+    directly to `click_by_html_id` / `click_by_xpath` / `click_by_text`
+    (one call, no intermediate ref catalog).
 
     Args:
         tab: Tab instance

@@ -245,7 +245,10 @@ async def page_scroll(
     to_top: bool = False,
     to_element: Element | None = None,
 ) -> bool:
-    """Scroll the page.
+    """Use when: the target element isn't in the viewport — lazy-loaded
+    content, infinite scroll feed, or a long form. Returns `True` on
+    success. Follow-ups: `page_discover` to see newly-rendered items,
+    or a direct `click_by_*` / `find_by_*` if you know the locator.
 
     Args:
         tab: Tab instance
@@ -416,7 +419,10 @@ async def page_wait_element(
     selector: str | None = None,
     timeout: float = 30,
 ) -> dict:
-    """Wait for element to appear with descriptive message.
+    """Use when: an element is expected to appear asynchronously (after a
+    navigation, XHR, SPA render) and you need to block until it's there
+    before acting. Returns `{found, elapsed, message}` — then call the
+    matching `click_*` / `type_*` to interact.
 
     Args:
         tab: Tab instance
@@ -447,10 +453,14 @@ async def click_by_text(
     timeout: float = 10,
     human_like: bool = True,
 ) -> dict:
-    """Click element by text content.
+    """Use when: you know the element's visible text (button label, link
+    anchor, menu item). Atomic locate+click with fuzzy matching, returns
+    `{clicked, url_before, url_after, title_after, navigated}` so you see
+    the post-click URL without a follow-up screenshot.
 
-    This is the primary way for AI to click elements. Use page_discover() first to
-    see available elements, then click_by_text with the exact text.
+    Prefer when text is unique / unambiguous. For same-id or same-xpath
+    cases use `click_by_html_id` / `click_by_xpath`. For elements you
+    already identified via `page_discover`, use `click_by_ref`.
 
     Args:
         tab: Tab instance
@@ -492,10 +502,12 @@ async def type_by_text(
     timeout: float = 10,
     human_like: bool = None,
 ) -> dict:
-    """Type text into element located by its accessible name.
+    """Use when: you know an input's visible label / placeholder / accessible
+    name (e.g. "Email", "Search…"). Locates by AX name + types. Returns
+    `{typed, name}`.
 
-    Use page_discover() first to see element names (placeholder, label, etc.),
-    then type_by_text with the name.
+    Prefer over `type_by_ref` when you can identify the input by its
+    human-visible label rather than needing a prior `page_discover` ref.
 
     Args:
         tab: Tab instance
@@ -707,11 +719,14 @@ _ELEMENT_INFO_INLINE = """
 
 
 async def find_by_html_id(tab: Tab, html_id: str) -> dict:
-    """Find an element by its html `id` attribute, recursing into same-origin iframes.
+    """Use when: you already know the element's html `id` (from DOM inspection
+    or a rendered template) and want to check existence / read its attrs
+    without acting. Returns `{found, tag, text, visible, attrs}` you can
+    branch on — then call `click_by_html_id` to act, or try a different
+    locator if `found=False`. Cross-frame (same-origin).
 
-    For broad page exploration see `page_discover`. Use this when you already
-    know the specific html `id` (from DOM inspection, prior HTML snapshot, or
-    a rendered template).
+    For broad exploration when you don't know what's on the page, use
+    `page_discover` instead.
 
     Args:
         tab: Tab instance
@@ -749,12 +764,15 @@ async def find_by_html_id(tab: Tab, html_id: str) -> dict:
 
 
 async def click_by_html_id(tab: Tab, html_id: str) -> dict:
-    """Click an element located by html `id`, recursing into same-origin iframes.
+    """Use when: you know the html `id` of the element you want clicked.
+    Atomic locate+click in one call, returns `{clicked, url_before,
+    url_after, title_after, navigated}` so you can tell if the click
+    caused navigation without a follow-up screenshot or page_discover.
+    Cross-frame (same-origin).
 
-    Unlike `click_by_ref` (accessibility tree) and `click_by_text`
-    (visible text), this targets a specific `id` attribute — useful when
-    the element lives inside a frame or the accessibility tree doesn't
-    surface it.
+    Prefer over `click_by_ref` when you already know the id (skips the
+    `page_discover` step). Prefer over `js_evaluate` — this is iframe-
+    aware and gives you navigation feedback.
 
     Args:
         tab: Tab instance
@@ -807,12 +825,12 @@ async def click_by_html_id(tab: Tab, html_id: str) -> dict:
 
 
 async def find_by_xpath(tab: Tab, xpath: str) -> dict:
-    """Find the first element matching an XPath expression, recursing into
-    same-origin iframes.
-
-    For broad page exploration see `page_discover`. Use this when the
-    accessibility tree doesn't surface the element you need or when an
-    XPath is the most natural locator (e.g. `//button[@title='登录']`).
+    """Use when: the element is best expressed as an XPath — attribute
+    predicate (`//button[@data-role='confirm']`), positional
+    (`//div[@class='results']/a[3]`), or anything `page_discover` / text
+    match can't disambiguate. Returns `{found, tag, text, visible, attrs}`
+    you branch on. Pair with `click_by_xpath` to act. Cross-frame
+    (same-origin).
 
     Args:
         tab: Tab instance
@@ -853,8 +871,11 @@ async def find_by_xpath(tab: Tab, xpath: str) -> dict:
 
 
 async def click_by_xpath(tab: Tab, xpath: str) -> dict:
-    """Click the first element matching an XPath expression, recursing into
-    same-origin iframes.
+    """Use when: the element is best expressed as an XPath (attribute
+    predicate, positional, or anything text/ref can't disambiguate).
+    Atomic locate+click, returns `{clicked, url_before, url_after,
+    title_after, navigated}` for one-step navigation verification.
+    Cross-frame (same-origin). Prefer over `js_evaluate` for locate+click.
 
     Args:
         tab: Tab instance
