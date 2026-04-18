@@ -23,41 +23,35 @@ python -m ai_dev_browser.tools.mouse_click --x 105 --y 52 --screenshot screensho
 
 ## Screenshot Coordinate Alignment
 
-Screenshots are automatically scaled to fit LLM vision limits (default: 1280px long edge for Claude). Scaling metadata is embedded in the PNG file. When you pass `--screenshot` to mouse tools, coordinates are auto-converted from screenshot space to CSS viewport space.
-
-```bash
-# Take screenshot (auto-scaled, metadata embedded in PNG)
-python -m ai_dev_browser.tools.page_screenshot
-# → screenshots/20260325_210000.png (1280x800)
-
-# Click using coordinates from the screenshot — auto-scaled
-python -m ai_dev_browser.tools.mouse_click --x 78 --y 117 --screenshot screenshots/20260325_210000.png
-```
-
-Configurable per model:
-```python
-await screenshot(tab, max_long_edge=1280)   # Claude (default)
-await screenshot(tab, max_long_edge=2048)   # GPT-4o
-await screenshot(tab, max_long_edge=0)      # Gemini (unlimited)
-```
+Screenshots are auto-scaled to fit LLM vision limits (default 1280px
+long edge for Claude; configurable per model). Scaling metadata is
+embedded in the PNG, so when a mouse tool accepts `--screenshot`,
+coordinates you read off the image are auto-converted back to CSS
+viewport space. See
+`python -m ai_dev_browser.tools.page_screenshot --help` for the limits
+and `--help` on any mouse tool for the coord passthrough.
 
 ## CLI = Python (SSOT)
 
-Every tool works as both CLI command and Python function. Parameters are defined once in core functions, CLI tools are auto-generated. See [cli-args-ssot](https://github.com/sudoprivacy/cli-args-ssot).
+Every tool is exposed two ways, same signature, from one core function
+definition — CLI wrappers are auto-generated. Pick whichever is more
+convenient:
+
+- **CLI**: `python -m ai_dev_browser.tools.<name> [flags]`
+- **Python**: `from ai_dev_browser.core import <name>`
+
+Because both paths are generated from a single source, parameter
+changes flow to both at once and can't drift. See
+[cli-args-ssot](https://github.com/sudoprivacy/cli-args-ssot) for the
+underlying decorator.
+
+Tools cover: navigation, element interaction, mouse, tabs, screenshots,
+cookies, storage, window management, dialogs, downloads, raw CDP, and
+Cloudflare bypass. To see the current list (count and names change —
+this README deliberately doesn't pin them):
 
 ```bash
-python -m ai_dev_browser.tools.click_by_text --text "Sign in"
-```
-
-```python
-from ai_dev_browser.core import click_by_text
-await click_by_text(tab, text="Sign in")
-```
-
-49 tools covering: navigation, element interaction, mouse, tabs, screenshots, cookies, storage, window management, dialogs, downloads, raw CDP, and Cloudflare bypass.
-
-```bash
-ls ai_dev_browser/tools/  # See all available tools
+ls ai_dev_browser/tools/
 ```
 
 ### Tool Naming Convention
@@ -149,31 +143,30 @@ Want the unreleased `master` or a specific commit?
 pip install "ai-dev-browser @ git+https://github.com/sudoprivacy/ai-dev-browser.git@master"
 ```
 
-```python
-import asyncio
-from ai_dev_browser.core import (
-    browser_start, browser_stop,
-    connect_browser, get_active_tab,
-    page_goto, click_by_text, type_by_text, page_screenshot,
-)
+### Discovery (no hand-written example to drift)
 
-async def main():
-    # Launch Chrome (headless, throw-away profile), then connect a tab.
-    result = browser_start(headless=True, temp=True)
-    port = result["port"]
-    browser = await connect_browser(port=port)
-    tab = await get_active_tab(browser)
+The source IS the documentation — README intentionally does not
+duplicate function signatures or runnable workflows, so it can't
+rot when things get renamed. Instead:
 
-    try:
-        await page_goto(tab, "https://example.com")
-        await type_by_text(tab, name="Email", text="user@example.com")
-        await click_by_text(tab, text="Sign in")
-        await page_screenshot(tab)  # → screenshots/{timestamp}.png
-    finally:
-        browser_stop(port=port)
+```bash
+# What tools exist
+ls ai_dev_browser/tools/
 
-asyncio.run(main())
+# How to use any one of them (docstring first line is a decision
+# signal: "Use when: … Returns {…} so you can …")
+python -m ai_dev_browser.tools.page_discover --help
+python -m ai_dev_browser.tools.click_by_text --help
+python -m ai_dev_browser.tools.browser_start --help
 ```
+
+For runnable end-to-end workflows, the integration tests in
+[`tests/integration/`](tests/integration/) are the canonical
+reference — they always match the current API because CI runs them on
+every commit. Start with
+[`test_locator_workflows.py`](tests/integration/test_locator_workflows.py)
+for common `page_goto` → `click_by_*` / `find_by_*` → `page_screenshot`
+patterns.
 
 ## Human-like Behavior
 
