@@ -137,11 +137,18 @@ class CDPConnection:
         self,
         cdp_obj: Generator[dict[str, Any], dict[str, Any], Any],
         _is_update: bool = False,
+        *,
+        timeout: float | None = None,
     ) -> Any:
         """Send a CDP command and await the response.
 
         Auto-reconnects if WebSocket is dead. On send failure, reconnects
         and raises (caller can retry with a fresh generator).
+
+        Args:
+            timeout: Per-call timeout in seconds. None uses COMMAND_TIMEOUT.
+                Pass a larger value for commands known to take time
+                (e.g. Runtime.evaluate with await_promise on a long fetch).
         """
         if self.closed:
             await self.connect()
@@ -158,14 +165,15 @@ class CDPConnection:
             logger.debug("WebSocket send failed, forcing reconnect: %s", e)
             await self._force_reconnect()
             raise ProtocolException(f"WebSocket send failed: {e}")
+        effective_timeout = timeout if timeout is not None else COMMAND_TIMEOUT
         try:
-            return await asyncio.wait_for(tx, timeout=COMMAND_TIMEOUT)
+            return await asyncio.wait_for(tx, timeout=effective_timeout)
         except asyncio.TimeoutError:
             self._pending.pop(tx.id, None)
             logger.debug("CDP command timed out (%s), forcing reconnect", tx.method)
             await self._force_reconnect()
             raise ProtocolException(
-                f"CDP command timed out after {COMMAND_TIMEOUT}s: {tx.method}",
+                f"CDP command timed out after {effective_timeout}s: {tx.method}",
                 method=tx.method,
                 params=tx.params,
             )

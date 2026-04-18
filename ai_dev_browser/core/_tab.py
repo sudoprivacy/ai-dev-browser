@@ -104,24 +104,46 @@ class Tab:
             self._initialized = True
 
     async def send(
-        self, cdp_obj: Generator[dict[str, Any], dict[str, Any], Any], _is_update=False
+        self,
+        cdp_obj: Generator[dict[str, Any], dict[str, Any], Any],
+        _is_update=False,
+        *,
+        timeout: float | None = None,
+        retry_on_timeout: bool = False,
     ) -> Any:
         """Send CDP command and await response.
 
-        On timeout, re-discovers targets (Electron SPA navigation can
-        change target IDs) and retries once with send_raw().
+        Args:
+            timeout: Per-call timeout in seconds. None = transport default
+                (COMMAND_TIMEOUT, 30s). Pass a larger value for commands
+                that legitimately take time (e.g. evaluate with
+                await_promise on a long fetch) — that way the timeout
+                doesn't fire and there's no ambiguity about whether the
+                command executed.
+            retry_on_timeout: If True, on timeout re-discover targets
+                (Electron SPA may swap target IDs) and replay the command
+                via send_raw(). Default False.
+
+                Replay is unsafe for non-idempotent CDP commands —
+                Runtime.evaluate of JS that issues a POST will execute
+                the POST twice if retry fires. Only opt in when the
+                command is provably idempotent or the timeout is known
+                to be a target-loss artifact rather than a slow command.
         """
         await self._ensure_connected()
         try:
-            return await self._connection.send(cdp_obj, _is_update=_is_update)
+            return await self._connection.send(
+                cdp_obj, _is_update=_is_update, timeout=timeout
+            )
         except Exception as e:
-            # Extract method+params from the exception for retry
+            if not retry_on_timeout:
+                raise
             method = getattr(e, "method", None)
             params = getattr(e, "params", None)
             if not method or not self._browser:
                 raise
 
-        # Timeout with retryable info — re-discover targets and retry
+        # Opt-in retry path — caller asserted this command is safe to replay.
         logger.info("CDP timed out (%s), re-discovering targets and retrying", method)
         await self._rediscover_target()
         await self._ensure_connected()
@@ -179,11 +201,24 @@ class Tab:
     # =========================================================================
 
     async def evaluate(
-        self, expression: str, await_promise=False, return_by_value=False
+        self,
+        expression: str,
+        await_promise=False,
+        return_by_value=False,
+        *,
+        timeout: float | None = None,
     ):
         """Evaluate JS expression and return Python value.
 
         Uses deep serialization for complex return values.
+
+        Args:
+            timeout: Per-call CDP timeout (seconds). None = default 30s.
+                Set higher for long-running awaited promises (long fetch,
+                video generation, etc.) so the call doesn't time out.
+                Note: timing out does NOT auto-retry — the JS may still
+                be running server-side, and replay would double-execute
+                any side effects.
         """
         ser = runtime.SerializationOptions(
             serialization="deep",
@@ -198,7 +233,8 @@ class Tab:
                 return_by_value=return_by_value,
                 allow_unsafe_eval_blocked_by_csp=True,
                 serialization_options=ser,
-            )
+            ),
+            timeout=timeout,
         )
         if errors:
             return errors
