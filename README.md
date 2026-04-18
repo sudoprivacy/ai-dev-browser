@@ -7,12 +7,12 @@ A browser for AI to develop web automation — human-like automation that works 
 **ai-dev-browser is a browser that AI agents (Claude, GPT, etc.) use to see and interact with web pages** — similar to how [Claude in Chrome](https://claude.com/chrome) works, but headless-compatible and embeddable.
 
 Two interaction modes:
-- **Accessibility tree** (`page_find`): semantic element discovery with refs for clicking/typing
+- **Accessibility tree** (`page_discover`): semantic element discovery with refs for clicking/typing
 - **Screenshots** (`page_screenshot` + `mouse_click --screenshot`): visual coordinate-based interaction with automatic scaling
 
 ```bash
 # AI discovers elements
-python -m ai_dev_browser.tools.page_find
+python -m ai_dev_browser.tools.page_discover
 
 # AI clicks by ref (from accessibility tree)
 python -m ai_dev_browser.tools.click_by_ref --ref "5#214"
@@ -62,23 +62,51 @@ ls ai_dev_browser/tools/  # See all available tools
 
 ### Tool Naming Convention
 
-Most element-targeting tools follow `<verb>_by_<spec>` — verb is the action,
-spec is how you identify the element. LLM mental model: "I have an X, I want
-to do Y → look for `Y_by_X`."
+Two patterns, consistent across the entire toolkit (CLI file names,
+Python exports, and docstring titles all match):
 
-| Spec        | Source                                        | Example tool        |
+**1. Domain-scoped operations: `<domain>_<verb>`**
+
+The noun comes first. Operations that act on a "thing" (browser
+lifecycle, page state, cookie store, tabs, storage, mouse, etc.) all
+sort together in `ls tools/` and tab completion:
+
+| Domain      | Examples                                            |
+|-------------|-----------------------------------------------------|
+| `browser_*` | `browser_start`, `browser_stop`, `browser_list`     |
+| `page_*`    | `page_goto`, `page_reload`, `page_screenshot`, `page_discover`, `page_scroll`, `page_wait_ready`, `page_wait_url`, `page_wait_element`, `page_info`, `page_html`, `page_emulate_focus` |
+| `tab_*`     | `tab_new`, `tab_close`, `tab_list`, `tab_switch`    |
+| `cookies_*` | `cookies_save`, `cookies_load`, `cookies_list`      |
+| `storage_*` | `storage_get`, `storage_set`                        |
+| `mouse_*`   | `mouse_click`, `mouse_move`, `mouse_drag`           |
+| `dialog_*`  | `dialog_respond`                                    |
+| `window_*`  | `window_set`                                        |
+| `cdp_*`     | `cdp_send`                                          |
+
+**2. Element-targeting operations: `<verb>_by_<spec>`**
+
+The verb comes first; the spec is how you identify the element. LLM
+mental model: "I have an X, I want to do Y → look for `Y_by_X`."
+
+| Spec        | Source                                        | Example             |
 |-------------|-----------------------------------------------|---------------------|
 | `_by_ref`   | ref returned by `page_discover` (AX tree)     | `click_by_ref`      |
 | `_by_text`  | visible text content                          | `click_by_text`     |
 | `_by_html_id` | `id="..."` HTML attribute (cross-frame)     | `click_by_html_id`  |
 | `_by_xpath` | XPath expression (`document.evaluate`)        | `click_by_xpath`    |
 
-Verbs currently in use: `click`, `type`, `focus`, `hover`, `drag`, `highlight`,
-`html` (read), `screenshot`, `select`, `upload`, `find`.
+Verbs currently in use: `click`, `type`, `focus`, `hover`, `drag`,
+`highlight`, `html` (read), `screenshot`, `select`, `upload`, `find`.
 
-`page_*` tools operate on the whole page (`page_goto`, `page_screenshot`,
-`page_discover`, `page_scroll`). `page_discover` is broad exploration;
-`find_by_*` is targeted single-element lookup.
+`page_discover` is the broad catalog (pattern 1, domain-scoped);
+`find_by_*` is single-element targeted lookup (pattern 2,
+element-targeting). Pick `find_by_*` when you know the id / xpath /
+unique text; pick `page_discover` when you don't yet.
+
+Outliers (by design, not oversight): `download` (standalone verb, no
+domain fits), `js_evaluate` (last-resort escape hatch), `login_interactive`
+(explicit marker that this flavor needs human input, unlike scripted
+login flows you'd build on `page_goto` + `type_by_text`).
 
 ### Docstring First-Line Convention
 
@@ -122,12 +150,29 @@ pip install "ai-dev-browser @ git+https://github.com/sudoprivacy/ai-dev-browser.
 ```
 
 ```python
-from ai_dev_browser.core import goto, click_by_text, type_by_text, screenshot
+import asyncio
+from ai_dev_browser.core import (
+    browser_start, browser_stop,
+    connect_browser, get_active_tab,
+    page_goto, click_by_text, type_by_text, page_screenshot,
+)
 
-await goto(tab, "https://example.com")
-await type_by_text(tab, name="Email", text="user@example.com")
-await click_by_text(tab, text="Sign in")
-await screenshot(tab)  # → screenshots/{timestamp}.png
+async def main():
+    # Launch Chrome (headless, throw-away profile), then connect a tab.
+    result = browser_start(headless=True, temp=True)
+    port = result["port"]
+    browser = await connect_browser(port=port)
+    tab = await get_active_tab(browser)
+
+    try:
+        await page_goto(tab, "https://example.com")
+        await type_by_text(tab, name="Email", text="user@example.com")
+        await click_by_text(tab, text="Sign in")
+        await page_screenshot(tab)  # → screenshots/{timestamp}.png
+    finally:
+        browser_stop(port=port)
+
+asyncio.run(main())
 ```
 
 ## Human-like Behavior
