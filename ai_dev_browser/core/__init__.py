@@ -69,10 +69,14 @@ from .login import login_interactive
 
 # Elements (only tool-facing functions)
 from .elements import (
+    click_by_html_id,
     click_by_text,
+    click_by_xpath,
+    find_by_html_id,
+    find_by_xpath,
     page_scroll,
-    type_by_text,
     page_wait_element,
+    type_by_text,
 )
 
 # Mouse
@@ -173,6 +177,10 @@ __all__ = [
     "type_by_text",
     "page_scroll",
     "page_wait_element",
+    "find_by_html_id",
+    "click_by_html_id",
+    "find_by_xpath",
+    "click_by_xpath",
     # Text matching
     "MatchResult",
     # Snapshot

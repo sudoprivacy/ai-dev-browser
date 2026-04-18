@@ -1,6 +1,7 @@
 """Element interaction operations."""
 
 import asyncio
+import json
 import time
 
 
@@ -9,6 +10,66 @@ from ._element import Element
 from ._tab import Tab
 from .snapshot import _get_snapshot
 from .text_match import _best_match
+
+
+# Delay after click before reading post-click URL. Gives synchronous
+# navigation a chance to start without blocking on events. For SPA
+# client-side route changes this is usually enough; full-page loads
+# trigger their own context destruction and the evaluate will handle it.
+_POST_CLICK_NAV_DELAY = 0.3
+
+
+async def _json_evaluate(tab: Tab, expression: str) -> dict:
+    """Evaluate JS that returns a JSON-serializable value and parse it Python-side.
+
+    Why: Tab.evaluate passes serialization_options=deep to CDP alongside
+    return_by_value, and the deep-serialized shape is `[[key, typed_value], ...]`
+    which isn't a plain Python dict. JSON.stringify round-tripping is the most
+    reliable way to get a plain dict out.
+    """
+    raw = await tab.evaluate(f"JSON.stringify(({expression}))")
+    if not isinstance(raw, str):
+        return {}
+    try:
+        return json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+
+
+async def _capture_page_state(tab: Tab) -> dict:
+    """Read current top-level URL + title as a JSON dict.
+
+    Used before and after actions to report navigation feedback.
+    """
+    return await _json_evaluate(
+        tab, "{url: window.location.href, title: document.title}"
+    )
+
+
+async def _with_nav_feedback(tab: Tab, action_result: dict) -> dict:
+    """Attach navigation feedback fields to a click-result dict.
+
+    Caller is expected to have captured url_before before the action and
+    passed it in via action_result (the action function adds it). This
+    helper completes the post-click read after _POST_CLICK_NAV_DELAY and
+    returns {..., navigated, url_after, title_after}.
+    """
+    url_before = action_result.get("url_before", "")
+    await asyncio.sleep(_POST_CLICK_NAV_DELAY)
+    try:
+        after = await _capture_page_state(tab)
+    except Exception:
+        # Context destroyed by full-page nav mid-read — we know it navigated
+        action_result["navigated"] = True
+        action_result["url_after"] = None
+        action_result["title_after"] = None
+        return action_result
+    action_result["url_after"] = after.get("url", "")
+    action_result["title_after"] = after.get("title", "")
+    action_result["navigated"] = (
+        bool(url_before) and action_result["url_after"] != url_before
+    )
+    return action_result
 
 
 async def _find_element(
@@ -398,15 +459,29 @@ async def click_by_text(
         human_like: Use CDP events (default True, recommended)
 
     Returns:
-        dict with clicked status
+        dict with clicked, text, url_before, url_after, title_after, navigated.
+        `navigated=True` means the top-level URL changed after the click
+        (SPA route change or full page load). Use this to confirm the click
+        had the intended side effect instead of chaining a screenshot + discover.
 
     Example:
         click_by_text("登录")
         click_by_text("Sign in")
         click_by_text("Submit", timeout=5)
     """
+    url_before_state = await _capture_page_state(tab)
     result = await _click(tab, text=text, timeout=timeout, human_like=human_like)
-    return {"clicked": result, "text": text}
+    action = {
+        "clicked": result,
+        "text": text,
+        "url_before": url_before_state.get("url", ""),
+    }
+    if not result:
+        action.update(
+            {"navigated": False, "url_after": action["url_before"], "title_after": ""}
+        )
+        return action
+    return await _with_nav_feedback(tab, action)
 
 
 async def type_by_text(
@@ -596,3 +671,243 @@ async def _fuzzy_click(
             "match_strategy": match.get("match_strategy"),
         }
     return None
+
+
+# =============================================================================
+# Direct DOM locators — cover cases the accessibility tree can't express
+# (cross-frame html-id lookup, XPath queries). Complement page_discover:
+#   - page_discover:   broad exploration of the accessibility tree
+#   - find_by_*:       targeted single-element lookup by html locator
+# =============================================================================
+
+
+# Shared JS snippet that, given an element (possibly null), returns a
+# serializable info dict or {found: false}. Inlined inside each IIFE so the
+# concatenation stays a single expression — a prior version put this outside
+# the IIFE and JavaScript parsed `function decl(...) (IIFE)` as
+# `decl(IIFE_result)` instead of two separate statements.
+_ELEMENT_INFO_INLINE = """
+        const __elementInfo = (el) => {
+          if (!el) return {found: false};
+          let rect = {width: 0, height: 0};
+          try { rect = el.getBoundingClientRect(); } catch(e) {}
+          return {
+            found: true,
+            tag: (el.tagName || '').toLowerCase(),
+            text: ((el.innerText || el.textContent || '') + '').trim().slice(0, 200),
+            visible: rect.width > 0 && rect.height > 0 && el.offsetParent !== null,
+            attrs: {
+              id: el.id || null,
+              name: el.getAttribute ? el.getAttribute('name') : null,
+              type: el.getAttribute ? el.getAttribute('type') : null,
+              'aria-label': el.getAttribute ? el.getAttribute('aria-label') : null,
+            }
+          };
+        };"""
+
+
+async def find_by_html_id(tab: Tab, html_id: str) -> dict:
+    """Find an element by its html `id` attribute, recursing into same-origin iframes.
+
+    For broad page exploration see `page_discover`. Use this when you already
+    know the specific html `id` (from DOM inspection, prior HTML snapshot, or
+    a rendered template).
+
+    Args:
+        tab: Tab instance
+        html_id: Value of the element's `id` attribute (e.g. `"login-btn"`).
+
+    Returns:
+        dict: `{found: true, tag, text, visible, attrs}` on hit,
+              `{found: false}` otherwise.
+
+    Example:
+        result = await find_by_html_id(tab, "submit-btn")
+        if result["found"] and result["visible"]:
+            await click_by_html_id(tab, "submit-btn")
+    """
+    expr = """
+    (function(id) {
+      %s
+      function search(win) {
+        try {
+          const el = win.document.getElementById(id);
+          if (el) return el;
+        } catch(e) {}
+        for (let i = 0; i < win.frames.length; i++) {
+          try {
+            const result = search(win.frames[i]);
+            if (result) return result;
+          } catch(e) {}
+        }
+        return null;
+      }
+      return __elementInfo(search(window));
+    })(%s)
+    """ % (_ELEMENT_INFO_INLINE, json.dumps(html_id))
+    return await _json_evaluate(tab, expr)
+
+
+async def click_by_html_id(tab: Tab, html_id: str) -> dict:
+    """Click an element located by html `id`, recursing into same-origin iframes.
+
+    Unlike `click_by_ref` (accessibility tree) and `click_by_text`
+    (visible text), this targets a specific `id` attribute — useful when
+    the element lives inside a frame or the accessibility tree doesn't
+    surface it.
+
+    Args:
+        tab: Tab instance
+        html_id: Value of the element's `id` attribute.
+
+    Returns:
+        dict: `{clicked, html_id, url_before, url_after, title_after, navigated, error?}`.
+        `navigated=True` means the top-level URL changed after the click.
+    """
+    url_before_state = await _capture_page_state(tab)
+    url_before = url_before_state.get("url", "")
+
+    expr = """
+    (function(id) {
+      function search(win) {
+        try {
+          const el = win.document.getElementById(id);
+          if (el) return el;
+        } catch(e) {}
+        for (let i = 0; i < win.frames.length; i++) {
+          try {
+            const result = search(win.frames[i]);
+            if (result) return result;
+          } catch(e) {}
+        }
+        return null;
+      }
+      const el = search(window);
+      if (!el) return {clicked: false, error: 'not found'};
+      try {
+        el.click();
+        return {clicked: true};
+      } catch(e) {
+        return {clicked: false, error: String(e)};
+      }
+    })(%s)
+    """ % json.dumps(html_id)
+    click = await _json_evaluate(tab, expr)
+    action = {
+        "clicked": bool(click.get("clicked")),
+        "html_id": html_id,
+        "url_before": url_before,
+    }
+    if click.get("error"):
+        action["error"] = click["error"]
+    if not action["clicked"]:
+        action.update({"navigated": False, "url_after": url_before, "title_after": ""})
+        return action
+    return await _with_nav_feedback(tab, action)
+
+
+async def find_by_xpath(tab: Tab, xpath: str) -> dict:
+    """Find the first element matching an XPath expression, recursing into
+    same-origin iframes.
+
+    For broad page exploration see `page_discover`. Use this when the
+    accessibility tree doesn't surface the element you need or when an
+    XPath is the most natural locator (e.g. `//button[@title='登录']`).
+
+    Args:
+        tab: Tab instance
+        xpath: XPath expression. Runs via `document.evaluate()`.
+
+    Returns:
+        dict: `{found: true, tag, text, visible, attrs}` on hit,
+              `{found: false}` otherwise.
+    """
+    expr = """
+    (function(xpath) {
+      %s
+      function search(doc) {
+        try {
+          const result = doc.evaluate(xpath, doc, null,
+                                      XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+          if (result && result.singleNodeValue) return result.singleNodeValue;
+        } catch(e) {}
+        return null;
+      }
+      function recurse(win) {
+        try {
+          const hit = search(win.document);
+          if (hit) return hit;
+        } catch(e) {}
+        for (let i = 0; i < win.frames.length; i++) {
+          try {
+            const hit = recurse(win.frames[i]);
+            if (hit) return hit;
+          } catch(e) {}
+        }
+        return null;
+      }
+      return __elementInfo(recurse(window));
+    })(%s)
+    """ % (_ELEMENT_INFO_INLINE, json.dumps(xpath))
+    return await _json_evaluate(tab, expr)
+
+
+async def click_by_xpath(tab: Tab, xpath: str) -> dict:
+    """Click the first element matching an XPath expression, recursing into
+    same-origin iframes.
+
+    Args:
+        tab: Tab instance
+        xpath: XPath expression (e.g. `//button[contains(text(), 'Submit')]`).
+
+    Returns:
+        dict: `{clicked, xpath, url_before, url_after, title_after, navigated, error?}`.
+    """
+    url_before_state = await _capture_page_state(tab)
+    url_before = url_before_state.get("url", "")
+
+    expr = """
+    (function(xpath) {
+      function search(doc) {
+        try {
+          const result = doc.evaluate(xpath, doc, null,
+                                      XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+          if (result && result.singleNodeValue) return result.singleNodeValue;
+        } catch(e) {}
+        return null;
+      }
+      function recurse(win) {
+        try {
+          const hit = search(win.document);
+          if (hit) return hit;
+        } catch(e) {}
+        for (let i = 0; i < win.frames.length; i++) {
+          try {
+            const hit = recurse(win.frames[i]);
+            if (hit) return hit;
+          } catch(e) {}
+        }
+        return null;
+      }
+      const el = recurse(window);
+      if (!el) return {clicked: false, error: 'not found'};
+      try {
+        el.click();
+        return {clicked: true};
+      } catch(e) {
+        return {clicked: false, error: String(e)};
+      }
+    })(%s)
+    """ % json.dumps(xpath)
+    click = await _json_evaluate(tab, expr)
+    action = {
+        "clicked": bool(click.get("clicked")),
+        "xpath": xpath,
+        "url_before": url_before,
+    }
+    if click.get("error"):
+        action["error"] = click["error"]
+    if not action["clicked"]:
+        action.update({"navigated": False, "url_after": url_before, "title_after": ""})
+        return action
+    return await _with_nav_feedback(tab, action)

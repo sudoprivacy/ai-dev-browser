@@ -54,11 +54,31 @@ from ai_dev_browser.core import click_by_text
 await click_by_text(tab, text="Sign in")
 ```
 
-41 tools covering: navigation, element interaction, mouse, tabs, screenshots, cookies, storage, window management, dialogs, downloads, raw CDP, and Cloudflare bypass.
+49 tools covering: navigation, element interaction, mouse, tabs, screenshots, cookies, storage, window management, dialogs, downloads, raw CDP, and Cloudflare bypass.
 
 ```bash
 ls ai_dev_browser/tools/  # See all available tools
 ```
+
+### Tool Naming Convention
+
+Most element-targeting tools follow `<verb>_by_<spec>` — verb is the action,
+spec is how you identify the element. LLM mental model: "I have an X, I want
+to do Y → look for `Y_by_X`."
+
+| Spec        | Source                                        | Example tool        |
+|-------------|-----------------------------------------------|---------------------|
+| `_by_ref`   | ref returned by `page_discover` (AX tree)     | `click_by_ref`      |
+| `_by_text`  | visible text content                          | `click_by_text`     |
+| `_by_html_id` | `id="..."` HTML attribute (cross-frame)     | `click_by_html_id`  |
+| `_by_xpath` | XPath expression (`document.evaluate`)        | `click_by_xpath`    |
+
+Verbs currently in use: `click`, `type`, `focus`, `hover`, `drag`, `highlight`,
+`html` (read), `screenshot`, `select`, `upload`, `find`.
+
+`page_*` tools operate on the whole page (`page_goto`, `page_screenshot`,
+`page_discover`, `page_scroll`). `page_discover` is broad exploration;
+`find_by_*` is targeted single-element lookup.
 
 ## Quick Start
 
@@ -105,6 +125,7 @@ Default: click offset randomization (free, always on). Everything else is opt-in
 | `AI_DEV_BROWSER_PORT` | Default CDP port (skips auto-detection) |
 | `AI_DEV_BROWSER_HEADLESS` | Default headless mode (`1`/`true`) |
 | `AI_DEV_BROWSER_REDIRECT` | Block direct CLI, print redirect message |
+| `AI_DEV_BROWSER_OUTPUT_DIR` | Default directory for `page_screenshot` (overrides `./screenshots/`). Consumers like sudowork set this to inject a persistent output path so LLMs don't need to learn host-specific conventions. |
 
 ## License
 

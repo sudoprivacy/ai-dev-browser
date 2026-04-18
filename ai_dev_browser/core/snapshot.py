@@ -338,6 +338,13 @@ async def page_discover(
     coordinates (for mouse_click). Use this to discover what's on the page
     before clicking.
 
+    For **targeted single-element lookup** when you already know a specific
+    locator, prefer the narrower tools instead of scanning the whole tree:
+      - `find_by_html_id(html_id)` — element with a known `id` attribute
+      - `find_by_xpath(xpath)` — arbitrary XPath query (things the AX tree
+        can't express)
+    Both recurse into same-origin iframes.
+
     Args:
         tab: Tab instance
         text: Optional text filter (case-insensitive substring match)

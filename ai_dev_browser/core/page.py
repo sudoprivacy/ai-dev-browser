@@ -2,10 +2,30 @@
 
 import datetime
 import json
+import os
 from pathlib import Path
 
 from ._tab import Tab
 from .config import DEFAULT_SCREENSHOT_DIR
+
+
+# Env var for consumers (sudowork, etc.) to inject a persistent output directory
+# so LLMs don't have to learn host-specific scratch/persistent conventions.
+# When unset, falls back to DEFAULT_SCREENSHOT_DIR (./screenshots/).
+_OUTPUT_DIR_ENV = "AI_DEV_BROWSER_OUTPUT_DIR"
+
+
+def _resolve_default_screenshot_dir() -> Path:
+    """Resolve the default screenshot directory.
+
+    Order: AI_DEV_BROWSER_OUTPUT_DIR env var (consumer-injected persistent
+    path) → DEFAULT_SCREENSHOT_DIR (./screenshots/ relative to cwd).
+    """
+    env_dir = os.environ.get(_OUTPUT_DIR_ENV)
+    if env_dir:
+        return Path(env_dir).expanduser()
+    return DEFAULT_SCREENSHOT_DIR
+
 
 # Optional PIL for image resizing
 try:
@@ -44,6 +64,24 @@ def read_screenshot_metadata(path: str) -> dict:
 async def js_evaluate(tab: Tab, expression: str) -> dict:
     """Execute JavaScript in the page context.
 
+    Before reaching for raw JS, check whether a CLI tool already covers your
+    intent — most locator / action cases do:
+
+      - Locate + act by html id:    `click_by_html_id` / `find_by_html_id`
+      - Locate + act by XPath:      `click_by_xpath` / `find_by_xpath`
+      - Locate + act by text:       `click_by_text` / `type_by_text`
+      - Locate + act by AX ref:     `click_by_ref` / `type_by_ref` (after
+                                    `page_discover`)
+
+    Use `js_evaluate` only for genuinely custom JS that none of the above
+    express. For **multi-line** scripts the shell quoting in
+    `--expression "..."` gets painful fast — prefer the Python API:
+
+        from ai_dev_browser.core import js_evaluate
+        result = await js_evaluate(tab, expression='''
+            // multi-line JS here, no shell escaping
+        ''')
+
     Args:
         tab: Tab instance
         expression: JavaScript code to execute. Result of last expression is returned.
@@ -72,7 +110,11 @@ async def page_screenshot(
 
     Args:
         tab: Tab instance
-        path: Path to save page_screenshot (default: ./screenshots/{timestamp}.png)
+        path: Path to save page_screenshot. When omitted, defaults to
+              `$AI_DEV_BROWSER_OUTPUT_DIR/{timestamp}.png` if the env var
+              is set (consumers like sudowork use this to inject a
+              persistent output directory), otherwise
+              `./screenshots/{timestamp}.png` relative to cwd.
         full_page: If True, capture full page (not just viewport)
         css_scale: If True (default), resize page_screenshot so pixel coordinates
                    match CSS/click coordinates. Handles both DPR>1 (Retina)
@@ -92,9 +134,10 @@ async def page_screenshot(
         coordinate scaling. Scaling metadata is embedded in the PNG file.
     """
     if path is None:
-        DEFAULT_SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+        out_dir = _resolve_default_screenshot_dir()
+        out_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        path = str(DEFAULT_SCREENSHOT_DIR / f"{ts}.png")
+        path = str(out_dir / f"{ts}.png")
 
     # Get viewport info and device pixel ratio for coordinate mapping
     viewport_info = await tab.evaluate(

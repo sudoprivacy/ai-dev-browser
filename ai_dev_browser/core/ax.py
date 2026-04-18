@@ -296,7 +296,11 @@ async def click_by_ref(
         ref: Element ref from page_discover() (e.g., "5#214" or "FRAME_ABC123:5#214")
 
     Returns:
-        dict with clicked status and element info
+        dict with clicked status, element info, and navigation feedback:
+        `{clicked, ref, role, name, url_before, url_after, title_after, navigated}`.
+        `navigated=True` means the top-level URL changed after the click
+        (SPA route change or full page load). Use this to confirm the click
+        had the intended side effect instead of chaining a screenshot + discover.
 
     Example:
         # First page_discover elements
@@ -304,7 +308,23 @@ async def click_by_ref(
         # Then click by ref
         click_by_ref("5#214")
     """
-    return await _click_ax_element(tab, ref=ref)
+    # Import lazily to avoid a circular dependency with elements.py, which
+    # imports from this module.
+    from .elements import _capture_page_state, _with_nav_feedback
+
+    url_before_state = await _capture_page_state(tab)
+    result = await _click_ax_element(tab, ref=ref)
+    result["url_before"] = url_before_state.get("url", "")
+    if not result.get("clicked"):
+        result.update(
+            {
+                "navigated": False,
+                "url_after": result["url_before"],
+                "title_after": "",
+            }
+        )
+        return result
+    return await _with_nav_feedback(tab, result)
 
 
 async def focus_by_ref(
