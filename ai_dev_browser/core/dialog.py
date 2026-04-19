@@ -5,10 +5,14 @@ Handles browser dialogs: alert(), confirm(), prompt(), and beforeunload.
 
 import asyncio
 from collections.abc import Callable
+from typing import Literal
 
 from ai_dev_browser.cdp import page as page_cdp
 
 from ._tab import Tab
+
+
+DialogAction = Literal["accept", "dismiss"]
 
 
 async def _handle_dialog(
@@ -107,23 +111,39 @@ async def _setup_auto_dialog_handler(
 
 async def dialog_respond(
     tab: Tab,
-    accept: bool = True,
+    action: DialogAction = "accept",
     prompt_text: str | None = None,
     auto_handle: bool = False,
     wait_timeout: float = 0,
 ) -> dict:
-    """Handle JavaScript dialog with various modes.
+    """Use when: a page fired (or is about to fire) `alert()` / `confirm()`
+    / `prompt()` / `beforeunload`, and you need to respond. Returns
+    `{success, action: "accepted"|"dismissed", ...}` or
+    `{success: False, error: "no_dialog"|"timeout"|"setup_failed", message}`
+    so you can branch on whether the dialog actually appeared.
+
+    `action="accept"` is the OK / Yes / submit-prompt path; `"dismiss"` is
+    Cancel / No. Naming matches Playwright / CDP conventions
+    (`dialog.accept()` / `dialog.dismiss()`) — LLMs trained on those
+    pretrain corpora pattern-match it correctly.
 
     Args:
         tab: Tab instance
-        accept: True to accept/OK, False to dismiss/Cancel
-        prompt_text: Optional text to enter for prompt() dialogs
-        auto_handle: If True, set up automatic handling for future dialogs
-        wait_timeout: If > 0, wait this many seconds for a dialog to appear
+        action: "accept" to OK/submit, "dismiss" to Cancel.
+        prompt_text: Text to enter for `prompt()` dialogs (only when
+            action="accept"). Ignored otherwise.
+        auto_handle: If True, register a handler that auto-responds to
+            ALL future dialogs on this tab (e.g. handle beforeunload
+            during navigation). Returns immediately.
+        wait_timeout: If > 0, block until a dialog appears or this many
+            seconds pass. Useful when an action is about to trigger a
+            dialog and you want to handle it in one call.
 
     Returns:
-        dict with success, action, and optional error/message
+        dict: success / action / optional error / message
     """
+    accept = action == "accept"
+
     # Set up auto-handler if requested
     if auto_handle:
         try:
