@@ -333,9 +333,12 @@ async def page_discover(
     include_iframes: bool = True,
 ) -> dict:
     """Use when: you DON'T know what's on the page yet — broad exploration
-    of interactable elements. Returns a catalog of elements each with a
-    `ref` you feed into `click_by_ref` / `type_by_ref` / `focus_by_ref`
-    / etc. and `x`/`y` coords you feed into `mouse_click`.
+    of all interactable elements (including same-origin iframes; iframe
+    elements get `FRAME_xxx:` prefix on their refs, so filter the
+    returned list by prefix to narrow to one frame). Returns a catalog
+    of refs you feed into `click_by_ref` / `type_by_ref` /
+    `focus_by_ref` / etc. and `x`/`y` coords you feed into
+    `mouse_click`.
 
     Skip this when you already know how to locate your target — go
     directly to `click_by_html_id` / `click_by_xpath` / `click_by_text`

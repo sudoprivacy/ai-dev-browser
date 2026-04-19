@@ -493,9 +493,11 @@ async def html_by_ref(
     tab: Tab,
     ref: str,
 ) -> dict:
-    """Use when: `page_discover`'s summarized text isn't enough and you need
-    the raw outerHTML of a specific element (inspect attributes, nested
-    structure). Prereq: `ref` from `page_discover()`. Returns `{html}`.
+    """Use when: you have a `ref` and want just that element's outerHTML
+    (smaller payload than `page_html`'s whole-document dump). Useful for
+    inspecting attributes / nested structure that `page_discover`'s
+    summary doesn't show. Prereq: `ref` from `page_discover()`.
+    Returns `{html}`.
 
     Args:
         tab: Tab instance

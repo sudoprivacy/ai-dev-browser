@@ -295,10 +295,10 @@ async def page_html(
     tab: Tab,
     outer: bool = False,
 ) -> dict:
-    """Use when: `page_discover` doesn't surface what you need (e.g. data
-    hidden in custom attributes, script tags, microdata) and you need
-    the raw page source to inspect or parse. Returns `{html, length}`.
-    For a single element's HTML, use `html_by_ref` instead.
+    """Use when: you need the WHOLE page's HTML (microdata, script tags,
+    document structure). If you only need one element's HTML and have a
+    `ref`, `html_by_ref` is one call instead of parsing the full
+    document. Returns `{html, length}`.
 
     Args:
         tab: Tab instance
