@@ -74,6 +74,7 @@ def browser_start(
     profile: str | None = None,
     temp: bool = False,
     reuse: ReuseStrategy = DEFAULT_REUSE_STRATEGY,
+    startup_timeout: float = 30.0,
 ) -> dict:
     """Start or reuse a browser instance.
 
@@ -84,6 +85,13 @@ def browser_start(
         profile: Profile name (default: "default")
         temp: Use temporary profile instead
         reuse: "none" (always new) or "any" (reuse idle Chrome, default)
+        startup_timeout: Seconds to wait for Chrome to bind its debug port
+            after spawn. Default 30s covers cold-start on slow Windows
+            machines (fresh profile init + Defender scan + I/O contention
+            from the user's main Chrome). Bump higher if you see
+            "started but port not listening" on a known-good environment;
+            lower it (e.g. 5s) for headless CI where startup is fast and
+            you want to fail loud quickly.
 
     Returns:
         dict with port, pid, headless, url, profile, reused, message
@@ -152,11 +160,10 @@ def browser_start(
         user_data_dir=str(user_data_dir) if user_data_dir else None,
     )
 
-    # Wait for Chrome to start listening on the port
-    max_wait = 10.0
+    # Wait for Chrome to bind its debug port.
     poll_interval = 0.2
     elapsed = 0.0
-    while elapsed < max_wait:
+    while elapsed < startup_timeout:
         if is_port_in_use(port=port):
             break
         if process.poll() is not None:
@@ -173,9 +180,22 @@ def browser_start(
         time.sleep(poll_interval)
         elapsed += poll_interval
     else:
+        # Timed out. Chrome may still be starting (slow cold-start scenarios)
+        # — but if we leave it alive it holds the profile's lockfile, and the
+        # next browser_start with the same profile fails on lock contention.
+        # Kill the whole process tree so the profile is released; caller can
+        # retry with a higher startup_timeout.
+        orphan_pid = process.pid
+        _kill_process_tree(orphan_pid)
         return {
-            "error": f"Chrome started (PID {process.pid}) but port {port} not listening after {max_wait}s",
-            "pid": process.pid,
+            "error": (
+                f"Chrome started (PID {orphan_pid}) but port {port} not "
+                f"listening after {startup_timeout}s — process killed to "
+                f"release profile lockfile. Retry with startup_timeout=<larger> "
+                f"if your environment is slow (Windows + main Chrome running, "
+                f"first-time profile init, AV scanning, etc.)."
+            ),
+            "pid": orphan_pid,
         }
 
     return {
