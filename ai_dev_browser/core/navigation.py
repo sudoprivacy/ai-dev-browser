@@ -68,7 +68,7 @@ async def page_reload(tab: Tab, ignore_cache: bool = True) -> bool:
     Returns:
         True on success
     """
-    await tab.reload(ignore_cache=ignore_cache)
+    await tab.page_reload(ignore_cache=ignore_cache)
     return True
 
 
