@@ -35,8 +35,10 @@ from ai_dev_browser.core.elements import (
     click_by_text,
     click_by_xpath,
     find_by_html_id,
+    find_by_text,
     find_by_xpath,
 )
+from ai_dev_browser.core.ax import click_by_ref
 from ai_dev_browser.core.navigation import page_goto
 from ai_dev_browser.core.page import page_screenshot
 
@@ -297,3 +299,73 @@ async def test_screenshot_falls_back_to_default_dir_without_env(
     assert saved.exists()
     assert "screenshots" in saved.parts
     saved.unlink()
+
+
+# ---------------------------------------------------------------------------
+# find_by_text — pattern-completion peer to find_by_html_id / find_by_xpath
+# ---------------------------------------------------------------------------
+
+
+async def test_find_by_text_returns_ref_routable_to_click_by_ref(tab):
+    """Real scenario: LLM wants to verify a button exists before deciding to
+    click. find_by_text returns a `ref` that click_by_ref can act on, so
+    the LLM doesn't have to repeat the locate.
+
+    Workflow: page with button → find_by_text → click_by_ref using the
+    returned ref → observe side effect
+    """
+    html = """
+    <html><body>
+      <button onclick="document.body.dataset.clicked='via-ref'">Submit</button>
+    </body></html>
+    """
+    await page_goto(tab, _data_url(html))
+
+    found = await find_by_text(tab, "Submit")
+    assert found["found"] is True
+    assert "ref" in found, (
+        f"find_by_text must return ref for click_by_ref pipeline: {found}"
+    )
+
+    # The ref from find_by_text should be directly usable by click_by_ref —
+    # no re-discover needed.
+    result = await click_by_ref(tab, ref=found["ref"])
+    assert result["clicked"] is True
+
+    confirmation = await tab.evaluate(
+        "document.body.dataset.clicked", return_by_value=True
+    )
+    assert confirmation == "via-ref"
+
+
+async def test_find_by_text_returns_not_found_for_missing_text(tab):
+    """Existence check — branch on `found=False` without raising."""
+    await page_goto(tab, _data_url("<html><body><h1>Only this</h1></body></html>"))
+
+    result = await find_by_text(tab, "definitely not on page")
+    assert result["found"] is False
+    assert result["text"] == "definitely not on page"
+
+
+async def test_find_by_text_can_find_non_interactable_with_flag(tab):
+    """Real scenario: verify a status message ("Success") appeared after a
+    form submit. The text is in a <div>, not a button — interactable_only
+    must be False to find it."""
+    html = """
+    <html><body>
+      <div id="status">Success</div>
+    </body></html>
+    """
+    await page_goto(tab, _data_url(html))
+
+    # Default (interactable_only=True) should NOT find the div
+    interactive_only = await find_by_text(tab, "Success")
+    assert interactive_only["found"] is False, (
+        "interactable_only=True should skip non-clickable text"
+    )
+
+    # Opt-in to all elements
+    any_match = await find_by_text(tab, "Success", interactable_only=False)
+    assert any_match["found"] is True, (
+        "interactable_only=False should match the status div"
+    )

@@ -38,6 +38,7 @@ TOOL_META = {
     "click_by_text": {"result_key": "clicked"},
     "click_by_html_id": {"result_key": "clicked"},
     "click_by_xpath": {"result_key": "clicked"},
+    "find_by_text": {"result_key": "found"},
     "find_by_html_id": {"result_key": "found"},
     "find_by_xpath": {"result_key": "found"},
     "type_by_ref": {"result_key": "typed"},

@@ -383,7 +383,10 @@ def wrap_core(core_func: Callable, result_key: str = "success") -> Callable:
             else:
                 return {result_key: result}
         except Exception as e:
-            return {"error": f"{core_func.__name__} failed: {e}"}
+            # Verbatim message — Python `repr(e)` and CLI stdout stay in
+            # lockstep (cli-args-ssot rule 6: never re-render error text
+            # in tool files).
+            return {"error": str(e)}
 
     return wrapper
 
@@ -423,6 +426,9 @@ def wrap_core_sync(core_func: Callable, result_key: str = "success") -> Callable
             else:
                 return {result_key: result}
         except Exception as e:
-            return {"error": f"{core_func.__name__} failed: {e}"}
+            # Verbatim message — Python `repr(e)` and CLI stdout stay in
+            # lockstep (cli-args-ssot rule 6: never re-render error text
+            # in tool files).
+            return {"error": str(e)}
 
     return wrapper

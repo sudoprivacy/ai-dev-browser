@@ -494,6 +494,46 @@ async def click_by_text(
     return await _with_nav_feedback(tab, action)
 
 
+async def find_by_text(
+    tab: Tab,
+    text: str,
+    interactable_only: bool = True,
+) -> dict:
+    """Use when: you know visible text and want to verify it exists or
+    grab its `ref` before deciding whether to act. Returns
+    `{found, ref, role, name, x, y}` for the first match — feed `ref`
+    into `click_by_ref` / `type_by_ref` to act, or branch on
+    `found=False`.
+
+    For locate+click in one shot, use `click_by_text` directly. For
+    elements identified by html id / xpath, use `find_by_html_id` /
+    `find_by_xpath`. For broad page exploration without a known
+    locator, use `page_discover`.
+
+    Args:
+        tab: Tab instance
+        text: Visible text to match (case-insensitive substring)
+        interactable_only: If True (default), only match buttons / links /
+            inputs / etc. — matches `click_by_text` semantics. Set False
+            when checking for arbitrary text (e.g. "Success" message in
+            a `<div>` after a form submit).
+
+    Returns:
+        dict: `{found: True, ref, role, name, x, y, ...}` on hit,
+              `{found: False, text}` otherwise.
+    """
+    # Reuse page_discover's text filter — same matcher as click_by_text,
+    # so a successful find_by_text → click_by_ref roundtrip lands on the
+    # exact element click_by_text would have hit.
+    from .snapshot import page_discover
+
+    result = await page_discover(tab, text=text, interactable_only=interactable_only)
+    elements = result.get("elements", [])
+    if not elements:
+        return {"found": False, "text": text}
+    return {"found": True, **elements[0]}
+
+
 async def type_by_text(
     tab: Tab,
     name: str,
