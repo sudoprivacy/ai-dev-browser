@@ -280,8 +280,10 @@ async def _get_snapshot(
         if frame["is_main"]:
             continue  # Already got main frame
 
-        # Skip about:blank and other non-content frames
-        if frame["url"].startswith("about:"):
+        # Skip about:blank (truly empty), but scan about:srcdoc which
+        # holds the inline HTML of a `<iframe srcdoc="...">` — that's
+        # real content agents need to reach.
+        if frame["url"] == "about:blank":
             continue
 
         try:

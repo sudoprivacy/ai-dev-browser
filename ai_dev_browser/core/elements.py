@@ -509,7 +509,7 @@ async def click_by_text(
 async def find_by_text(
     tab: Tab,
     text: str,
-    interactable_only: bool = True,
+    interactable_only: bool = False,
 ) -> dict:
     """Use when: you know visible text and want to verify it exists or
     grab its `ref` before deciding whether to act — OR when
@@ -520,6 +520,21 @@ async def find_by_text(
     into `click_by_ref` / `type_by_ref` to act, or branch on
     `found=False`.
 
+    Matching strategy (two-tier): interactable elements
+    (button / link / textbox / etc.) are preferred — if any match the
+    text, the first one wins. Only when NO interactable element
+    matches does it fall back to non-interactable nodes (StaticText,
+    headings, bare `<div onclick>` / `<span onclick>` that Chrome's
+    accessibility tree reports as `StaticText`). This covers the
+    Chinese-enterprise-system pattern of nav menus built from
+    `<div onclick="...">` which Chrome does NOT mark as interactable,
+    without regressing the common label-then-input case where the
+    interactable match already wins.
+
+    Pass `interactable_only=True` to disable the fallback and return
+    `found=False` when no interactable match exists — useful when you
+    want to assert "a real button/link with this text exists".
+
     For top-frame locate+click in one shot, use `click_by_text`
     directly. For elements identified by html id / xpath, use
     `find_by_html_id` / `find_by_xpath`. For broad page exploration
@@ -528,21 +543,37 @@ async def find_by_text(
     Args:
         tab: Tab instance
         text: Visible text to match (case-insensitive substring)
-        interactable_only: If True (default), only match buttons / links /
-            inputs / etc. — matches `click_by_text` semantics. Set False
-            when checking for arbitrary text (e.g. "Success" message in
-            a `<div>` after a form submit).
+        interactable_only: If True, only match interactable elements
+            (buttons / links / inputs / etc.). Default False enables
+            fallback to StaticText / div-with-onclick when no
+            interactable element matches.
 
     Returns:
         dict: `{found: True, ref, role, name, x, y, ...}` on hit,
               `{found: False, text}` otherwise.
     """
-    # Reuse page_discover's text filter — same matcher as click_by_text,
-    # so a successful find_by_text → click_by_ref roundtrip lands on the
-    # exact element click_by_text would have hit.
     from .snapshot import page_discover
 
-    result = await page_discover(tab, text=text, interactable_only=interactable_only)
+    # Tier 1: prefer interactable matches — covers button/link/input
+    # cases including label-for-input (Chrome resolves <label for=...>
+    # into the input's accessible name, so a `<label>Username</label>
+    # <input id=user>` match on "Username" returns the input, not the
+    # label).
+    result = await page_discover(tab, text=text, interactable_only=True)
+    elements = result.get("elements", [])
+    if elements:
+        return {"found": True, **elements[0]}
+
+    if interactable_only:
+        return {"found": False, "text": text}
+
+    # Tier 2: fall back to non-interactable nodes. Chrome's AX tree
+    # gives `<div onclick="...">` role=StaticText (onclick isn't an AX
+    # interactable signal), so strict filtering would hide real click
+    # targets. `click_by_ref` on a StaticText ref fires the onclick
+    # handler because it dispatches a CDP mouse event to the node's
+    # backend_node_id — role isn't checked at click time.
+    result = await page_discover(tab, text=text, interactable_only=False)
     elements = result.get("elements", [])
     if not elements:
         return {"found": False, "text": text}
