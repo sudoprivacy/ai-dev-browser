@@ -73,7 +73,7 @@ def _format_ax_node(
     if (
         interactable_only
         and not is_interactable
-        and role not in ("heading", "img", "alert")
+        and role not in ("heading", "image", "img", "alert")
     ):
         if hasattr(node, "children") and node.children:
             for child in node.children:
@@ -89,7 +89,7 @@ def _format_ax_node(
         return results
 
     # Build node info
-    if role and (name or is_interactable):
+    if role and (name or is_interactable or role == "image"):
         ref_counter[0] += 1
 
         # Get node_id first so we can encode it in ref
