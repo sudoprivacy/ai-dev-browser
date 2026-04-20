@@ -454,13 +454,25 @@ async def click_by_text(
     human_like: bool = True,
 ) -> dict:
     """Use when: you know the element's visible text (button label, link
-    anchor, menu item). Atomic locate+click with fuzzy matching, returns
-    `{clicked, url_before, url_after, title_after, navigated}` so you see
-    the post-click URL without a follow-up screenshot.
+    anchor, menu item) AND the target is in the top frame. Atomic
+    locate+click with fuzzy matching.
 
-    Prefer when text is unique / unambiguous. For same-id or same-xpath
-    cases use `click_by_html_id` / `click_by_xpath`. For elements you
-    already identified via `page_discover`, use `click_by_ref`.
+    Returns `{clicked, url_before, url_after, title_after, navigated}` —
+    **don't** screenshot after the click just to see if it worked,
+    `navigated` + `url_after` already tell you. Only screenshot when you
+    need to inspect visual state the return values can't express
+    (form-validation error rendering, captcha pixels for OCR, final
+    result view for the user).
+
+    **Top-frame only.** Unlike `click_by_html_id` / `click_by_xpath`
+    (which recurse through `window.frames`) and `find_by_text` (which
+    scans the full AX tree), this goes through CDP `DOM.performSearch`
+    and won't find text inside an iframe (nav menus in `<iframe>`,
+    embedded widgets). For those, use `find_by_text` → `click_by_ref`
+    or `click_by_xpath` / `click_by_html_id`.
+
+    Prefer when text is unique / unambiguous and top-frame. For elements
+    you already identified via `page_discover`, use `click_by_ref`.
 
     Args:
         tab: Tab instance
@@ -500,15 +512,18 @@ async def find_by_text(
     interactable_only: bool = True,
 ) -> dict:
     """Use when: you know visible text and want to verify it exists or
-    grab its `ref` before deciding whether to act. Returns
+    grab its `ref` before deciding whether to act — OR when
+    `click_by_text` failed because the target is inside an iframe
+    (this scans the full AX tree including same-origin iframes;
+    `click_by_text` only scans the top frame). Returns
     `{found, ref, role, name, x, y}` for the first match — feed `ref`
     into `click_by_ref` / `type_by_ref` to act, or branch on
     `found=False`.
 
-    For locate+click in one shot, use `click_by_text` directly. For
-    elements identified by html id / xpath, use `find_by_html_id` /
-    `find_by_xpath`. For broad page exploration without a known
-    locator, use `page_discover`.
+    For top-frame locate+click in one shot, use `click_by_text`
+    directly. For elements identified by html id / xpath, use
+    `find_by_html_id` / `find_by_xpath`. For broad page exploration
+    without a known locator, use `page_discover`.
 
     Args:
         tab: Tab instance
@@ -805,10 +820,12 @@ async def find_by_html_id(tab: Tab, html_id: str) -> dict:
 
 async def click_by_html_id(tab: Tab, html_id: str) -> dict:
     """Use when: you know the html `id` of the element you want clicked.
-    Atomic locate+click in one call, returns `{clicked, url_before,
-    url_after, title_after, navigated}` so you can tell if the click
-    caused navigation without a follow-up screenshot or page_discover.
-    Cross-frame (same-origin).
+    Atomic locate+click in one call, cross-frame (same-origin).
+
+    Returns `{clicked, url_before, url_after, title_after, navigated}` —
+    **don't** screenshot after the click just to see if it worked,
+    `navigated` + `url_after` already tell you. Only screenshot when you
+    need to inspect visual state the return values can't express.
 
     Prefer over `click_by_ref` when you already know the id (skips the
     `page_discover` step). Prefer over `js_evaluate` — this is iframe-
@@ -913,9 +930,13 @@ async def find_by_xpath(tab: Tab, xpath: str) -> dict:
 async def click_by_xpath(tab: Tab, xpath: str) -> dict:
     """Use when: the element is best expressed as an XPath (attribute
     predicate, positional, or anything text/ref can't disambiguate).
-    Atomic locate+click, returns `{clicked, url_before, url_after,
-    title_after, navigated}` for one-step navigation verification.
-    Cross-frame (same-origin). Prefer over `js_evaluate` for locate+click.
+    Atomic locate+click, cross-frame (same-origin). Prefer over
+    `js_evaluate` for locate+click.
+
+    Returns `{clicked, url_before, url_after, title_after, navigated}` —
+    **don't** screenshot after the click just to see if it worked,
+    `navigated` + `url_after` already tell you. Only screenshot when you
+    need to inspect visual state the return values can't express.
 
     Args:
         tab: Tab instance

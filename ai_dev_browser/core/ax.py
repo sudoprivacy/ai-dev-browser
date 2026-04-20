@@ -286,10 +286,16 @@ async def click_by_ref(
     tab: Tab,
     ref: str,
 ) -> dict:
-    """Use when: you already called `page_discover()` and have a ref
-    (there was no natural id / xpath / text locator). Atomic click +
-    navigation feedback — returns `{clicked, ref, role, name,
-    url_before, url_after, title_after, navigated}`.
+    """Use when: you already called `page_discover()` / `find_by_text`
+    and have a ref (there was no natural id / xpath / text locator, or
+    the target is inside an iframe that `click_by_text` can't reach).
+    Atomic click + navigation feedback.
+
+    Returns `{clicked, ref, role, name, url_before, url_after,
+    title_after, navigated}` — **don't** screenshot after the click
+    just to see if it worked, `navigated` + `url_after` already tell
+    you. Only screenshot when you need to inspect visual state the
+    return values can't express.
 
     If you know the element's html id / xpath / unique text, skip
     `page_discover` and go directly to `click_by_html_id` /
