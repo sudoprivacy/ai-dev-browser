@@ -76,19 +76,12 @@ async def js_evaluate(tab: Tab, expression: str) -> dict:
                                     `page_discover`)
 
     For **multi-line** custom JS the shell quoting in `--expression "..."`
-    gets painful — prefer the Python API. Easiest setup is
-    `quick_connect` (handles browser attach/setup in one line):
+    gets painful — prefer the Python API:
 
-        from ai_dev_browser import quick_connect
         from ai_dev_browser.core import js_evaluate
-
-        async def main():
-            async with quick_connect() as tab:
-                result = await js_evaluate(tab, expression='''
-                    // multi-line JS here, no shell escaping
-                ''')
-
-        asyncio.run(main())
+        result = await js_evaluate(tab, expression='''
+            // multi-line JS here, no shell escaping
+        ''')
 
     Args:
         tab: Tab instance

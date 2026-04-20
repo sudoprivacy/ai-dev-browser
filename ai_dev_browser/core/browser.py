@@ -76,17 +76,7 @@ def browser_start(
     reuse: ReuseStrategy = DEFAULT_REUSE_STRATEGY,
     startup_timeout: float = 30.0,
 ) -> dict:
-    """Use when: you're an orchestrator that needs explicit Chrome
-    lifecycle control — managing port assignments, profile-specific
-    reuse, knowing the exact PID, calling `browser_stop` later.
-    Returns `{port, pid, headless, url, profile, reused, message}`.
-
-    For ad-hoc Python scripts (`python -c "..."`, a one-off
-    `script.py`) that just want a Tab to act on without writing the
-    full `browser_start → connect_browser → get_active_tab` ceremony,
-    prefer `from ai_dev_browser import quick_connect` — auto-detects
-    a running browser (env var → workspace scan), starts one if
-    needed, and yields a context-managed Tab in one line.
+    """Start or reuse a browser instance.
 
     Args:
         port: Debug port (auto-assigned if None)

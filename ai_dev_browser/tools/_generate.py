@@ -26,7 +26,6 @@ INTERNAL = {
     "graceful_close_browser",
     "connect_browser",
     "get_active_tab",
-    "quick_connect",
 }
 
 # Per-tool metadata overrides. Key = function name, value = dict of overrides.
