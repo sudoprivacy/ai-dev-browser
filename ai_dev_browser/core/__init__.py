@@ -35,8 +35,6 @@ from .cdp import cdp_send
 # Chrome detection and launching
 from .chrome import find_chrome, launch_chrome
 
-# Cloudflare
-from .cloudflare import cloudflare_verify
 from .config import (
     DEFAULT_BASE_DIR,
     DEFAULT_COOKIES_DIR,
@@ -153,8 +151,6 @@ __all__ = [
     # Chrome
     "find_chrome",
     "launch_chrome",
-    # Cloudflare
-    "cloudflare_verify",
     # CDP
     "cdp_send",
     # Port

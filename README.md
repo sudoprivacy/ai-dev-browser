@@ -46,9 +46,9 @@ changes flow to both at once and can't drift. See
 underlying decorator.
 
 Tools cover: navigation, element interaction, mouse, tabs, screenshots,
-cookies, storage, window management, dialogs, downloads, raw CDP, and
-Cloudflare bypass. To see the current list (count and names change —
-this README deliberately doesn't pin them):
+cookies, storage, window management, dialogs, downloads, and raw CDP.
+To see the current list (count and names change — this README
+deliberately doesn't pin them):
 
 ```bash
 ls ai_dev_browser/tools/

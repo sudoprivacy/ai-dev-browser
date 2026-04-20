@@ -85,7 +85,6 @@ TOOL_META = {
     "download_file": {"result_key": "path"},
     "download_path": {"result_key": "path"},
     "cdp_send": {"result_key": "result"},
-    "cloudflare_verify": {"result_key": "verified"},
     "login_interactive": {"result_key": "success"},
     "reload": {"result_key": "success"},
 }

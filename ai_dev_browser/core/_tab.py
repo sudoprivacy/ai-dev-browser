@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-import os
 import pathlib
 import typing
 from typing import Any, Generator
@@ -755,63 +754,3 @@ class Tab:
 
     def __await__(self):
         return self.sleep(0.1).__await__()
-
-    # =========================================================================
-    # Cloudflare verification
-    # =========================================================================
-
-    async def verify_cf(self, template_image: str = None, flash: bool = False):
-        """Verify and click Cloudflare Turnstile checkbox using template matching."""
-        x, y = await self.template_location(template_image=template_image)
-        await self.mouse_click(x, y)
-
-    async def template_location(self, template_image: str = None):
-        """Find template image location in current viewport using OpenCV."""
-        try:
-            import cv2
-        except ImportError:
-            raise ImportError(
-                "verify_cf requires opencv-python. Install: pip install opencv-python"
-            )
-
-        import tempfile
-
-        screenshot_path = tempfile.mktemp(suffix=".jpg")
-        template_path = None
-
-        try:
-            await self.save_screenshot(screenshot_path)
-            await asyncio.sleep(0.05)
-            im = cv2.imread(screenshot_path)
-            im_gray = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
-
-            if template_image:
-                template = cv2.imread(str(template_image))
-                if template is None:
-                    raise FileNotFoundError(
-                        f"Template image not found: {template_image}"
-                    )
-            else:
-                # Use built-in CF template
-                from ai_dev_browser.core._cf_template import get_cf_template
-
-                template_path = tempfile.mktemp(suffix=".png")
-                with open(template_path, "wb") as fh:
-                    fh.write(get_cf_template())
-                template = cv2.imread(template_path)
-
-            template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-            match = cv2.matchTemplate(im_gray, template_gray, cv2.TM_CCOEFF_NORMED)
-            _min_v, _max_v, _min_l, max_l = cv2.minMaxLoc(match)
-            xs, ys = max_l
-            tmp_h, tmp_w = template_gray.shape[:2]
-            cx = (xs + xs + tmp_w) // 2
-            cy = (ys + ys + tmp_h) // 2
-            return cx, cy
-        finally:
-            for p in (screenshot_path, template_path):
-                if p:
-                    try:
-                        os.unlink(p)
-                    except OSError:
-                        pass

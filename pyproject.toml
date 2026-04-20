@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 authors = [
     {name = "sudoprivacy"}
 ]
-keywords = ["browser", "automation", "cdp", "pool", "cloudflare", "ai"]
+keywords = ["browser", "automation", "cdp", "pool", "ai"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -36,9 +36,6 @@ dependencies = [
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
-]
-cv = [
-    "opencv-python>=4.8",  # For verify_cf() template matching
 ]
 fuzzy = [
     "rapidfuzz>=3.0",  # Fast C-based Levenshtein for fuzzy_find/fuzzy_click

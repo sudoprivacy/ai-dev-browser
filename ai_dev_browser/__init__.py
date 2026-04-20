@@ -32,9 +32,6 @@ from .core import (
     launch_chrome,
 )
 
-# Cloudflare verification
-from .core.cloudflare import cloudflare_verify
-
 # Worker pool
 from .pool import (
     BrowserPool,
@@ -89,8 +86,6 @@ __all__ = [
     # Profile management
     "ProfileManager",
     "ProfileMode",
-    # Cloudflare verification
-    "cloudflare_verify",
     # Core operations module
     "core",
     # CDP protocol access (vendored)
