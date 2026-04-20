@@ -53,7 +53,12 @@ from .config import (
 )
 
 # Connection
-from .connection import connect_browser, get_active_tab, graceful_close_browser
+from .connection import (
+    connect_browser,
+    get_active_tab,
+    graceful_close_browser,
+    quick_connect,
+)
 
 # Cookies
 from .cookies import cookies_list, cookies_load, cookies_save
@@ -168,6 +173,7 @@ __all__ = [
     "connect_browser",
     "get_active_tab",
     "graceful_close_browser",
+    "quick_connect",
     # Navigation
     "page_goto",
     "page_reload",

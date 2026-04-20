@@ -1,17 +1,22 @@
 """Browser connection utilities.
 
-Provides BrowserClient (CDP client), CookieJar, connect_browser, get_active_tab.
+Provides BrowserClient (CDP client), CookieJar, connect_browser,
+get_active_tab, and quick_connect (one-line setup for ad-hoc Python
+scripts).
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
+import os
 import pickle
 import re
 import urllib.request
 from pathlib import Path
+from typing import AsyncIterator
 
 from ai_dev_browser.cdp import (
     browser as cdp_browser,
@@ -352,6 +357,113 @@ async def get_active_tab(browser: BrowserClient) -> Tab:
 
     # No tabs, create one
     return await browser.get("about:blank")
+
+
+@contextlib.asynccontextmanager
+async def quick_connect(
+    port: int | None = None,
+    start_if_needed: bool = True,
+    headless: bool = True,
+    temp: bool = False,
+    profile: str | None = None,
+) -> AsyncIterator[Tab]:
+    """Use when: you're writing an ad-hoc Python script (`python -c "..."`,
+    a one-off `script.py`, an exploratory snippet) that needs a Tab to
+    act on, and you don't want to write the full
+    `browser_start → connect_browser → get_active_tab` setup ceremony.
+    Yields a Tab as an async context manager. On exit, closes the CDP
+    connection but does NOT stop the underlying Chrome — the next
+    script can attach again.
+
+    Resolution order for which Chrome to attach to:
+      1. Explicit `port` arg
+      2. `AI_DEV_BROWSER_PORT` env var (orchestrators set this)
+      3. workspace scan via `find_workspace_chromes()` (an ai-dev-browser
+         Chrome already running for this cwd)
+      4. If none of the above and `start_if_needed=True`, call
+         `browser_start()` with the headless / temp / profile args
+         and attach to the new one.
+
+    Use `browser_start()` directly when you're an orchestrator that
+    needs explicit lifecycle control (managing port assignments,
+    profile-specific reuse, explicit stop). `quick_connect` is the
+    short path for "I just want a Tab and don't care about the
+    bookkeeping."
+
+    Args:
+        port: Specific debug port to attach. None = auto-detect.
+        start_if_needed: If no Chrome is found via env/workspace scan,
+            spawn one via `browser_start()`. Default True (the script
+            "just works"); set False if you want to fail loudly when
+            no browser is running.
+        headless: Forwarded to `browser_start` if a new Chrome is
+            spawned. Default True (matches script-style use).
+        temp: Forwarded to `browser_start`. Default False — uses the
+            workspace-default profile so the script can reuse session
+            state.
+        profile: Forwarded to `browser_start` for profile-specific
+            isolation. None = workspace default.
+
+    Yields:
+        Tab: ready to use with the rest of the core API
+        (`type_by_html_id`, `click_by_text`, `page_screenshot`, etc.).
+
+    Example:
+        from ai_dev_browser import quick_connect
+        from ai_dev_browser.core import type_by_html_id, click_by_text
+
+        async def main():
+            async with quick_connect() as tab:
+                await type_by_html_id(tab, "user", "alice")
+                await click_by_text(tab, "Sign in")
+
+        asyncio.run(main())
+    """
+    # Lazy imports to avoid a hard dependency cycle: connection.py is
+    # low-level transport; browser_start lives in browser.py and pulls
+    # in launch logic. We only need them when actually starting.
+    actual_port = port
+
+    if actual_port is None:
+        env_port = os.environ.get("AI_DEV_BROWSER_PORT")
+        if env_port:
+            try:
+                actual_port = int(env_port)
+            except ValueError:
+                pass
+
+    if actual_port is None:
+        from .port import find_workspace_chromes
+
+        for p, _pid in find_workspace_chromes():
+            actual_port = p
+            break
+
+    if actual_port is None:
+        if not start_if_needed:
+            raise RuntimeError(
+                "quick_connect: no running ai-dev-browser Chrome found "
+                "(checked port arg, AI_DEV_BROWSER_PORT env, workspace "
+                "scan) and start_if_needed=False"
+            )
+        from .browser import browser_start
+
+        result = browser_start(headless=headless, temp=temp, profile=profile)
+        if "error" in result:
+            raise RuntimeError(
+                f"quick_connect: browser_start failed: {result['error']}"
+            )
+        actual_port = result["port"]
+
+    browser = await connect_browser(port=actual_port)
+    try:
+        tab = await get_active_tab(browser)
+        yield tab
+    finally:
+        # Release the CDP connection so the script's process can exit
+        # cleanly; Chrome itself stays alive for the next attach.
+        with contextlib.suppress(Exception):
+            await browser.close()
 
 
 async def graceful_close_browser(

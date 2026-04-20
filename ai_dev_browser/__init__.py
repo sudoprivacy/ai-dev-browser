@@ -99,6 +99,7 @@ __all__ = [
     "browser_start",
     "browser_stop",
     "connect_browser",
+    "quick_connect",
 ]
 
 # Vendored CDP protocol module
@@ -107,4 +108,4 @@ from . import cdp
 from .core import connect_browser
 
 # Core functions also available at package level
-from .core import browser_start, browser_stop
+from .core import browser_start, browser_stop, quick_connect
