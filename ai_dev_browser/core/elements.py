@@ -579,8 +579,7 @@ async def find_by_text(
     # into the input's accessible name, so a `<label>Username</label>
     # <input id=user>` match on "Username" returns the input, not the
     # label).
-    result = await page_discover(tab, text=text, interactable_only=True)
-    elements = result.get("elements", [])
+    elements = await page_discover(tab, text=text, interactable_only=True)
     if elements:
         return {"found": True, **elements[0]}
 
@@ -593,8 +592,7 @@ async def find_by_text(
     # targets. `click_by_ref` on a StaticText ref fires the onclick
     # handler because it dispatches a CDP mouse event to the node's
     # backend_node_id — role isn't checked at click time.
-    result = await page_discover(tab, text=text, interactable_only=False)
-    elements = result.get("elements", [])
+    elements = await page_discover(tab, text=text, interactable_only=False)
     if not elements:
         return {"found": False, "text": text}
     return {"found": True, **elements[0]}

@@ -414,6 +414,17 @@ def wrap_core(core_func: Callable, result_key: str = "success") -> Callable:
             if filtered.get(result_key) is False and failure_hint:
                 filtered.setdefault("hint", failure_hint)
             return filtered
+        if isinstance(result, list):
+            # Pass lists through unwrapped — tools returning catalogs
+            # (page_discover, tab_list, ...) stay iterable at the Python
+            # API AND the CLI JSON output. Wrapping would turn the list
+            # into `{result_key: [...]}`, which forces callers to do
+            # `result["elements"]` even though the variable name +
+            # function name already say "this is a list". SSOT rule 5:
+            # Core returns a JSON-serializable value; CLI outputs it
+            # verbatim. The shape can be dict OR list — what matters is
+            # Python return == CLI stdout.
+            return result
         return {result_key: result}
 
     return wrapper
@@ -463,6 +474,8 @@ def wrap_core_sync(core_func: Callable, result_key: str = "success") -> Callable
             if filtered.get(result_key) is False and failure_hint:
                 filtered.setdefault("hint", failure_hint)
             return filtered
+        if isinstance(result, list):
+            return result  # see wrap_core note on list passthrough
         return {result_key: result}
 
     return wrapper

@@ -302,45 +302,22 @@ async def _get_snapshot(
     return all_nodes
 
 
-async def _get_accessibility_tree(
-    tab: Tab,
-    interactable_only: bool = False,
-    include_iframes: bool = True,
-) -> dict:
-    """Get accessibility tree with metadata.
-
-    Wrapper around get_snapshot that returns a dict with elements and count.
-
-    Args:
-        tab: Tab instance
-        interactable_only: If True, only return interactable elements
-        include_iframes: If True (default), include iframe content
-
-    Returns:
-        dict with elements list and count
-    """
-    elements = await _get_snapshot(
-        tab,
-        interactable_only=interactable_only,
-        include_iframes=include_iframes,
-    )
-    return {"elements": elements, "count": len(elements)}
-
-
 async def page_discover(
     tab: Tab,
     text: str | None = None,
     interactable_only: bool = True,
     include_coordinates: bool = True,
     include_iframes: bool = True,
-) -> dict:
+) -> list[dict]:
     """Use when: you DON'T know what's on the page yet — broad exploration
     of all interactable elements (including same-origin iframes; iframe
     elements get `FRAME_xxx:` prefix on their refs, so filter the
-    returned list by prefix to narrow to one frame). Returns a catalog
-    of refs you feed into `click_by_ref` / `type_by_ref` /
-    `focus_by_ref` / etc. and `x`/`y` coords you feed into
-    `mouse_click`.
+    returned list by prefix to narrow to one frame).
+
+    Returns a **list** of element dicts you iterate directly
+    (`for el in await page_discover(tab): ...`). Feed each `ref` into
+    `click_by_ref` / `type_by_ref` / `focus_by_ref` and each `x`/`y`
+    into `mouse_click`. Use `len(result)` if you need the count.
 
     Skip this when you already know how to locate your target — go
     directly to `click_by_html_id` / `click_by_xpath` / `click_by_text`
@@ -354,7 +331,7 @@ async def page_discover(
         include_iframes: If True (default), include iframe content
 
     Returns:
-        dict with elements list, each containing:
+        list of element dicts, each containing:
         - ref: reference for click_ref (e.g., "5#214")
         - role: element role (button, link, textbox, etc.)
         - name: accessible name
@@ -362,9 +339,11 @@ async def page_discover(
         - box: {left, top, right, bottom} (if include_coordinates=True)
 
     Example:
-        page_discover()                    # All interactive elements
-        page_discover(text="登录")         # Filter by text
-        page_discover(text="Sign")         # Case-insensitive match
+        elements = await page_discover()               # All interactive elements
+        for el in elements:                            # Iterate directly
+            if "Sign in" in el.get("name", ""):
+                await click_by_ref(tab, el["ref"])
+        page_discover(text="登录")                     # Filter by text
     """
     from ai_dev_browser.cdp import dom
 
@@ -423,4 +402,4 @@ async def page_discover(
                     # Skip coordinates for this element if we can't get them
                     pass
 
-    return {"elements": elements, "count": len(elements)}
+    return elements
