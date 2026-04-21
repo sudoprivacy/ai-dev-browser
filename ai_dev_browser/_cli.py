@@ -284,41 +284,14 @@ def as_cli(requires_tab: bool = True):
             args = parser.parse_args()
 
             if requires_tab:
-                # Connect to browser and get tab
+                # Port resolution (explicit → env → workspace scan → default)
+                # lives in connect_browser itself now — CLI and Python API share
+                # the same resolution path, no duplication here.
                 from ai_dev_browser.core import connect_browser, get_active_tab
 
                 async def run():
                     try:
-                        port = args.port
-                        if port is None:
-                            # Check env var first (set by embedding apps like Sudowork)
-                            env_port = os.environ.get("AI_DEV_BROWSER_PORT")
-                            if env_port:
-                                port = int(env_port)
-                            else:
-                                # Auto-detect: find a running Chrome in this workspace
-                                from ai_dev_browser.core.port import (
-                                    find_workspace_chromes,
-                                )
-
-                                for candidate, _pid in find_workspace_chromes():
-                                    port = candidate
-                                    break
-
-                            if port is None:
-                                print(
-                                    json.dumps(
-                                        {
-                                            "error": "No available Chrome found. "
-                                            "Run browser-start first, or specify --port."
-                                        },
-                                        ensure_ascii=False,
-                                        indent=2,
-                                    )
-                                )
-                                sys.exit(1)
-
-                        browser = await connect_browser(port=port)
+                        browser = await connect_browser(port=args.port)
                         tab = await get_active_tab(browser)
 
                         # Build kwargs from args, excluding 'port'

@@ -301,43 +301,89 @@ class BrowserClient:
 # =============================================================================
 
 
+def _resolve_port(port: int | None) -> int:
+    """Resolve a Chrome debug port using the same precedence as CLI tools.
+
+    Order: explicit arg → `AI_DEV_BROWSER_PORT` env var → workspace scan
+    (find_workspace_chromes) → DEFAULT_DEBUG_PORT as last resort.
+
+    Mirrors `_cli.py` resolution so Python callers that do
+    `connect_browser()` without an argument behave the same as
+    `python -m ai_dev_browser.tools.<name>` without `--port`.
+    """
+    if port is not None:
+        return port
+
+    import os as _os
+
+    env = _os.environ.get("AI_DEV_BROWSER_PORT")
+    if env:
+        try:
+            return int(env)
+        except ValueError:
+            pass
+
+    from .port import find_workspace_chromes
+
+    for candidate, _pid in find_workspace_chromes():
+        return candidate
+
+    return DEFAULT_DEBUG_PORT
+
+
 async def connect_browser(
     host: str = DEFAULT_DEBUG_HOST,
-    port: int = DEFAULT_DEBUG_PORT,
+    port: int | None = None,
 ) -> BrowserClient:
-    """Connect to existing Chrome instance.
+    """Connect to an existing Chrome instance.
 
-    Reuses existing connection for same host:port if alive.
-    Supports context manager: async with connect_browser() as browser: ...
+    Reuses the existing connection for the same host:port if alive.
+    Supports context manager: `async with connect_browser() as browser: ...`.
+
+    When `port` is omitted, resolves via the same precedence as CLI
+    tools (explicit → `AI_DEV_BROWSER_PORT` env → workspace Chrome
+    scan → default). Lets Python scripts start with `browser = await
+    connect_browser()` without hard-coding a port — matches the
+    zero-arg CLI invocation.
 
     Args:
-        host: Chrome debugging host
-        port: Chrome debugging port
+        host: Chrome debugging host.
+        port: Chrome debugging port. None → auto-detect.
 
     Returns:
-        BrowserClient instance (also usable as async context manager)
+        BrowserClient instance (also usable as async context manager).
 
     Raises:
-        ConnectionError: If unable to connect
+        ConnectionError: If unable to connect.
     """
+    resolved_port = _resolve_port(port)
     try:
-        browser = await BrowserClient.connect(host=host, port=port)
+        browser = await BrowserClient.connect(host=host, port=resolved_port)
         return browser
     except Exception as e:
         raise ConnectionError(
-            f"Failed to connect to Chrome on {host}:{port}: {e}"
+            f"Failed to connect to Chrome on {host}:{resolved_port}: {e}"
         ) from e
 
 
-async def get_active_tab(browser: BrowserClient) -> Tab:
-    """Get the active/main tab from browser.
+async def get_active_tab(browser: BrowserClient | None = None) -> Tab:
+    """Get the active/main tab from a browser.
+
+    When `browser` is omitted, auto-connects via `connect_browser()`
+    (which itself auto-detects a workspace Chrome port). Lets Python
+    scripts collapse `browser = await connect_browser(); tab = await
+    get_active_tab(browser)` into a single `tab = await
+    get_active_tab()` when they don't need to hold the browser handle.
 
     Args:
-        browser: BrowserClient instance
+        browser: BrowserClient instance. None → auto-connect.
 
     Returns:
-        Active tab, or creates a blank one if none exists
+        Active tab, or creates a blank one if none exists.
     """
+    if browser is None:
+        browser = await connect_browser()
+
     page_targets = [
         t for t in browser.targets if getattr(t._target, "type_", "") == "page"
     ]
