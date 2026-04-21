@@ -309,8 +309,14 @@ async def click_by_ref(
         dict with clicked status, element info, and navigation feedback:
         `{clicked, ref, role, name, url_before, url_after, title_after, navigated}`.
         `navigated=True` means the top-level URL changed after the click
-        (SPA route change or full page load). Use this to confirm the click
-        had the intended side effect instead of chaining a screenshot + discover.
+        (SPA route change or full page load).
+
+    Failure:
+        Ref is stale (page navigated or element was removed between
+        the `page_discover` / `find_by_text` call that returned it
+        and this click). Re-run `page_discover` or `find_by_text` to
+        get a fresh ref, or use a stable locator — `click_by_html_id`
+        / `click_by_xpath` / `click_by_text`.
 
     Example:
         # First page_discover elements

@@ -88,6 +88,48 @@ def _parse_docstring_args(docstring: str) -> dict[str, str]:
     return args_section
 
 
+def _parse_docstring_failure(docstring: str) -> str | None:
+    """Extract the body of the Failure: section from a Google-style docstring.
+
+    Tool authors write failure-path steering once in the docstring's
+    `Failure:` section (parallel to `Args:` / `Returns:`). This parser
+    extracts it at wrap time; `wrap_core` then auto-injects it as the
+    `hint` field on any failure return — SSOT with auto-split across
+    `--help` (full docstring, reference surface) and failure `hint`
+    (just this section, runtime steering surface).
+
+    Rationale: guidance about "what to do if this tool fails" placed
+    only in the docstring reaches the LLM at most via `--help`, which
+    is an on-demand call the LLM rarely makes at invocation-failure
+    time. Routing the same authored text into the failure return is
+    the only channel with 100% reach at the moment the LLM needs to
+    recover.
+
+    Returns the flat concatenated hint text, or None if no Failure:
+    section is present.
+    """
+    if not docstring:
+        return None
+
+    in_failure = False
+    lines: list[str] = []
+    for raw in docstring.split("\n"):
+        stripped = raw.strip()
+        # Google-style section headers are single-word lines ending with ':'
+        is_section_header = stripped.endswith(":") and len(stripped.split()) == 1
+        if is_section_header:
+            if stripped == "Failure:":
+                in_failure = True
+                continue
+            if in_failure:
+                break  # next section ends the Failure block
+        elif in_failure:
+            lines.append(stripped)
+
+    text = " ".join(line for line in lines if line).strip()
+    return text or None
+
+
 def _get_param_type(hint) -> type | Callable[[str], bool]:
     """Convert type hint to argparse type."""
     import types
@@ -368,25 +410,38 @@ def wrap_core(core_func: Callable, result_key: str = "success") -> Callable:
         element_click = as_cli()(wrap_core(click, "clicked"))
     """
 
+    failure_hint = _parse_docstring_failure(core_func.__doc__ or "")
+
     @functools.wraps(core_func)
     async def wrapper(*args, **kwargs):
         try:
             result = await core_func(*args, **kwargs)
-            if isinstance(result, bool):
-                if result:
-                    return {result_key: True}
-                else:
-                    return {"error": "Operation failed"}
-            elif isinstance(result, dict):
-                # Filter out non-serializable values for CLI output
-                return _filter_dict_for_json(result)
-            else:
-                return {result_key: result}
         except Exception as e:
             # Verbatim message — Python `repr(e)` and CLI stdout stay in
-            # lockstep (cli-args-ssot rule 6: never re-render error text
+            # lockstep (cli-args-ssot rule 7: never re-render error text
             # in tool files).
-            return {"error": str(e)}
+            out: dict = {"error": str(e)}
+            if failure_hint:
+                out["hint"] = failure_hint
+            return out
+
+        if isinstance(result, bool):
+            if result:
+                return {result_key: True}
+            out = {"error": "Operation failed"}
+            if failure_hint:
+                out["hint"] = failure_hint
+            return out
+        if isinstance(result, dict):
+            filtered = _filter_dict_for_json(result)
+            # Auto-inject failure hint when the tool reports failure via
+            # result_key=False. Pairs with cli-args-ssot Rule 5a: failure
+            # steering goes through the return channel (100% reach at
+            # invocation time), not docstring (only reaches on --help).
+            if filtered.get(result_key) is False and failure_hint:
+                filtered.setdefault("hint", failure_hint)
+            return filtered
+        return {result_key: result}
 
     return wrapper
 
@@ -411,24 +466,30 @@ def wrap_core_sync(core_func: Callable, result_key: str = "success") -> Callable
         browser_start = as_cli(requires_tab=False)(wrap_core_sync(browser_start, "port"))
     """
 
+    failure_hint = _parse_docstring_failure(core_func.__doc__ or "")
+
     @functools.wraps(core_func)
     def wrapper(*args, **kwargs):
         try:
             result = core_func(*args, **kwargs)
-            if isinstance(result, bool):
-                if result:
-                    return {result_key: True}
-                else:
-                    return {"error": "Operation failed"}
-            elif isinstance(result, dict):
-                # Filter out non-serializable values for CLI output
-                return _filter_dict_for_json(result)
-            else:
-                return {result_key: result}
         except Exception as e:
-            # Verbatim message — Python `repr(e)` and CLI stdout stay in
-            # lockstep (cli-args-ssot rule 6: never re-render error text
-            # in tool files).
-            return {"error": str(e)}
+            out: dict = {"error": str(e)}
+            if failure_hint:
+                out["hint"] = failure_hint
+            return out
+
+        if isinstance(result, bool):
+            if result:
+                return {result_key: True}
+            out = {"error": "Operation failed"}
+            if failure_hint:
+                out["hint"] = failure_hint
+            return out
+        if isinstance(result, dict):
+            filtered = _filter_dict_for_json(result)
+            if filtered.get(result_key) is False and failure_hint:
+                filtered.setdefault("hint", failure_hint)
+            return filtered
+        return {result_key: result}
 
     return wrapper

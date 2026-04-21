@@ -432,6 +432,15 @@ async def page_wait_element(
 
     Returns:
         dict with found, elapsed, message
+
+    Failure:
+        Element didn't appear within `timeout` seconds. Try a longer
+        timeout if the page is slow; a broader locator (partial text
+        instead of exact, less-specific CSS selector); or confirm the
+        element is expected on this page via `page_discover`. For
+        iframe-embedded targets with a text locator, note that
+        text-based wait scans the top frame only — use
+        `find_by_text` + `click_by_ref` pattern instead of waiting.
     """
     result = await _wait_for_element(tab, text=text, selector=selector, timeout=timeout)
 
@@ -464,13 +473,6 @@ async def click_by_text(
     (form-validation error rendering, captcha pixels for OCR, final
     result view for the user).
 
-    **Top-frame only.** Unlike `click_by_html_id` / `click_by_xpath`
-    (which recurse through `window.frames`) and `find_by_text` (which
-    scans the full AX tree), this goes through CDP `DOM.performSearch`
-    and won't find text inside an iframe (nav menus in `<iframe>`,
-    embedded widgets). For those, use `find_by_text` → `click_by_ref`
-    or `click_by_xpath` / `click_by_html_id`.
-
     Prefer when text is unique / unambiguous and top-frame. For elements
     you already identified via `page_discover`, use `click_by_ref`.
 
@@ -483,8 +485,17 @@ async def click_by_text(
     Returns:
         dict with clicked, text, url_before, url_after, title_after, navigated.
         `navigated=True` means the top-level URL changed after the click
-        (SPA route change or full page load). Use this to confirm the click
-        had the intended side effect instead of chaining a screenshot + discover.
+        (SPA route change or full page load).
+
+    Failure:
+        Not found in the top frame. This tool uses CDP
+        `DOM.performSearch` on the main document only — it won't find
+        text inside iframes (nav menus in `<iframe>`, embedded
+        widgets). Try `find_by_text` → `click_by_ref` (scans
+        same-origin iframes and falls back to non-interactable AX
+        nodes like `<div onclick>`), or `click_by_xpath` /
+        `click_by_html_id` which recurse through `window.frames`
+        natively.
 
     Example:
         click_by_text("登录")
@@ -551,6 +562,15 @@ async def find_by_text(
     Returns:
         dict: `{found: True, ref, role, name, x, y, ...}` on hit,
               `{found: False, text}` otherwise.
+
+    Failure:
+        Text not found in main frame or any same-origin iframe, in
+        either the interactable or fallback tier. Check spelling /
+        case (match is case-insensitive substring); try a shorter
+        substring; or switch locator — `find_by_html_id` /
+        `find_by_xpath` if a DOM-level locator is known. For a broad
+        survey of what's on the page, run `page_discover` without a
+        text filter. Cross-origin iframes are not scanned.
     """
     from .snapshot import page_discover
 
@@ -605,6 +625,13 @@ async def type_by_text(
 
     Returns:
         dict with typed status
+
+    Failure:
+        Input with this accessible name not found in the top frame.
+        For iframe-embedded inputs, use `find_by_text` (AX-tree scan,
+        iframe-aware) to get a ref, then `type_by_ref`. If the input
+        lacks an accessible name, locate by html id with
+        `find_by_html_id` → `type_by_ref`.
 
     Example:
         type_by_text(name="用户名", text="myusername")
@@ -822,6 +849,12 @@ async def find_by_html_id(tab: Tab, html_id: str) -> dict:
         dict: `{found: true, tag, text, visible, attrs}` on hit,
               `{found: false}` otherwise.
 
+    Failure:
+        No element with this id in any same-origin frame. Use
+        `page_discover` to see the ids actually present, or switch
+        locator — `find_by_text` if you know the visible label,
+        `find_by_xpath` for attribute-predicate / positional lookups.
+
     Example:
         result = await find_by_html_id(tab, "submit-btn")
         if result["found"] and result["visible"]:
@@ -869,6 +902,13 @@ async def click_by_html_id(tab: Tab, html_id: str) -> dict:
     Returns:
         dict: `{clicked, html_id, url_before, url_after, title_after, navigated, error?}`.
         `navigated=True` means the top-level URL changed after the click.
+
+    Failure:
+        No element with this id found in any same-origin frame. Run
+        `find_by_html_id` first to verify existence and get attrs, or
+        switch locator — `click_by_text` (top frame only, use
+        `find_by_text` → `click_by_ref` for iframe targets) or
+        `click_by_xpath` for attribute / positional predicates.
     """
     url_before_state = await _capture_page_state(tab)
     url_before = url_before_state.get("url", "")
@@ -927,6 +967,14 @@ async def find_by_xpath(tab: Tab, xpath: str) -> dict:
     Returns:
         dict: `{found: true, tag, text, visible, attrs}` on hit,
               `{found: false}` otherwise.
+
+    Failure:
+        XPath returned no match in any same-origin frame. Shorten the
+        expression (e.g. `//button` instead of
+        `//button[@data-role='x']`) to verify the broader target
+        exists, or switch locator — `find_by_text` by visible label,
+        `find_by_html_id` if an id is known, or `page_discover` for a
+        structural survey.
     """
     expr = """
     (function(xpath) {
@@ -975,6 +1023,12 @@ async def click_by_xpath(tab: Tab, xpath: str) -> dict:
 
     Returns:
         dict: `{clicked, xpath, url_before, url_after, title_after, navigated, error?}`.
+
+    Failure:
+        XPath returned no match in any same-origin frame. Verify with
+        `find_by_xpath` first (returns the matched element's attrs
+        without clicking), or switch locator — `click_by_text` /
+        `click_by_html_id`, or `page_discover` → `click_by_ref`.
     """
     url_before_state = await _capture_page_state(tab)
     url_before = url_before_state.get("url", "")
