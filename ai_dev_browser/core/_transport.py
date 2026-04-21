@@ -242,6 +242,36 @@ class CDPConnection:
             else:
                 self.handlers[evt].append(handler)
 
+    def remove_handler(
+        self,
+        event_type: type,
+        handler: Callable,
+    ) -> bool:
+        """Unregister a previously-added event handler.
+
+        Counterpart to add_handler for short-lived captures (e.g.
+        `js_evaluate` subscribing to `Runtime.consoleAPICalled` for the
+        duration of a single eval then detaching). Without this, each
+        call leaks the handler closure and its captured state.
+
+        Args:
+            event_type: CDP event class the handler was registered on.
+                        Only single-class removal is supported; to undo a
+                        module-level add_handler, unregister per-class.
+            handler: The exact callable passed to add_handler.
+
+        Returns:
+            True if removed, False if not found.
+        """
+        bucket = self.handlers.get(event_type)
+        if not bucket:
+            return False
+        try:
+            bucket.remove(handler)
+            return True
+        except ValueError:
+            return False
+
     # Domains that should never be removed by _register_handlers cleanup.
     # These are either always-on (target, storage, input_) or essential
     # for core operations (page, dom) — enabled by Tab._ensure_connected().

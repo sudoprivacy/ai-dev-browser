@@ -62,12 +62,14 @@ def read_screenshot_metadata(path: str) -> dict:
 
 
 async def js_evaluate(tab: Tab, expression: str) -> dict:
-    """Use when: NO specific tool fits — this is the last-resort raw JS
-    escape hatch. Returns `{result}` with whatever the expression evaluated
-    to (or `{error}`). Next step is interpreting that value yourself.
+    """Use when: NO specific tool fits — the last-resort raw JS escape
+    hatch. Works equally for **read** expressions (`document.title`,
+    `innerText`) and **side-effect** expressions (`.click()`, `.submit()`,
+    DOM mutations) — the return dict captures *everything* observable
+    during the eval, not just the expression value.
 
-    Before picking this: the locate+act combinations below cover almost all
-    intents atomically (and give you navigation feedback on clicks):
+    Before picking this: the locate+act combinations below cover almost
+    all intents atomically and are more specific:
 
       - Locate + act by html id:    `click_by_html_id` / `find_by_html_id`
       - Locate + act by XPath:      `click_by_xpath` / `find_by_xpath`
@@ -85,18 +87,136 @@ async def js_evaluate(tab: Tab, expression: str) -> dict:
 
     Args:
         tab: Tab instance
-        expression: JavaScript code to execute. Result of last expression is returned.
+        expression: JavaScript code to execute. Result of last expression
+            is returned. `console.log` / `warn` / `error` / `info` output
+            during the eval is captured separately.
 
     Returns:
-        dict with result (serializable) or error
+        dict with:
+
+          - `result`: the expression's evaluated value (may be `None` if
+            the expression is a void side-effect like `.click()`)
+          - `console`: list of `{level, text}` entries emitted during
+            the eval, if any (only present when non-empty)
+          - `url_before` / `url_after` / `title_after` / `navigated`:
+            top-level navigation observables, same shape as
+            `click_by_*`. `navigated=True` iff URL changed.
+          - `error`: `{message, description, stack}` if the expression
+            threw; absent on success.
+
+    Example:
+        # Read — result field carries the answer
+        await js_evaluate(tab, "document.title")
+        # → {"result": "...", "url_before": ..., "navigated": False}
+
+        # Side effect — navigated/url_after + console confirm what happened
+        await js_evaluate(tab, "document.querySelector('#login').click()")
+        # → {"result": None, "url_before": "/login", "url_after": "/home",
+        #    "navigated": True, "title_after": "Home"}
+
+        # Debugging — console lines captured
+        await js_evaluate(tab, "console.log('x=', x); x + 1")
+        # → {"result": 2, "console": [{"level": "log", "text": "x= 1"}], ...}
     """
-    result = await tab.evaluate(expression)
-    # Try to serialize result
+    from ai_dev_browser.cdp import runtime
+
+    from .elements import _POST_CLICK_NAV_DELAY, _capture_page_state
+
+    before = await _capture_page_state(tab)
+
+    console_msgs: list[dict] = []
+
+    def _stringify_arg(arg) -> str:
+        # Runtime.RemoteObject: value (primitive) / description / unserializable_value
+        val = getattr(arg, "value", None)
+        if val is not None:
+            try:
+                return json.dumps(val, ensure_ascii=False)
+            except (TypeError, ValueError):
+                return str(val)
+        desc = getattr(arg, "description", None)
+        if desc:
+            return str(desc)
+        unser = getattr(arg, "unserializable_value", None)
+        if unser:
+            return str(unser)
+        return ""
+
+    def on_console(event):
+        level = getattr(event, "type_", "log")
+        text = " ".join(_stringify_arg(a) for a in event.args)
+        console_msgs.append({"level": level, "text": text})
+
+    # Runtime.enable() is idempotent and required for consoleAPICalled events.
+    await tab.send(runtime.enable())
+    tab.add_handler(runtime.ConsoleAPICalled, on_console)
+
+    result_value: object = None
+    error_info: dict | None = None
     try:
-        json.dumps(result)
-        return {"result": result}
-    except (TypeError, ValueError):
-        return {"result": str(result)}
+        raw = await tab.evaluate(expression)
+    except Exception as e:
+        error_info = {"message": str(e)}
+    else:
+        # tab.evaluate returns ExceptionDetails on eval-time exceptions
+        # (not a Python raise), see _tab.py::evaluate.
+        if isinstance(raw, runtime.ExceptionDetails):
+            exc = getattr(raw, "exception", None)
+            stack = getattr(raw, "stack_trace", None)
+            error_info = {
+                "message": getattr(raw, "text", "") or "",
+                "description": getattr(exc, "description", None) if exc else None,
+                "stack": [
+                    {
+                        "function": f.function_name,
+                        "url": f.url,
+                        "line": f.line_number,
+                        "column": f.column_number,
+                    }
+                    for f in (stack.call_frames if stack else [])
+                ]
+                if stack
+                else None,
+            }
+        else:
+            try:
+                json.dumps(raw)
+                result_value = raw
+            except (TypeError, ValueError):
+                result_value = str(raw)
+
+    # Give any navigation triggered by the eval a moment to commit,
+    # mirroring click_by_*'s _POST_CLICK_NAV_DELAY so URL snapshots
+    # reflect the post-action state.
+    import asyncio as _asyncio
+
+    await _asyncio.sleep(_POST_CLICK_NAV_DELAY)
+
+    try:
+        after = await _capture_page_state(tab)
+    except Exception:
+        # Context destroyed mid-read (full-page nav) — we know URL changed
+        after = {"url": None, "title": None}
+
+    tab.remove_handler(runtime.ConsoleAPICalled, on_console)
+
+    url_before = before.get("url", "") if isinstance(before, dict) else ""
+    url_after = after.get("url") if isinstance(after, dict) else None
+    title_after = after.get("title", "") if isinstance(after, dict) else ""
+    navigated = bool(url_before) and url_after is not None and url_after != url_before
+
+    out: dict = {
+        "result": result_value,
+        "url_before": url_before,
+        "url_after": url_after,
+        "title_after": title_after,
+        "navigated": navigated,
+    }
+    if console_msgs:
+        out["console"] = console_msgs
+    if error_info is not None:
+        out["error"] = error_info
+    return out
 
 
 async def page_screenshot(

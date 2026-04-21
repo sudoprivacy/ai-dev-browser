@@ -195,6 +195,10 @@ class Tab:
         """Register a CDP event handler."""
         self._connection.add_handler(event_type, handler)
 
+    def remove_handler(self, event_type, handler) -> bool:
+        """Unregister a CDP event handler (pair with add_handler)."""
+        return self._connection.remove_handler(event_type, handler)
+
     # =========================================================================
     # JavaScript evaluation
     # =========================================================================
