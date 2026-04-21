@@ -391,7 +391,7 @@ def wrap_core(core_func: Callable, result_key: str = "success") -> Callable:
             result = await core_func(*args, **kwargs)
         except Exception as e:
             # Verbatim message — Python `repr(e)` and CLI stdout stay in
-            # lockstep (cli-args-ssot rule 7: never re-render error text
+            # lockstep (cli-steering-engineering rule 7: never re-render error text
             # in tool files).
             out: dict = {"error": str(e)}
             if failure_hint:
@@ -408,7 +408,7 @@ def wrap_core(core_func: Callable, result_key: str = "success") -> Callable:
         if isinstance(result, dict):
             filtered = _filter_dict_for_json(result)
             # Auto-inject failure hint when the tool reports failure via
-            # result_key=False. Pairs with cli-args-ssot Rule 5a: failure
+            # result_key=False. Pairs with cli-steering-engineering Rule 5a: failure
             # steering goes through the return channel (100% reach at
             # invocation time), not docstring (only reaches on --help).
             if filtered.get(result_key) is False and failure_hint:

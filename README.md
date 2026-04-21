@@ -42,7 +42,7 @@ convenient:
 
 Because both paths are generated from a single source, parameter
 changes flow to both at once and can't drift. See
-[cli-args-ssot](https://github.com/sudoprivacy/cli-args-ssot) for the
+[cli-steering-engineering](https://github.com/sudoprivacy/cli-steering-engineering) for the
 underlying decorator.
 
 Tools cover: navigation, element interaction, mouse, tabs, screenshots,
@@ -56,7 +56,7 @@ ls ai_dev_browser/tools/
 
 **One file per CLI command, by design.** Each CLI command gets its own
 `tools/<name>.py` (e.g. `tools/click_by_text.py`, `tools/click_by_xpath.py`).
-This deviates from cli-args-ssot's "domain-grouped subcommands" recommendation
+This deviates from cli-steering-engineering's "domain-grouped subcommands" recommendation
 because our invocation is `python -m ai_dev_browser.tools.<name>` — one file
 1:1 maps to one CLI path with no extra subcommand layer. The
 `<verb>_by_<spec>` family (`click_by_text`, `click_by_ref`, `click_by_html_id`,
