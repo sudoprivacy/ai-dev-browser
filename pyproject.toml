@@ -40,6 +40,9 @@ dev = [
 fuzzy = [
     "rapidfuzz>=3.0",  # Fast C-based Levenshtein for fuzzy_find/fuzzy_click
 ]
+cleanup = [
+    "psutil>=5.9",  # For browser_cleanup orphan-process scan
+]
 
 [project.urls]
 Homepage = "https://github.com/sudoprivacy/ai-dev-browser"

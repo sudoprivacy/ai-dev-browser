@@ -93,6 +93,7 @@ __all__ = [
     # Tools
     "browser_start",
     "browser_stop",
+    "browser_cleanup",
     "connect_browser",
 ]
 
@@ -102,4 +103,4 @@ from . import cdp
 from .core import connect_browser
 
 # Core functions also available at package level
-from .core import browser_start, browser_stop
+from .core import browser_cleanup, browser_start, browser_stop

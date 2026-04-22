@@ -32,6 +32,9 @@ from .ax import (
 from .browser import browser_list, browser_start, browser_stop
 from .cdp import cdp_send
 
+# Orphan profile cleanup (optional psutil dep)
+from .cleanup import browser_cleanup
+
 # Chrome detection and launching
 from .chrome import find_chrome, launch_chrome
 
@@ -135,6 +138,7 @@ __all__ = [
     "browser_start",
     "browser_stop",
     "browser_list",
+    "browser_cleanup",
     # Config
     "DEFAULT_BASE_DIR",
     "DEFAULT_PROFILE_DIR",

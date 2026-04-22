@@ -26,6 +26,8 @@ INTERNAL = {
     "graceful_close_browser",
     "connect_browser",
     "get_active_tab",
+    # destructive — Python-only API; not exposed to LLM tool discovery
+    "browser_cleanup",
 }
 
 # Per-tool metadata overrides. Key = function name, value = dict of overrides.
