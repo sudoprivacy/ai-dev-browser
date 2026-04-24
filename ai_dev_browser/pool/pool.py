@@ -697,7 +697,7 @@ class BrowserPool(Generic[ClientT]):
                         )
 
                 except Exception as e:
-                    await self._handle_job_failure(worker, job, str(e))
+                    await self._handle_job_failure(worker, job, str(e), exc=e)
 
                 finally:
                     worker.mark_idle()
@@ -709,8 +709,22 @@ class BrowserPool(Generic[ClientT]):
                 logger.error(f"Worker {worker.worker_id} loop error: {e}")
                 await asyncio.sleep(1)
 
-    async def _handle_job_failure(self, worker: Worker, job: Job, error: str) -> None:
-        """Handle job failure - retry or mark as failed."""
+    async def _handle_job_failure(
+        self,
+        worker: Worker,
+        job: Job,
+        error: str,
+        *,
+        exc: BaseException | None = None,
+    ) -> None:
+        """Handle job failure - retry or mark as failed.
+
+        If `exc` is provided (exception caught in the worker loop), the
+        terminal `JobResult` captures `error_type` + `error_bases` so
+        callers can branch on exception type without parsing `error`.
+        Non-exception failures (e.g. `fail_condition` triggered) pass
+        only `error` and the type fields stay None / [].
+        """
         job.retries += 1
         worker.stats.fail += 1
 
@@ -725,12 +739,19 @@ class BrowserPool(Generic[ClientT]):
                 f"({job.job_id[:8]}...), retry {job.retries}: {error}"
             )
         else:
-            result = JobResult(
-                job_id=job.job_id,
-                success=False,
-                error=error,
-                worker_id=worker.worker_id,
-            )
+            if exc is not None:
+                result = JobResult.from_exception(
+                    job_id=job.job_id,
+                    exc=exc,
+                    worker_id=worker.worker_id,
+                )
+            else:
+                result = JobResult(
+                    job_id=job.job_id,
+                    success=False,
+                    error=error,
+                    worker_id=worker.worker_id,
+                )
             self._results[job.job_id] = result
             self._pending_jobs.pop(job.job_id, None)
             job.status = JobStatus.FAILED

@@ -96,7 +96,15 @@ class JobResult:
         job_id: ID of the job this result belongs to
         success: True if job completed without error
         data: Return value from the client method (JSON-serializable)
-        error: Error message if job failed
+        error: Error message if job failed (from `str(exception)`)
+        error_type: Exception class name if job failed (e.g.
+            `"GrokRateLimitError"`). Lets callers branch on exception
+            type without string-matching `error`. None on success.
+        error_bases: List of exception base-class names from the mro,
+            excluding `object` (e.g.
+            `["RateLimitError", "RuntimeError", "Exception"]`). Lets
+            callers match superclasses when the concrete type is
+            domain-specific but the base is standard. Empty on success.
         completed_at: Timestamp when job completed
         worker_id: ID of the worker that executed the job
 
@@ -107,14 +115,50 @@ class JobResult:
             data={"url": "https://example.com", "title": "Example"},
             worker_id=0,
         )
+
+        # Failure branching without text matching:
+        if not result.success:
+            if result.error_type == "GrokRateLimitError":
+                schedule_retry()
+            elif "TimeoutError" in result.error_bases:
+                ...
     """
 
     job_id: str
     success: bool
     data: Any = None
     error: str | None = None
+    error_type: str | None = None
+    error_bases: list[str] = field(default_factory=list)
     completed_at: datetime = field(default_factory=datetime.now)
     worker_id: int | None = None
+
+    @classmethod
+    def from_exception(
+        cls,
+        job_id: str,
+        exc: BaseException,
+        worker_id: int | None = None,
+    ) -> "JobResult":
+        """Build a failure result capturing the exception's type + mro.
+
+        Use inside worker exception handlers so callers downstream can
+        branch on `error_type` / `error_bases` without parsing
+        `error` text.
+        """
+        cls_chain = type(exc).__mro__
+        # mro ends with `object`; drop it. First element is the type
+        # itself, which we surface as `error_type`; the rest is bases.
+        error_type = cls_chain[0].__name__
+        error_bases = [c.__name__ for c in cls_chain[1:] if c is not object]
+        return cls(
+            job_id=job_id,
+            success=False,
+            error=str(exc),
+            error_type=error_type,
+            error_bases=error_bases,
+            worker_id=worker_id,
+        )
 
     def to_dict(self) -> dict:
         """Serialize result for persistence."""
@@ -123,6 +167,8 @@ class JobResult:
             "success": self.success,
             "data": self.data,
             "error": self.error,
+            "error_type": self.error_type,
+            "error_bases": self.error_bases,
             "completed_at": self.completed_at.isoformat(),
             "worker_id": self.worker_id,
         }
@@ -135,6 +181,8 @@ class JobResult:
             success=data["success"],
             data=data.get("data"),
             error=data.get("error"),
+            error_type=data.get("error_type"),
+            error_bases=data.get("error_bases") or [],
             completed_at=datetime.fromisoformat(data["completed_at"]),
             worker_id=data.get("worker_id"),
         )
