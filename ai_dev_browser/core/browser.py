@@ -75,6 +75,8 @@ def browser_start(
     temp: bool = False,
     reuse: ReuseStrategy = DEFAULT_REUSE_STRATEGY,
     startup_timeout: float = 30.0,
+    extra_args: list[str] | None = None,
+    disable_default_args: list[str] | None = None,
 ) -> dict:
     """Start or reuse a browser instance.
 
@@ -92,6 +94,18 @@ def browser_start(
             "started but port not listening" on a known-good environment;
             lower it (e.g. 5s) for headless CI where startup is fast and
             you want to fail loud quickly.
+        extra_args: Additional Chrome command-line flags appended after
+            the defaults. Plain passthrough to `launch_chrome`.
+        disable_default_args: Default Chrome flags to strip before launch.
+            Composable with `extra_args` so callers can fully control
+            launch flags without forking — e.g. anti-bot fingerprint
+            tuning passes `disable_default_args=["--enable-automation"]`
+            + `extra_args=["--disable-blink-features=AutomationControlled"]`.
+            See `launch_chrome` docstring for which defaults are
+            load-bearing for ai-dev-browser's own connection / discovery
+            logic and what removing them costs (in particular,
+            `--enable-automation` removal makes the Chrome invisible to
+            `browser_list` workspace filter and `browser_cleanup`).
 
     Returns:
         dict with port, pid, headless, url, profile, reused, message
@@ -158,6 +172,8 @@ def browser_start(
         headless=headless,
         start_url=start_url,
         user_data_dir=str(user_data_dir) if user_data_dir else None,
+        extra_args=extra_args,
+        disable_default_args=disable_default_args,
     )
 
     # Wait for Chrome to bind its debug port.

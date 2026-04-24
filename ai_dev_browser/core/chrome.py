@@ -130,6 +130,7 @@ def launch_chrome(
     user_data_dir: str | Path | None = None,
     profile_prefix: str = DEFAULT_PROFILE_PREFIX,
     extra_args: list[str] | None = None,
+    disable_default_args: list[str] | None = None,
     start_url: str = "about:blank",
     disable_session_restore: bool = True,
     disable_session_crashed_bubble: bool = True,
@@ -146,7 +147,25 @@ def launch_chrome(
         headless: Run in headless mode (default: False)
         user_data_dir: Custom user data directory. If None, creates a temp directory.
         profile_prefix: Prefix for temp profile directory name
-        extra_args: Additional Chrome command-line arguments
+        extra_args: Additional Chrome command-line arguments appended after defaults.
+        disable_default_args: List of default Chrome flags to remove before launch.
+            Match is exact for `--flag` form and prefix-equality for `--flag=value`
+            form (e.g. `["--enable-automation"]` strips both). Use this when a
+            default flag conflicts with what you want — most common case is
+            `["--enable-automation"]` for anti-bot fingerprint scenarios where
+            sites detect automation Chrome via that flag's side effects.
+
+            **Load-bearing defaults — do NOT remove these or ai-dev-browser's
+            connection / discovery logic breaks**:
+              - `--remote-debugging-port=...` — CDP transport
+              - `--user-data-dir=...` — profile isolation + workspace tagging
+              - `--remote-allow-origins=*` — CDP origin check
+              - `--enable-automation` — required for `Browser.getBrowserCommandLine`
+                cmdline readback. Removing it makes this Chrome **invisible to
+                `browser_list` workspace filter and `browser_cleanup` orphan
+                detection** (caller must manage the port themselves). That's
+                often acceptable in stealth / private-flow scenarios; just be
+                aware of the trade-off.
         start_url: Initial URL to open (default: "about:blank" for clean state)
         disable_session_restore: Prevent Chrome from restoring previous tabs (default: True).
                                 Sets restore_on_startup=5 in Preferences file.
@@ -217,6 +236,18 @@ def launch_chrome(
 
     if headless:
         args.append("--headless=new")
+
+    # Filter out defaults the caller explicitly disabled. Match exact OR
+    # `<prefix>=...` form so callers can disable both `--enable-automation`
+    # and `--user-data-dir=anything` with a single entry.
+    if disable_default_args:
+        disable_set = set(disable_default_args)
+        args = [
+            a
+            for a in args
+            if a not in disable_set
+            and not any(a.startswith(d + "=") for d in disable_set)
+        ]
 
     if extra_args:
         args.extend(extra_args)
