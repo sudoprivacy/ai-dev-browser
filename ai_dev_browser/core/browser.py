@@ -77,6 +77,7 @@ def browser_start(
     startup_timeout: float = 30.0,
     extra_args: list[str] | None = None,
     disable_default_args: list[str] | None = None,
+    silent_stderr: bool = False,
 ) -> dict:
     """Start or reuse a browser instance.
 
@@ -106,6 +107,12 @@ def browser_start(
             logic and what removing them costs (in particular,
             `--enable-automation` removal makes the Chrome invisible to
             `browser_list` workspace filter and `browser_cleanup`).
+        silent_stderr: If True, route Chrome's stderr to DEVNULL instead
+            of PIPE. Use in long-running / multi-agent scenarios where
+            you don't want Chrome's GPU/Crashpad/V8 subsystems filling
+            the pipe buffer. Trade-off: loses Chrome's exit-time stderr
+            in the error path (falls back to generic "Chrome exited
+            silently"). See `launch_chrome` docstring for details.
 
     Returns:
         dict with port, pid, headless, url, profile, reused, message
@@ -174,6 +181,7 @@ def browser_start(
         user_data_dir=str(user_data_dir) if user_data_dir else None,
         extra_args=extra_args,
         disable_default_args=disable_default_args,
+        silent_stderr=silent_stderr,
     )
 
     # Wait for Chrome to bind its debug port.

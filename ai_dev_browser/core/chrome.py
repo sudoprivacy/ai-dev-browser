@@ -131,6 +131,7 @@ def launch_chrome(
     profile_prefix: str = DEFAULT_PROFILE_PREFIX,
     extra_args: list[str] | None = None,
     disable_default_args: list[str] | None = None,
+    silent_stderr: bool = False,
     start_url: str = "about:blank",
     disable_session_restore: bool = True,
     disable_session_crashed_bubble: bool = True,
@@ -148,6 +149,18 @@ def launch_chrome(
         user_data_dir: Custom user data directory. If None, creates a temp directory.
         profile_prefix: Prefix for temp profile directory name
         extra_args: Additional Chrome command-line arguments appended after defaults.
+        silent_stderr: If True, route Chrome's stderr to `subprocess.DEVNULL`
+            instead of `subprocess.PIPE`. Default False preserves current
+            behavior — `browser_start` captures Chrome's exit-time stderr
+            to surface in the "Chrome exited unexpectedly" error.
+
+            Set True in long-running multi-instance / multi-agent scenarios
+            where you don't need the diagnostic and want to avoid PIPE
+            buffer pressure from Chrome's GPU / Crashpad / V8 subsystems
+            (these subsystems ignore `--disable-logging` and emit
+            unconditional stderr). Trade-off: on a Chrome-exit-on-startup,
+            the error message falls back to the generic "Chrome exited
+            silently" wording with no captured detail.
         disable_default_args: List of default Chrome flags to remove before launch.
             Match is exact for `--flag` form and prefix-equality for `--flag=value`
             form (e.g. `["--enable-automation"]` strips both). Use this when a
@@ -261,16 +274,17 @@ def launch_chrome(
         # Use subprocess.Popen on all platforms
         # On Unix, use start_new_session to detach from parent
         # On Windows, CREATE_NEW_PROCESS_GROUP for similar isolation
+        stderr_target = subprocess.DEVNULL if silent_stderr else subprocess.PIPE
         if platform.system() == "Windows":
             popen_kwargs = {
                 "stdout": subprocess.DEVNULL,
-                "stderr": subprocess.PIPE,
+                "stderr": stderr_target,
                 "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP,
             }
         else:
             popen_kwargs = {
                 "stdout": subprocess.DEVNULL,
-                "stderr": subprocess.PIPE,
+                "stderr": stderr_target,
                 "start_new_session": True,
             }
 
