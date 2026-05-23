@@ -24,8 +24,8 @@ DEFAULT_COOKIES_DIR = DEFAULT_BASE_DIR / "cookies"
 # Temp profile prefix (used to identify our Chrome instances)
 DEFAULT_PROFILE_PREFIX = "ai_dev_browser_"
 
-# Screenshots (relative to cwd — follows the consuming project)
-DEFAULT_SCREENSHOT_DIR = Path("screenshots")
+# Default output directory (relative to cwd — follows the consuming project)
+DEFAULT_OUTPUT_DIR = Path("output")
 
 # Debug port range for scanning and allocation
 DEFAULT_DEBUG_HOST = "127.0.0.1"

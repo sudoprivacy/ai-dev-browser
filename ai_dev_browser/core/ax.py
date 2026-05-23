@@ -546,12 +546,12 @@ async def screenshot_by_ref(
     from pathlib import Path
 
     from ._element import get_element_by_ref
-    from .config import DEFAULT_SCREENSHOT_DIR
+    from .config import DEFAULT_OUTPUT_DIR
 
     if path is None:
-        DEFAULT_SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+        DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        path = str(DEFAULT_SCREENSHOT_DIR / f"{ts}_element.png")
+        path = str(DEFAULT_OUTPUT_DIR / f"{ts}_element.png")
 
     element = await get_element_by_ref(tab, ref)
     saved = await element.save_screenshot(path)

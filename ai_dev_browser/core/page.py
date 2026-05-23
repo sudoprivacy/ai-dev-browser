@@ -1,30 +1,32 @@
 """Page information operations."""
 
+import base64
 import datetime
 import json
 import os
+import re
 from pathlib import Path
 
 from ._tab import Tab
-from .config import DEFAULT_SCREENSHOT_DIR
+from .config import DEFAULT_OUTPUT_DIR
 
 
 # Env var for consumers (sudowork, etc.) to inject a persistent output directory
 # so LLMs don't have to learn host-specific scratch/persistent conventions.
-# When unset, falls back to DEFAULT_SCREENSHOT_DIR (./screenshots/).
+# When unset, falls back to DEFAULT_OUTPUT_DIR (./output/).
 _OUTPUT_DIR_ENV = "AI_DEV_BROWSER_OUTPUT_DIR"
 
 
-def _resolve_default_screenshot_dir() -> Path:
-    """Resolve the default screenshot directory.
+def _resolve_output_dir() -> Path:
+    """Resolve the default output directory.
 
     Order: AI_DEV_BROWSER_OUTPUT_DIR env var (consumer-injected persistent
-    path) → DEFAULT_SCREENSHOT_DIR (./screenshots/ relative to cwd).
+    path) → DEFAULT_OUTPUT_DIR (./output/ relative to cwd).
     """
     env_dir = os.environ.get(_OUTPUT_DIR_ENV)
     if env_dir:
         return Path(env_dir).expanduser()
-    return DEFAULT_SCREENSHOT_DIR
+    return DEFAULT_OUTPUT_DIR
 
 
 # Optional PIL for image resizing
@@ -263,7 +265,7 @@ async def page_screenshot(
         coordinate scaling. Scaling metadata is embedded in the PNG file.
     """
     if path is None:
-        out_dir = _resolve_default_screenshot_dir()
+        out_dir = _resolve_output_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         path = str(out_dir / f"{ts}.png")
@@ -434,4 +436,94 @@ async def page_html(
     return {
         "html": content,
         "length": len(content),
+    }
+
+
+async def page_pdf(
+    tab: Tab,
+    path: str | None = None,
+    landscape: bool = False,
+    print_background: bool = True,
+    scale: float = 1.0,
+    paper_width: float = 8.5,
+    paper_height: float = 11.0,
+    margin_top: float = 0.0,
+    margin_bottom: float = 0.0,
+    margin_left: float = 0.0,
+    margin_right: float = 0.0,
+    page_ranges: str = "",
+) -> dict:
+    """Use when: you need a print-quality PDF (vector, multi-page) of the
+    current page. For raster/visual screenshots use `page_screenshot`
+    instead. Returns `{path, size, pages}`.
+
+    Failure: if you get "PrintToPDF is not available" the browser is in
+    headed mode — restart with `browser_start --headless` or set
+    `AI_DEV_BROWSER_HEADLESS=1`.
+
+    Args:
+        tab: Tab instance
+        path: Output file path. When omitted, auto-generates
+              `{timestamp}.pdf` in `$AI_DEV_BROWSER_OUTPUT_DIR` (if set)
+              or `./output/` relative to cwd.
+        landscape: Rotate paper to landscape orientation. Default False
+                   (portrait). Only needed when paper_width < paper_height
+                   and you want landscape output.
+        print_background: Print background graphics (colors, images).
+                          Default True — web pages almost always have
+                          styled backgrounds.
+        scale: Scale of the webpage rendering. Default 1.0.
+        paper_width: Paper width in inches. Default 8.5 (US Letter).
+        paper_height: Paper height in inches. Default 11.0 (US Letter).
+        margin_top: Top margin in inches. Default 0 (web pages handle
+                    their own spacing).
+        margin_bottom: Bottom margin in inches. Default 0.
+        margin_left: Left margin in inches. Default 0.
+        margin_right: Right margin in inches. Default 0.
+        page_ranges: Page ranges to print, e.g. "1-5", "1,3,5-9".
+                     Empty string (default) means all pages.
+
+    Returns:
+        dict with path, size, pages
+    """
+    from ai_dev_browser.cdp import page as cdp_page
+
+    if path is None:
+        out_dir = _resolve_output_dir()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        path = str(out_dir / f"{ts}.pdf")
+
+    result = await tab.send(
+        cdp_page.print_to_pdf(
+            landscape=landscape,
+            print_background=print_background,
+            scale=scale,
+            paper_width=paper_width,
+            paper_height=paper_height,
+            margin_top=margin_top,
+            margin_bottom=margin_bottom,
+            margin_left=margin_left,
+            margin_right=margin_right,
+            page_ranges=page_ranges or None,
+            prefer_css_page_size=False,
+        )
+    )
+
+    pdf_data, _ = result  # (base64_str, optional_stream_handle)
+    pdf_bytes = base64.b64decode(pdf_data)
+
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(pdf_bytes)
+
+    # Best-effort page count: /Type /Page (leaf) minus /Type /Pages (tree node)
+    pages = len(re.findall(rb"/Type\s*/Page\b", pdf_bytes)) - len(
+        re.findall(rb"/Type\s*/Pages\b", pdf_bytes)
+    )
+
+    return {
+        "path": str(out),
+        "size": out.stat().st_size,
+        "pages": max(pages, 1),
     }

@@ -61,6 +61,7 @@ TOOL_META = {
     "page_info": {"result_key": "url"},
     "page_html": {"result_key": "html"},
     "page_reload": {"result_key": "success"},
+    "page_pdf": {"result_key": "path"},
     "page_screenshot": {"result_key": "path"},
     "screenshot": {"result_key": "path"},
     "page_scroll": {"result_key": "scrolled"},

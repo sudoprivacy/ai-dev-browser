@@ -93,7 +93,7 @@ from .navigation import (
 )
 
 # Page info
-from .page import page_html, page_info, js_evaluate, page_screenshot
+from .page import page_html, page_info, page_pdf, js_evaluate, page_screenshot
 
 # Port management
 from .port import (
@@ -195,6 +195,7 @@ __all__ = [
     # Page
     "page_info",
     "page_html",
+    "page_pdf",
     "js_evaluate",
     "page_screenshot",
     # Mouse
