@@ -235,6 +235,7 @@ def launch_chrome(
         "--disable-translate",
         "--metrics-recording-only",
         "--safebrowsing-disable-auto-update",
+        "--disable-blink-features=AutomationControlled",
     ]
 
     # Workspace tag: identifies which working directory owns this Chrome.

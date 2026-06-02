@@ -99,14 +99,12 @@ def browser_start(
             the defaults. Plain passthrough to `launch_chrome`.
         disable_default_args: Default Chrome flags to strip before launch.
             Composable with `extra_args` so callers can fully control
-            launch flags without forking — e.g. anti-bot fingerprint
-            tuning passes `disable_default_args=["--enable-automation"]`
-            + `extra_args=["--disable-blink-features=AutomationControlled"]`.
-            See `launch_chrome` docstring for which defaults are
-            load-bearing for ai-dev-browser's own connection / discovery
-            logic and what removing them costs (in particular,
-            `--enable-automation` removal makes the Chrome invisible to
-            `browser_list` workspace filter and `browser_cleanup`).
+            launch flags without forking. See `launch_chrome` docstring
+            for which defaults are load-bearing for ai-dev-browser's own
+            connection / discovery logic and what removing them costs
+            (in particular, `--enable-automation` removal makes the
+            Chrome invisible to `browser_list` workspace filter and
+            `browser_cleanup`).
         silent_stderr: If True, route Chrome's stderr to DEVNULL instead
             of PIPE. Use in long-running / multi-agent scenarios where
             you don't want Chrome's GPU/Crashpad/V8 subsystems filling
