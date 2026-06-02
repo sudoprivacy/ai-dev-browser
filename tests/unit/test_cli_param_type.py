@@ -61,3 +61,29 @@ def test_classic_optional_int():
 def test_union_with_no_none_falls_through():
     # int | str has no None — not a simple optional; fall back to str.
     assert _get_param_type(int | str) is str
+
+
+def test_list_str_returns_str():
+    # list[str] → element type is str (nargs handled in parser)
+    assert _get_param_type(list[str]) is str
+
+
+def test_list_int_returns_int():
+    assert _get_param_type(list[int]) is int
+
+
+def test_optional_list_str():
+    assert _get_param_type(list[str] | None) is str
+
+
+def test_dict_returns_json_loads():
+    import json
+
+    assert _get_param_type(dict) is json.loads
+    assert _get_param_type(dict[str, str]) is json.loads
+
+
+def test_optional_dict_returns_json_loads():
+    import json
+
+    assert _get_param_type(dict[str, str] | None) is json.loads

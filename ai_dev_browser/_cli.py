@@ -38,6 +38,20 @@ def _get_literal_choices(hint) -> list | None:
     return None
 
 
+def _unwrap_optional(hint):
+    """Unwrap X | None → X for type detection."""
+    import types
+    from typing import Union
+
+    origin = get_origin(hint)
+    union_origins = (Union, getattr(types, "UnionType", ()))
+    if origin in union_origins:
+        non_none = [a for a in get_args(hint) if a is not type(None)]
+        if len(non_none) == 1:
+            return non_none[0]
+    return hint
+
+
 def _parse_docstring_args(docstring: str) -> dict[str, str]:
     """Extract arg descriptions from docstring Args section.
 
@@ -130,7 +144,7 @@ def _parse_docstring_failure(docstring: str) -> str | None:
     return text or None
 
 
-def _get_param_type(hint) -> type | Callable[[str], bool]:
+def _get_param_type(hint) -> type | Callable:
     """Convert type hint to argparse type."""
     import types
     from typing import Union
@@ -142,6 +156,13 @@ def _get_param_type(hint) -> type | Callable[[str], bool]:
     # For Literal, use str (choices will constrain values)
     if get_origin(hint) is Literal:
         return str
+    # list[X] → element type (nargs handled in _generate_parser)
+    if get_origin(hint) is list:
+        elem_args = get_args(hint)
+        return _get_param_type(elem_args[0]) if elem_args else str
+    # dict → accept JSON string on CLI
+    if hint is dict or get_origin(hint) is dict:
+        return json.loads
     # Handle Union types like int | None, str | None.
     # PEP 604 `int | None` has origin types.UnionType; classic
     # `Union[int, None]` has origin typing.Union — accept both.
@@ -199,6 +220,10 @@ def _generate_parser(
             else:
                 help_text = "(str)"
 
+        # Unwrap Optional for structural detection (list, dict)
+        inner_hint = _unwrap_optional(hint)
+        inner_origin = get_origin(inner_hint)
+
         if hint is bool:
             # For bool, use intuitive flag names:
             # - default False: --flag to enable (store_true)
@@ -219,6 +244,25 @@ def _generate_parser(
                     default=True,
                     help=f"Disable: {help_text}",
                 )
+        elif inner_origin is list:
+            # list[str] → nargs='*' so CLI accepts: --flag val1 val2 val3
+            elem_args = get_args(inner_hint)
+            elem_type = _get_param_type(elem_args[0]) if elem_args else str
+            parser.add_argument(
+                f"--{name.replace('_', '-')}",
+                nargs="*",
+                type=elem_type,
+                default=param.default if not required else None,
+                help=help_text,
+            )
+        elif inner_origin is dict or inner_hint is dict:
+            # dict → accept JSON string on CLI: --flag '{"key": "value"}'
+            parser.add_argument(
+                f"--{name.replace('_', '-')}",
+                type=json.loads,
+                default=param.default if not required else None,
+                help=help_text,
+            )
         else:
             kwargs: dict[str, Any] = {
                 "type": param_type,
