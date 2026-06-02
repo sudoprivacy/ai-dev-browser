@@ -76,7 +76,7 @@ def browser_start(
     reuse: ReuseStrategy = DEFAULT_REUSE_STRATEGY,
     startup_timeout: float = 30.0,
     extra_args: list[str] | None = None,
-    disable_default_args: list[str] | None = None,
+    override_default_args: dict[str, str | None] | None = None,
     silent_stderr: bool = False,
 ) -> dict:
     """Start or reuse a browser instance.
@@ -97,14 +97,11 @@ def browser_start(
             you want to fail loud quickly.
         extra_args: Additional Chrome command-line flags appended after
             the defaults. Plain passthrough to `launch_chrome`.
-        disable_default_args: Default Chrome flags to strip before launch.
-            Composable with `extra_args` so callers can fully control
-            launch flags without forking. See `launch_chrome` docstring
-            for which defaults are load-bearing for ai-dev-browser's own
-            connection / discovery logic and what removing them costs
-            (in particular, `--enable-automation` removal makes the
-            Chrome invisible to `browser_list` workspace filter and
-            `browser_cleanup`).
+        override_default_args: Override or remove default Chrome flags.
+            Dict mapping flag to new value, or None to remove. Example:
+            `{"--disable-extensions": None}` removes it;
+            `{"--remote-allow-origins": "localhost"}` replaces its value.
+            On CLI: `--override-default-args '{"--flag": null}'`.
         silent_stderr: If True, route Chrome's stderr to DEVNULL instead
             of PIPE. Use in long-running / multi-agent scenarios where
             you don't want Chrome's GPU/Crashpad/V8 subsystems filling
@@ -178,7 +175,7 @@ def browser_start(
         start_url=start_url,
         user_data_dir=str(user_data_dir) if user_data_dir else None,
         extra_args=extra_args,
-        disable_default_args=disable_default_args,
+        override_default_args=override_default_args,
         silent_stderr=silent_stderr,
     )
 
