@@ -38,6 +38,14 @@ def get_pid_on_port(port: int) -> int | None:
     """
     system = platform.system()
 
+    # Force UTF-8 + ignore decode errors on both branches: text=True alone
+    # defers to the OS locale, which on Chinese Windows is GBK. netstat's
+    # output contains characters that may not be GBK-decodable, raising
+    # UnicodeDecodeError mid-decode and leaving result.stdout = None →
+    # downstream `.split("\n")` blows up with AttributeError. Hard-coding
+    # UTF-8 + errors="ignore" makes the decode non-fatal; we only need the
+    # ASCII parts of the output (port numbers, PIDs, "LISTENING") so
+    # dropping a few CJK bytes is harmless.
     if system == "Darwin" or system == "Linux":
         # Use lsof on Unix-like systems
         try:
@@ -45,12 +53,19 @@ def get_pid_on_port(port: int) -> int | None:
                 ["lsof", "-i", f":{port}", "-t", "-sTCP:LISTEN"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="ignore",
                 timeout=5,
             )
-            if result.returncode == 0 and result.stdout.strip():
+            if result.returncode == 0 and (result.stdout or "").strip():
                 # lsof -t returns just the PID
                 return int(result.stdout.strip().split("\n")[0])
-        except (subprocess.TimeoutExpired, ValueError, FileNotFoundError):
+        except (
+            subprocess.TimeoutExpired,
+            ValueError,
+            FileNotFoundError,
+            UnicodeDecodeError,
+        ):
             pass
     elif system == "Windows":
         # Use netstat on Windows (without -p TCP to include IPv6 listeners)
@@ -59,14 +74,21 @@ def get_pid_on_port(port: int) -> int | None:
                 ["netstat", "-ano"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="ignore",
                 timeout=5,
             )
-            for line in result.stdout.split("\n"):
+            for line in (result.stdout or "").split("\n"):
                 if f":{port}" in line and "LISTENING" in line and "TCP" in line:
                     parts = line.split()
                     if parts:
                         return int(parts[-1])
-        except (subprocess.TimeoutExpired, ValueError, FileNotFoundError):
+        except (
+            subprocess.TimeoutExpired,
+            ValueError,
+            FileNotFoundError,
+            UnicodeDecodeError,
+        ):
             pass
 
     return None
