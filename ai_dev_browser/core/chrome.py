@@ -28,8 +28,18 @@ def find_chrome() -> str | None:
     """
     Find Chrome executable path based on platform.
 
-    Automatically detects Chrome installation on Windows, macOS, and Linux.
-    Checks common installation paths and falls back to PATH search on Unix.
+    Resolution order:
+      1. `AI_DEV_BROWSER_CHROME` env var — absolute path to a Chrome
+         executable. Use when Chrome lives in a non-default location,
+         e.g. CI environments where actions like
+         `browser-actions/setup-chrome` drop the binary into
+         `/opt/hostedtoolcache/setup-chrome/<version>/x64/chrome`. If
+         your workflow already exports `CHROME_PATH` (Puppeteer /
+         Playwright convention), bridge it with one line:
+         `AI_DEV_BROWSER_CHROME=$CHROME_PATH` — we deliberately keep
+         a single canonical env name here.
+      2. Known per-platform install paths (Darwin/Windows/Linux).
+      3. `which`/`shutil.which` for common command names on Unix.
 
     Returns:
         Path to Chrome executable, or None if not found.
@@ -41,6 +51,13 @@ def find_chrome() -> str | None:
         else:
             print("Chrome not found")
     """
+    # 1. Env override — highest priority. Single canonical name; users
+    # who already export CHROME_PATH for Puppeteer/Playwright bridge it
+    # in their workflow rather than us silently accepting both.
+    env_path = os.environ.get("AI_DEV_BROWSER_CHROME")
+    if env_path and Path(env_path).is_file():
+        return env_path
+
     system = platform.system()
 
     if system == "Darwin":  # macOS
@@ -126,7 +143,7 @@ def _ensure_no_session_restore(user_data_dir: Path) -> None:
 
 def launch_chrome(
     port: int = DEFAULT_DEBUG_PORT,
-    headless: bool = False,
+    headless: bool | str = False,
     user_data_dir: str | Path | None = None,
     profile_prefix: str = DEFAULT_PROFILE_PREFIX,
     extra_args: list[str] | None = None,
@@ -145,7 +162,15 @@ def launch_chrome(
 
     Args:
         port: Remote debugging port (default: DEFAULT_DEBUG_PORT)
-        headless: Run in headless mode (default: False)
+        headless: Run in headless mode. Accepts:
+            - `False` (default): windowed Chrome with a visible UI.
+            - `True` / `"new"`: Chrome's new headless mode
+              (`--headless=new`). Full Chrome architecture, supports
+              automation flags and extensions.
+            - `"old"`: legacy headless mode (`--headless`). Use when
+              the new mode rejects launch with "Multiple targets are
+              not supported in headless mode" — happens in some CI
+              setups (older Chrome builds + `--enable-automation`).
         user_data_dir: Custom user data directory. If None, creates a temp directory.
         profile_prefix: Prefix for temp profile directory name
         extra_args: Additional Chrome command-line arguments appended after defaults.
@@ -240,8 +265,17 @@ def launch_chrome(
     if hide_crash_restore_bubble:
         args.append("--hide-crash-restore-bubble")
 
+    # `headless` accepts bool or explicit mode str. Truthy non-str → "new".
     if headless:
-        args.append("--headless=new")
+        mode = headless if isinstance(headless, str) else "new"
+        if mode == "old":
+            args.append("--headless")
+        elif mode == "new":
+            args.append("--headless=new")
+        else:
+            raise ValueError(
+                f'headless must be False, True, "new", or "old"; got {headless!r}'
+            )
 
     # Override or remove defaults. Match exact (`--flag`) or prefix
     # (`--flag=...`) so a single key handles both boolean and valued flags.

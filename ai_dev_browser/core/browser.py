@@ -66,10 +66,21 @@ def _find_reusable_chrome(profile: str | None = None) -> int | None:
     return None
 
 
+def _env_headless_default() -> bool | str:
+    """Read AI_DEV_BROWSER_HEADLESS env var. Accepts:
+    - "1" / "true"       → True (= "new")
+    - "new" / "old"      → that literal string (selects mode)
+    - anything else / "" → False
+    """
+    raw = os.environ.get("AI_DEV_BROWSER_HEADLESS", "").lower()
+    if raw in ("new", "old"):
+        return raw
+    return raw in ("1", "true")
+
+
 def browser_start(
     port: int | None = None,
-    headless: bool = os.environ.get("AI_DEV_BROWSER_HEADLESS", "").lower()
-    in ("1", "true"),
+    headless: bool | str = None,  # type: ignore[assignment]
     url: str | None = None,
     profile: str | None = None,
     temp: bool = False,
@@ -83,7 +94,14 @@ def browser_start(
 
     Args:
         port: Debug port (auto-assigned if None)
-        headless: Run in headless mode
+        headless: Run in headless mode. Accepts `False` (default,
+            windowed), `True` / `"new"` (new headless: full Chrome
+            architecture, supports automation), or `"old"` (legacy
+            headless — use when CI fails with "Multiple targets are not
+            supported in headless mode" under the new mode). `None`
+            falls back to the `AI_DEV_BROWSER_HEADLESS` env var:
+            `1`/`true` → True, `new`/`old` → that literal mode, anything
+            else → False.
         url: Initial URL to open (default: about:blank)
         profile: Profile name (default: "default")
         temp: Use temporary profile instead
@@ -167,11 +185,12 @@ def browser_start(
                 "message": f"Profile '{profile_name}' already in use. Reusing Chrome on port {existing_port}.",
             }
 
-    # Launch Chrome
+    # Launch Chrome — resolve env-var fallback if caller didn't pass headless.
     start_url = url or "about:blank"
+    headless_resolved = _env_headless_default() if headless is None else headless
     process = launch_chrome(
         port=port,
-        headless=headless,
+        headless=headless_resolved,
         start_url=start_url,
         user_data_dir=str(user_data_dir) if user_data_dir else None,
         extra_args=extra_args,
