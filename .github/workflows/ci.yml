@@ -45,3 +45,56 @@ jobs:
           print(f'Stopped: {stop_result}')
           print('Smoke test passed.')
           "
+
+  # ─────────────────────────────────────────────────────────────────────
+  # CI-integration dogfood: prove the documented "consumer's CI" recipe
+  # actually works. Mirrors what an external integrator would write:
+  # setup-chrome action → AI_DEV_BROWSER_CHROME env → headless=old (new
+  # mode rejects --enable-automation under some GitHub-Chrome combos) →
+  # --no-sandbox (GitHub hosted runners ship chrome-sandbox without the
+  # SUID bit, so the new-headless sandbox aborts).
+  #
+  # Regression captured: reporter dogfooding v0.9.3 had to launch Chrome
+  # externally + connect via --port because none of the above was
+  # supported. v0.10.0/.1/.2 added each piece; this job keeps that path
+  # green on every commit.
+  # ─────────────────────────────────────────────────────────────────────
+  ci-integration:
+    name: Dogfood the consumer CI recipe
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: browser-actions/setup-chrome@v1
+        id: chrome
+        with:
+          chrome-version: stable
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync
+      - name: Verify CI-style chrome launch
+        env:
+          AI_DEV_BROWSER_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          uv run python -c "
+          from ai_dev_browser.core.browser import browser_start, browser_stop
+          from ai_dev_browser.core.chrome import find_chrome
+
+          # 1. find_chrome() must pick up AI_DEV_BROWSER_CHROME, NOT a
+          #    system Chrome that happens to be on PATH.
+          resolved = find_chrome()
+          assert resolved == '${{ steps.chrome.outputs.chrome-path }}', (
+              f'find_chrome resolved {resolved!r}, expected env path'
+          )
+
+          # 2. Launch headless=old + --no-sandbox (the recipe an
+          #    integrator on GitHub hosted runner needs).
+          result = browser_start(
+              headless='old',
+              temp=True,
+              extra_args=['--no-sandbox'],
+          )
+          if 'error' in result:
+              raise SystemExit(f'CI recipe failed: {result}')
+          print(f'CI recipe succeeded: port={result[\"port\"]} pid={result[\"pid\"]}')
+          browser_stop(port=result['port'])
+          print('Dogfood complete.')
+          "
