@@ -79,6 +79,8 @@ TOOL_META = {
     "cookies_load": {"result_key": "loaded"},
     "cookies_save": {"result_key": "saved"},
     "cookies_list": {"result_key": "cookies"},
+    "cookies_import": {"result_key": "imported"},
+    "extract_cookies": {"result_key": "cookies"},
     "storage_get": {"result_key": "value"},
     "storage_set": {"result_key": "set"},
     "window_focus": {"result_key": "focused"},

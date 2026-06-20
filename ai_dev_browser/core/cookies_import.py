@@ -480,7 +480,10 @@ def extract_cookies(
     domain: str,
     browser: str = "chrome",
 ) -> list[dict[str, Any]]:
-    """Extract cookies for a domain from the user's regular browser.
+    """Use when: you need to inspect what cookies a domain has in the
+    user's real browser — without an automation browser. Returns a list
+    of cookie dicts. Pair with `cookies_import` to inject into an
+    automation session.
 
     Reads the browser's local SQLite cookie database and decrypts values
     using platform-native crypto APIs. No external dependencies required.
@@ -614,11 +617,13 @@ async def cookies_import(
     domain: str,
     browser: str = "chrome",
 ) -> dict:
-    """Import cookies from the user's regular browser into the automation browser.
+    """Use when: Cloudflare/Akamai blocks the automation browser — import
+    auth cookies from the user's daily-driver browser to bypass.
+    Returns `{imported, domain, browser, cookies}`.
 
-    Extracts cookies for the specified domain from the user's daily-driver
-    browser (reading its local SQLite database) and injects them into the
-    current automation browser session via CDP.
+    Extracts cookies for the specified domain from the user's real browser
+    (reading its local SQLite database) and injects them into the current
+    automation session via CDP.
 
     On macOS, the system Keychain dialog will prompt the user to authorize
     access — this serves as implicit user consent.
