@@ -23,7 +23,7 @@ import pytest
 from ai_dev_browser.core.cookies_import import (
     _find_cookie_db,
     _get_macos_key,
-    extract_cookies,
+    cookies_extract,
 )
 
 
@@ -89,18 +89,18 @@ def test_macos_keychain_bad_browser_raises():
 # ---------------------------------------------------------------------------
 
 
-def test_extract_cookies_returns_list():
-    """extract_cookies must return a list (possibly empty) without
+def test_cookies_extract_returns_list():
+    """cookies_extract must return a list (possibly empty) without
     raising, even for a domain with no cookies."""
-    result = extract_cookies(".this-domain-definitely-has-no-cookies.invalid")
+    result = cookies_extract(".this-domain-definitely-has-no-cookies.invalid")
     assert isinstance(result, list)
     assert len(result) == 0
 
 
-def test_extract_cookies_google():
+def test_cookies_extract_google():
     """Every dev box with Chrome has visited google.com at least once.
     We should get at least one cookie back with all expected fields."""
-    cookies = extract_cookies(".google.com")
+    cookies = cookies_extract(".google.com")
     # It's possible (though unlikely) a dev has zero google cookies.
     # Skip rather than fail if so — the test is about the pipeline, not
     # about guaranteeing google cookie presence.
@@ -117,11 +117,11 @@ def test_extract_cookies_google():
     assert "expires" in c  # None (session) or float
 
 
-def test_extract_cookies_values_are_decrypted():
+def test_cookies_extract_values_are_decrypted():
     """Cookie values must be actual decrypted strings, not raw encrypted
     bytes. The v10 prefix or binary garbage in the value means decryption
     failed silently."""
-    cookies = extract_cookies(".google.com")
+    cookies = cookies_extract(".google.com")
     if not cookies:
         pytest.skip("No google.com cookies found")
 
@@ -140,10 +140,10 @@ def test_extract_cookies_values_are_decrypted():
         )
 
 
-def test_extract_cookies_domain_filtering():
+def test_cookies_extract_domain_filtering():
     """Cookies returned must all match the requested domain filter."""
     domain = ".google.com"
-    cookies = extract_cookies(domain)
+    cookies = cookies_extract(domain)
     if not cookies:
         pytest.skip("No google.com cookies found")
 
@@ -154,26 +154,26 @@ def test_extract_cookies_domain_filtering():
         )
 
 
-def test_extract_cookies_multiple_browsers_dont_crash():
+def test_cookies_extract_multiple_browsers_dont_crash():
     """Attempting extraction from each supported browser should either
     succeed or raise FileNotFoundError — never an unhandled crash."""
     for browser in ("chrome", "chromium", "brave", "edge"):
         try:
-            result = extract_cookies(".google.com", browser=browser)
+            result = cookies_extract(".google.com", browser=browser)
             assert isinstance(result, list)
         except FileNotFoundError:
             # Browser not installed — acceptable
             pass
 
 
-def test_extract_cookies_chrome_has_some_cookies():
+def test_cookies_extract_chrome_has_some_cookies():
     """Chrome on a dev box should have a non-trivial cookie jar. This
     is a smoke test that the full pipeline (find DB → copy → decrypt)
     actually produces real data, not just an empty list from a silent
     failure."""
     # Use a very broad domain that any Chrome user will have
     for domain in (".google.com", ".youtube.com", ".github.com"):
-        cookies = extract_cookies(domain)
+        cookies = cookies_extract(domain)
         if cookies:
             assert len(cookies) >= 1
             return
@@ -188,19 +188,19 @@ def test_extract_cookies_chrome_has_some_cookies():
 # ---------------------------------------------------------------------------
 
 
-def test_extract_cookies_empty_domain_returns_all():
+def test_cookies_extract_empty_domain_returns_all():
     """An empty-string domain filter should match everything (SQL LIKE
     '%%' matches all rows). Sanity check that we get a large result."""
-    cookies = extract_cookies("")
+    cookies = cookies_extract("")
     # Any real Chrome should have dozens of cookies
     assert len(cookies) > 0, "Empty domain filter should return all cookies"
 
 
-def test_extract_cookies_expires_are_reasonable():
+def test_cookies_extract_expires_are_reasonable():
     """Cookie expiry timestamps, when present, should be in the Unix
     epoch range (not Chrome's 1601-based microseconds — that would
     indicate a conversion bug)."""
-    cookies = extract_cookies(".google.com")
+    cookies = cookies_extract(".google.com")
     if not cookies:
         pytest.skip("No google.com cookies found")
 

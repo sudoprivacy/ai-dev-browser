@@ -476,7 +476,7 @@ def _decrypt_cookie_value(
     return None
 
 
-def extract_cookies(
+def cookies_extract(
     domain: str,
     browser: str = "chrome",
 ) -> list[dict[str, Any]]:
@@ -638,7 +638,7 @@ async def cookies_import(
         dict with keys: imported (int), domain, browser, cookies (list
         of name/domain pairs for confirmation).
     """
-    cookies = extract_cookies(domain, browser)
+    cookies = cookies_extract(domain, browser)
 
     if not cookies:
         return {

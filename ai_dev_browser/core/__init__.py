@@ -58,7 +58,7 @@ from .connection import connect_browser, get_active_tab, graceful_close_browser
 
 # Cookies
 from .cookies import cookies_list, cookies_load, cookies_save
-from .cookies_import import cookies_import, extract_cookies
+from .cookies_import import cookies_extract, cookies_import
 
 # Dialog (only tool-facing function)
 from .dialog import dialog_respond
@@ -220,5 +220,5 @@ __all__ = [
     "cookies_save",
     "cookies_list",
     "cookies_import",
-    "extract_cookies",
+    "cookies_extract",
 ]
