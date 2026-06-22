@@ -123,6 +123,16 @@ def test_headless_mode_selection_round_trips_through_cmdline(mode):
 
 def test_headless_false_is_not_headless():
     """Sanity: False (default) must NOT emit any --headless flag."""
+    # Linux CI runners have no X display — a non-headless Chrome can't
+    # initialize at all there ("Missing X server or $DISPLAY"). On
+    # macOS/Windows the GUI session always exists so the launch
+    # succeeds. Skip on Linux when DISPLAY is unset rather than try
+    # to bring up xvfb just for one assertion.
+    import sys
+
+    if sys.platform.startswith("linux") and not os.environ.get("DISPLAY"):
+        pytest.skip("non-headless Chrome needs DISPLAY; none on this Linux CI host")
+
     result = browser_start(headless=False, temp=True, reuse="none")
     assert "error" not in result, f"non-headless launch should succeed: {result}"
     port = result["port"]
