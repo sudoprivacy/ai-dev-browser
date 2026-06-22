@@ -18,7 +18,7 @@ jobs:
       - uses: astral-sh/setup-uv@v4
 
       - name: Install package
-        run: uv sync
+        run: uv sync --extra dev
 
       # ── Tool dispatch smoke test ──
       # Verifies python -m entry point works on all platforms.
