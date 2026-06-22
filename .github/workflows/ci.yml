@@ -27,7 +27,12 @@ jobs:
           uv run python -m ai_dev_browser.tools.browser_start --help
 
       # ── Headless browser smoke test ──
+      # shell: bash so the heredoc-style `python -c "..."` block parses
+      # identically on all three runners (PowerShell on Windows handles
+      # backslash-escaped quotes differently from POSIX shells, which
+      # silently broke this step on windows-latest pre-v0.11.2).
       - name: Smoke test headless browser
+        shell: bash
         run: |
           uv run python -c "
           from ai_dev_browser.core.browser import browser_start, browser_stop
