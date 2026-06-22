@@ -317,6 +317,15 @@ def as_cli(requires_tab: bool = True):
 
         def cli_main():
             """Entry point for CLI usage."""
+            # Windows defaults stdout to cp1252, which chokes on any non-Latin
+            # char (e.g. `→` in docstrings → `--help` raises UnicodeEncodeError).
+            # Pin both streams to UTF-8 so help/JSON/log output is encoding-safe
+            # regardless of the host console codec.
+            for stream in (sys.stdout, sys.stderr):
+                reconfigure = getattr(stream, "reconfigure", None)
+                if reconfigure is not None:
+                    reconfigure(encoding="utf-8")
+
             # When AI_DEV_BROWSER_REDIRECT is set, block direct access and
             # print the redirect message (controlled by the embedding app).
             redirect = os.environ.get("AI_DEV_BROWSER_REDIRECT")
