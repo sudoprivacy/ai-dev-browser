@@ -51,6 +51,27 @@ jobs:
           print('Smoke test passed.')
           "
 
+      # ── E2E regression suite ──
+      # Tests in `tests/integration/` that are self-contained (no real
+      # logged-in browser, no external state) — they fabricate inputs,
+      # exercise production code, and assert on outputs. New regression
+      # tests get appended here; tests that depend on user-specific
+      # state (`test_cookies_import.py`, much of `test_locator_workflows`)
+      # stay out — they're meaningful only on a dev box with real
+      # browser sessions, not on a clean GitHub runner.
+      #
+      # test_cookies_extract_windows.py is windows-only by design; it
+      # auto-skips on ubuntu / macos. test_cli_unicode_help.py is
+      # cross-platform but most-valuable on Windows (where cp1252 is
+      # the default codec that broke browser_start --help in v0.10.2).
+      - name: E2E regression tests
+        shell: bash
+        run: |
+          uv run python -m pytest -v \
+            tests/integration/test_ci_integration.py \
+            tests/integration/test_cookies_extract_windows.py \
+            tests/integration/test_cli_unicode_help.py
+
   # ─────────────────────────────────────────────────────────────────────
   # CI-integration dogfood: prove the documented "consumer's CI" recipe
   # actually works. Mirrors what an external integrator would write:

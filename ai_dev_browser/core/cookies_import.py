@@ -603,7 +603,20 @@ def cookies_extract(
         if sys.platform == "darwin":
             mac_key = _get_macos_key(browser)
         elif sys.platform == "win32":
-            browser_data_dir = db_path.parent.parent
+            # Local State lives at the User Data root, not the profile
+            # dir. Layouts:
+            #   Modern  (Chromium >= 96): UserData/Profile/Network/Cookies
+            #                             → user_data_dir = parent[2]
+            #   Legacy:                   UserData/Profile/Cookies
+            #                             → user_data_dir = parent[1]
+            # The previous fix to `_find_cookie_db` added the Network/
+            # subdir but left this lookup at .parent.parent, which on
+            # modern Chrome resolved to the profile dir and broke the
+            # whole pipeline with FileNotFoundError on Local State.
+            if db_path.parent.name == "Network":
+                browser_data_dir = db_path.parent.parent.parent
+            else:
+                browser_data_dir = db_path.parent.parent
             win_key = _get_windows_key(browser_data_dir)
         elif sys.platform.startswith("linux"):
             linux_password = _get_linux_password(browser)
