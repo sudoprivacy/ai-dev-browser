@@ -193,16 +193,49 @@ def _get_windows_key(browser_data_dir: Path) -> bytes:
 
 
 def _dpapi_decrypt(encrypted: bytes) -> bytes:
-    """Decrypt data using Windows DPAPI (CryptUnprotectData)."""
+    """Decrypt data using Windows DPAPI (CryptUnprotectData).
+
+    The previous implementation built the DataBlob by wrapping the
+    string buffer in `ctypes.cast(..., c_void_p)` and passing it as a
+    constructor argument. On 64-bit Windows, ctypes was rejecting
+    realistic-sized payloads (288-byte encrypted_key after stripping
+    "DPAPI" prefix) with `OverflowError: int too long to convert` —
+    the cast result's int conversion path appears to be size-dependent.
+    Empirically: 3-byte input worked, 288-byte input failed every time.
+
+    Fix: get the buffer's address as a plain Python int via
+    `ctypes.addressof()`, hold a reference to the buffer for the
+    duration of the syscall so it isn't GC'd, and assign to the
+    `c_void_p` field directly.
+    """
+
+    from ctypes import wintypes
 
     class DataBlob(ctypes.Structure):
-        _fields_ = [("cbData", ctypes.c_ulong), ("pbData", ctypes.c_void_p)]
-
-    input_blob = DataBlob(len(encrypted), ctypes.cast(ctypes.create_string_buffer(encrypted, len(encrypted)), ctypes.c_void_p))
-    output_blob = DataBlob()
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.c_void_p)]
 
     crypt32 = ctypes.windll.crypt32  # type: ignore[attr-defined]
     kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+
+    # Pin argtypes so ctypes doesn't auto-guess pointer types — the
+    # original failure mode was a buffer-size-dependent OverflowError
+    # because address conversions defaulted to signed-int treatment.
+    crypt32.CryptUnprotectData.argtypes = [
+        ctypes.POINTER(DataBlob),
+        wintypes.LPCWSTR,
+        ctypes.POINTER(DataBlob),
+        wintypes.LPVOID,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        ctypes.POINTER(DataBlob),
+    ]
+    crypt32.CryptUnprotectData.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = [wintypes.HLOCAL]
+    kernel32.LocalFree.restype = wintypes.HLOCAL
+
+    input_buf = ctypes.create_string_buffer(encrypted, len(encrypted))
+    input_blob = DataBlob(len(encrypted), ctypes.addressof(input_buf))
+    output_blob = DataBlob()
 
     if not crypt32.CryptUnprotectData(
         ctypes.byref(input_blob),
@@ -213,7 +246,9 @@ def _dpapi_decrypt(encrypted: bytes) -> bytes:
         0,
         ctypes.byref(output_blob),
     ):
-        raise RuntimeError("CryptUnprotectData failed")
+        raise RuntimeError(
+            f"CryptUnprotectData failed: GetLastError={kernel32.GetLastError()}"
+        )
 
     result = ctypes.string_at(output_blob.pbData, output_blob.cbData)
     kernel32.LocalFree(output_blob.pbData)
@@ -305,7 +340,17 @@ def _decrypt_aes_gcm_windows(key: bytes, ciphertext: bytes) -> str:
     if status != 0:
         raise RuntimeError(f"BCryptDecrypt failed with status 0x{status:08x}")
 
-    return out_buf.raw[: out_len.value].decode("utf-8", errors="replace")
+    decrypted = out_buf.raw[: out_len.value]
+    # Modern Chromium (114+, when "Encrypted Cookies" feature shipped)
+    # prepends a 32-byte SHA256 hash of the cookie's eTLD+1 domain to
+    # bind the value to its origin. The Linux path strips this; the
+    # Windows path didn't, leaving 32 bytes of binary garbage at the
+    # head of every decrypted cookie value. Detect heuristically:
+    # plaintext cookies are virtually always printable ASCII, so a
+    # leading 32-byte chunk that isn't ASCII is the hash prefix.
+    if len(decrypted) > 32 and not decrypted[:32].isascii():
+        decrypted = decrypted[32:]
+    return decrypted.decode("utf-8", errors="replace")
 
 
 def _get_linux_password(browser: str) -> str:
@@ -353,9 +398,7 @@ def _decrypt_linux(password: str, ciphertext: bytes) -> str:
     # Try to use libcrypto for AES-CBC
     libcrypto_name = ctypes.util.find_library("crypto")
     if not libcrypto_name:
-        raise RuntimeError(
-            "libcrypto (OpenSSL) not found. Install openssl/libssl-dev."
-        )
+        raise RuntimeError("libcrypto (OpenSSL) not found. Install openssl/libssl-dev.")
 
     libcrypto = ctypes.cdll.LoadLibrary(libcrypto_name)
     iv = b" " * 16
@@ -402,7 +445,13 @@ def _decrypt_linux(password: str, ciphertext: bytes) -> str:
 
 
 def _find_cookie_db(browser: str) -> Path:
-    """Locate the Cookies SQLite database for the given browser."""
+    """Locate the Cookies SQLite database for the given browser.
+
+    Chromium >= 96 (~2021) moved Cookies into a `Network/` subdir of
+    the profile (`Profile 1/Network/Cookies`); older versions kept it
+    at the profile root (`Profile 1/Cookies`). Try the new location
+    first, fall back to the legacy path.
+    """
     plat = sys.platform
     if plat.startswith("linux"):
         plat = "linux"
@@ -410,11 +459,14 @@ def _find_cookie_db(browser: str) -> Path:
     paths = _BROWSER_PATHS.get(plat, {}).get(browser, [])
     for base in paths:
         expanded = Path(base).expanduser()
-        # Try Default profile first, then Profile 1, etc.
+        # Try Default first, then numbered Profiles. The "first hit
+        # wins" pick is a known UX limitation when users have multiple
+        # profiles — documented in the cookies_extract docstring.
         for profile in ["Default", "Profile 1", "Profile 2", "Profile 3"]:
-            db = expanded / profile / "Cookies"
-            if db.exists():
-                return db
+            for subpath in ("Network/Cookies", "Cookies"):
+                db = expanded / profile / subpath
+                if db.exists():
+                    return db
 
     raise FileNotFoundError(
         f"Could not find {browser} cookie database on {plat}. "
@@ -511,15 +563,37 @@ def cookies_extract(
     tmp_dir = tempfile.mkdtemp()
     tmp_db = Path(tmp_dir) / "Cookies"
     try:
-        shutil.copy2(str(db_path), str(tmp_db))
+        try:
+            shutil.copy2(str(db_path), str(tmp_db))
+        except PermissionError as e:
+            # Windows-specific: Chrome holds the Cookies DB with
+            # FILE_SHARE_NONE, so no other process can open it for
+            # reading while Chrome is running with this profile. macOS
+            # / Linux Chrome doesn't lock this aggressively — this
+            # error path is essentially Windows-only.
+            if sys.platform == "win32":
+                raise RuntimeError(
+                    f"Cannot read {browser}'s cookie database while it is "
+                    "running (Windows holds the file with exclusive lock). "
+                    "Close Chrome (or the matching profile window) and "
+                    "retry. A future release may add DuplicateHandle-based "
+                    "bypass to avoid this step."
+                ) from e
+            raise
 
         # Also copy WAL if present (for fresh cookies not yet checkpointed)
         wal_path = db_path.parent / "Cookies-wal"
         if wal_path.exists():
-            shutil.copy2(str(wal_path), str(Path(tmp_dir) / "Cookies-wal"))
+            try:
+                shutil.copy2(str(wal_path), str(Path(tmp_dir) / "Cookies-wal"))
+            except PermissionError:
+                pass  # WAL is optional; missing it just means a stale read
         shm_path = db_path.parent / "Cookies-shm"
         if shm_path.exists():
-            shutil.copy2(str(shm_path), str(Path(tmp_dir) / "Cookies-shm"))
+            try:
+                shutil.copy2(str(shm_path), str(Path(tmp_dir) / "Cookies-shm"))
+            except PermissionError:
+                pass
 
         # Get decryption key
         mac_key = None
@@ -548,6 +622,7 @@ def cookies_extract(
             )
 
             cookies = []
+            v20_skipped = 0
             for row in cursor:
                 # text_factory=bytes means string columns come back as
                 # bytes; decode them. encrypted_value stays as raw bytes.
@@ -567,6 +642,12 @@ def cookies_extract(
                         win_key=win_key,
                         linux_password=linux_password,
                     )
+                    # Track v20 (Chrome 127+ App-Bound Encryption) so
+                    # caller knows how many cookies for this domain
+                    # were silently dropped — otherwise "I got 3
+                    # cookies when there should be 30" is mysterious.
+                    if value is None and encrypted[:3] == b"v20":
+                        v20_skipped += 1
                 else:
                     value = None
 
@@ -605,6 +686,17 @@ def cookies_extract(
                     }
                 )
 
+            if v20_skipped:
+                logger.warning(
+                    "%d cookie(s) for domain %r are v20 (Chrome 127+ "
+                    "App-Bound Encryption) and could not be decrypted. "
+                    "These are silently dropped from the result. If you "
+                    "depend on a specific cookie that is missing, check "
+                    "whether your Chrome version uses App-Bound — current "
+                    "ai-dev-browser supports only v10/v11.",
+                    v20_skipped,
+                    domain,
+                )
             return cookies
         finally:
             conn.close()
