@@ -49,3 +49,5 @@ tmpclaude-*
 
 # Claude Code local settings
 .claude/settings.local.json
+# Per-machine project instructions — not shared; each dev keeps their own.
+CLAUDE.md
