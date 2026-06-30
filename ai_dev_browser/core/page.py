@@ -46,21 +46,19 @@ MAX_SCREENSHOT_TOTAL_PIXELS = 1_150_000
 
 
 def read_screenshot_metadata(path: str) -> dict:
-    """Read ai_dev_browser metadata embedded in a PNG page_screenshot.
+    """Read ai_dev_browser metadata embedded in a saved screenshot.
 
     Returns dict with scale_factor, viewport dimensions, etc.
-    Returns empty dict if not a PNG or metadata not found.
+    Returns empty dict if PIL is unavailable, the file is missing,
+    or metadata isn't present. Supports both PNG (text chunk) and
+    JPEG (EXIF UserComment) — single entry point so consumers like
+    `mouse._scale_coords` stay format-agnostic.
     """
-    if not HAS_PIL or not path.endswith(".png"):
+    if not HAS_PIL:
         return {}
-    try:
-        with Image.open(path) as img:
-            raw = img.text.get("ai_dev_browser")
-            if raw:
-                return json.loads(raw)
-    except Exception:
-        pass
-    return {}
+    from . import _image_cap
+
+    return _image_cap.read_metadata(path)
 
 
 async def js_evaluate(tab: Tab, expression: str) -> dict:
@@ -228,6 +226,7 @@ async def page_screenshot(
     css_scale: bool = True,
     max_long_edge: int = MAX_SCREENSHOT_LONG_EDGE,
     max_total_pixels: int = MAX_SCREENSHOT_TOTAL_PIXELS,
+    image_cap: dict | None = None,
 ) -> dict:
     """Use when: you need pixels for visual reasoning, coordinate-based
     clicking (feed the path back to `mouse_click --screenshot` for
@@ -253,16 +252,30 @@ async def page_screenshot(
         max_long_edge: Maximum long edge in pixels (default: 1568). Set to 0
                        to disable. Different models have different limits:
                        Claude=1568, GPT-4o=2048, Gemini=0 (unlimited).
+                       Ignored when `image_cap` is provided.
         max_total_pixels: Maximum total pixels (default: 1,150,000). Set to 0
                           to disable. Claude API constraint; checked after
-                          max_long_edge scaling.
+                          max_long_edge scaling. Ignored when `image_cap`
+                          is provided.
+        image_cap: Per-call cap forwarded from the active LLM session's
+                   `_meta.imageCapability` (typical caller: sudowork). When
+                   provided, fully overrides `max_long_edge` / `max_total_pixels`
+                   so the screenshot fits the *active* model's accept-size
+                   rather than this tool's local defaults. Shape:
+                   `{"max_bytes": int, "max_dimension": int}` — both
+                   optional. `max_bytes` triggers JPEG re-encode with a
+                   quality-step search (output ext changes PNG → JPG).
+                   `max_dimension` caps the longest edge in pixels.
 
     Returns:
-        dict with path, size, width, height
+        dict with path, size, width, height. When `image_cap` is provided,
+        also includes `format` ('PNG'|'JPEG') and `capped` (bool — False
+        means best-effort, smallest produced still missed `max_bytes`).
 
     Note:
-        Pass the page_screenshot path to mouse_click(--page_screenshot) for automatic
-        coordinate scaling. Scaling metadata is embedded in the PNG file.
+        Pass the screenshot path to mouse_click(--screenshot) for automatic
+        coordinate scaling. Scaling metadata is embedded in the file (PNG
+        text chunk for .png, EXIF UserComment for .jpg).
     """
     if path is None:
         out_dir = _resolve_output_dir()
@@ -281,52 +294,71 @@ async def page_screenshot(
     await tab.save_screenshot(path, full_page=full_page)
 
     scale_factor = 1.0
+    cap_result: dict | None = None
 
     if css_scale and HAS_PIL:
         with Image.open(path) as img:
             orig_width, orig_height = img.size
 
-        # Step 1: DPR scaling — convert device pixels to CSS pixels
+        # Step 1: DPR scaling — convert device pixels to CSS pixels.
+        # Always applied; this is a fidelity correction, not a cap.
         css_width = orig_width
         css_height = orig_height
         if dpr > 1:
             css_width = int(orig_width / dpr)
             css_height = int(orig_height / dpr)
 
-        # Step 2: Scale down to fit within limits (preserving aspect ratio).
         target_width = css_width
         target_height = css_height
 
-        # 2a: Long edge limit
-        if max_long_edge > 0:
-            long_edge = max(target_width, target_height)
-            if long_edge > max_long_edge:
-                ratio = max_long_edge / long_edge
-                target_width = int(target_width * ratio)
-                target_height = int(target_height * ratio)
+        if image_cap:
+            # image_cap fully overrides the static max_* params: the
+            # active LLM's cap is authoritative, not this tool's local
+            # default. Apply DPR-normalized resize first (pre-shrinks
+            # for the helper), then hand off.
+            if (target_width, target_height) != (orig_width, orig_height):
+                with Image.open(path) as img:
+                    resized = img.resize(
+                        (target_width, target_height), Image.Resampling.LANCZOS
+                    )
+                    resized.save(path)
 
-        # 2b: Total pixels limit (checked after long edge)
-        if max_total_pixels > 0:
-            total = target_width * target_height
-            if total > max_total_pixels:
-                import math
+            from . import _image_cap as _img_cap
 
-                ratio = math.sqrt(max_total_pixels / total)
-                target_width = int(target_width * ratio)
-                target_height = int(target_height * ratio)
+            cap_result = _img_cap.apply_image_cap(path, image_cap)
+            path = cap_result["final_path"]
+            width = cap_result["final_width"]
+            height = cap_result["final_height"]
+        else:
+            # Existing static-cap flow (unchanged): max_long_edge then
+            # max_total_pixels, both as area-preserving LANCZOS resizes.
+            if max_long_edge > 0:
+                long_edge = max(target_width, target_height)
+                if long_edge > max_long_edge:
+                    ratio = max_long_edge / long_edge
+                    target_width = int(target_width * ratio)
+                    target_height = int(target_height * ratio)
 
-        # Apply scaling if needed
-        if target_width != orig_width or target_height != orig_height:
-            with Image.open(path) as img:
-                resized = img.resize(
-                    (target_width, target_height), Image.Resampling.LANCZOS
-                )
-                resized.save(path)
+            if max_total_pixels > 0:
+                total = target_width * target_height
+                if total > max_total_pixels:
+                    import math
 
-        if target_width > 0:
-            scale_factor = vp["width"] / target_width
+                    ratio = math.sqrt(max_total_pixels / total)
+                    target_width = int(target_width * ratio)
+                    target_height = int(target_height * ratio)
 
-        width, height = target_width, target_height
+            if target_width != orig_width or target_height != orig_height:
+                with Image.open(path) as img:
+                    resized = img.resize(
+                        (target_width, target_height), Image.Resampling.LANCZOS
+                    )
+                    resized.save(path)
+
+            width, height = target_width, target_height
+
+        if width > 0:
+            scale_factor = vp["width"] / width
     else:
         if HAS_PIL:
             with Image.open(path) as img:
@@ -335,34 +367,35 @@ async def page_screenshot(
             width = int(vp["width"] * dpr)
             height = int(vp["height"] * dpr)
 
-    # Embed metadata in PNG so mouse_click can auto-scale coordinates
-    if HAS_PIL and path.endswith(".png"):
-        from PIL.PngImagePlugin import PngInfo
+    # Embed metadata so mouse_click can auto-scale coordinates regardless
+    # of output format. _image_cap.write_metadata dispatches by extension
+    # (PNG text chunk vs JPEG EXIF UserComment) — single call site here.
+    if HAS_PIL:
+        from . import _image_cap as _img_cap
 
-        meta = PngInfo()
-        meta.add_text(
-            "ai_dev_browser",
-            json.dumps(
-                {
-                    "scale_factor": round(scale_factor, 6),
-                    "viewport_width": vp["width"],
-                    "viewport_height": vp["height"],
-                    "image_width": width,
-                    "image_height": height,
-                    "device_pixel_ratio": dpr,
-                }
-            ),
+        _img_cap.write_metadata(
+            path,
+            {
+                "scale_factor": round(scale_factor, 6),
+                "viewport_width": vp["width"],
+                "viewport_height": vp["height"],
+                "image_width": width,
+                "image_height": height,
+                "device_pixel_ratio": dpr,
+            },
         )
-        with Image.open(path) as img:
-            img.save(path, pnginfo=meta)
 
     file_size = Path(path).stat().st_size
-    return {
+    result = {
         "path": path,
         "size": file_size,
         "width": width,
         "height": height,
     }
+    if cap_result is not None:
+        result["format"] = cap_result["format"]
+        result["capped"] = cap_result["capped"]
+    return result
 
 
 async def page_info(tab: Tab) -> dict:

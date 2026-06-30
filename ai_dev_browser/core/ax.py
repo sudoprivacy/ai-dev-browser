@@ -529,18 +529,27 @@ async def screenshot_by_ref(
     tab: Tab,
     ref: str,
     path: str | None = None,
+    image_cap: dict | None = None,
 ) -> dict:
     """Use when: you need just one element's pixels (not the whole page) —
     smaller file, tighter crop for LLM vision. Prereq: `ref` from
-    `page_discover()`. Returns `{path, size, ref}`.
+    `page_discover()`. Returns `{path, size, ref, width, height}`
+    (plus `format` and `capped` when `image_cap` is provided).
 
     Args:
         tab: Tab instance
         ref: Element ref from page_discover()
         path: File path to save (default: screenshots/{timestamp}_element.png)
+        image_cap: Per-call cap forwarded from the active LLM session's
+                   `_meta.imageCapability` (typical caller: sudowork). Same
+                   shape and semantics as `page_screenshot`'s `image_cap`:
+                   `{"max_bytes": int, "max_dimension": int}` — both
+                   optional. `max_bytes` switches output to JPEG with a
+                   quality-step search (PNG → JPG extension change).
 
     Returns:
-        dict with path
+        dict with path, size, ref, width, height. With `image_cap`,
+        also includes format ('PNG'|'JPEG') and capped (bool).
     """
     import datetime
     from pathlib import Path
@@ -555,8 +564,39 @@ async def screenshot_by_ref(
 
     element = await get_element_by_ref(tab, ref)
     saved = await element.save_screenshot(path)
+
+    if image_cap:
+        from . import _image_cap as _img_cap
+
+        cap_result = _img_cap.apply_image_cap(saved, image_cap)
+        return {
+            "path": cap_result["final_path"],
+            "size": cap_result["final_bytes"],
+            "ref": ref,
+            "width": cap_result["final_width"],
+            "height": cap_result["final_height"],
+            "format": cap_result["format"],
+            "capped": cap_result["capped"],
+        }
+
     file_size = Path(saved).stat().st_size
-    return {"path": saved, "size": file_size, "ref": ref}
+    # Report dims even on the no-cap path so the return shape is stable
+    # across with/without image_cap callers. PIL is optional; fall back
+    # to (0, 0) if it isn't installed.
+    try:
+        from PIL import Image
+
+        with Image.open(saved) as img:
+            width, height = img.size
+    except Exception:
+        width = height = 0
+    return {
+        "path": saved,
+        "size": file_size,
+        "ref": ref,
+        "width": width,
+        "height": height,
+    }
 
 
 async def select_by_ref(

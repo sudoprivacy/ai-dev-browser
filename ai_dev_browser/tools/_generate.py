@@ -187,12 +187,15 @@ def main():
         )
 
         if file_path.exists():
-            existing = file_path.read_text()
+            # encoding="utf-8" so Windows' default cp936/gbk doesn't choke
+            # on any non-ASCII char a docstring may inherit (same family
+            # as the v0.11.1 cli_main stdout fix).
+            existing = file_path.read_text(encoding="utf-8")
             if existing == content:
                 skipped.append(name)
                 continue
 
-        file_path.write_text(content)
+        file_path.write_text(content, encoding="utf-8")
         generated.append(name)
         print(f"Generated: {name}.py")
 
