@@ -37,6 +37,13 @@ QUALITY_STEPS = (85, 70, 55, 40, 25)
 # a UI label remains legible to vision-LLMs.
 MIN_DIMENSION_AFTER_HALVING = 96
 
+# Headroom carved out of max_bytes when the caller plans to write
+# screenshot metadata after capping. EXIF UserComment + JSON payload
+# (scale/viewport/dims) measured at ~250 B in practice; 500 B leaves
+# margin for variance in the JSON content. Negligible vs typical
+# 100 KB+ caps from sudowork.
+METADATA_OVERHEAD_BUDGET = 500
+
 # Standard EXIF UserComment prefix: 8-byte character-code header
 # per EXIF 2.32 §4.6.5. "ASCII\0\0\0" indicates the comment payload
 # is ASCII/UTF-8 bytes.
@@ -49,12 +56,22 @@ def _wants_cap(cap: dict[str, Any] | None) -> bool:
     return bool(cap) and bool(cap.get("max_bytes") or cap.get("max_dimension"))
 
 
-def apply_image_cap(path: str, cap: dict[str, Any] | None) -> dict[str, Any]:
+def apply_image_cap(
+    path: str,
+    cap: dict[str, Any] | None,
+    reserve_bytes_for_metadata: bool = False,
+) -> dict[str, Any]:
     """Resize/recompress `path` in place to fit `cap`. May change the
     file extension PNG → JPG when `max_bytes` is set.
 
-    Returns a dict describing the post-cap state — caller uses this
-    to embed metadata + return to the user:
+    When `reserve_bytes_for_metadata=True`, the quality search runs
+    against `max_bytes - METADATA_OVERHEAD_BUDGET` so a subsequent
+    `write_metadata()` call (EXIF UserComment ~150-450 B for the
+    standard scale/viewport payload) doesn't push the final file
+    over the cap. Default False keeps the helper usable for callers
+    who don't write metadata (e.g. screenshot_by_ref).
+
+    Returns a dict describing the post-cap state:
       {final_path, final_bytes, final_width, final_height,
        format ('PNG'|'JPEG'), quality (int|None), capped (bool)}
 
@@ -81,6 +98,14 @@ def apply_image_cap(path: str, cap: dict[str, Any] | None) -> dict[str, Any]:
     max_bytes = cap.get("max_bytes")
     max_dim = cap.get("max_dimension")
 
+    # Pad-down the byte target so post-pass metadata write stays under
+    # the original cap. The overhead constant covers the worst-case
+    # EXIF wrapper + typical JSON payload — measured empirically at
+    # ~250B; rounded up to 500B for margin.
+    effective_max_bytes = max_bytes
+    if max_bytes and reserve_bytes_for_metadata:
+        effective_max_bytes = max(1, max_bytes - METADATA_OVERHEAD_BUDGET)
+
     with Image.open(src) as opened:
         img = opened.copy()  # detach from file so we can rewrite src
 
@@ -103,7 +128,7 @@ def apply_image_cap(path: str, cap: dict[str, Any] | None) -> dict[str, Any]:
         if img.mode != "RGB":
             img = img.convert("RGB")
 
-        chosen_quality, capped = _quality_search(img, jpg_path, max_bytes)
+        chosen_quality, capped = _quality_search(img, jpg_path, effective_max_bytes)
 
         # If quality alone didn't fit, try a single dimension halving
         # and re-run the search. Bounded fallback so we don't loop
@@ -115,7 +140,9 @@ def apply_image_cap(path: str, cap: dict[str, Any] | None) -> dict[str, Any]:
                 and halved[1] >= MIN_DIMENSION_AFTER_HALVING
             ):
                 img = img.resize(halved, Image.Resampling.LANCZOS)
-                chosen_quality, capped = _quality_search(img, jpg_path, max_bytes)
+                chosen_quality, capped = _quality_search(
+                    img, jpg_path, effective_max_bytes
+                )
 
         # Remove the original PNG if we switched extensions.
         if src.suffix.lower() != ".jpg" and src.exists():
@@ -154,8 +181,31 @@ def _quality_search(img, jpg_path: Path, max_bytes: int) -> tuple[int, bool]:
         img.save(jpg_path, format="JPEG", quality=q, optimize=True)
         if jpg_path.stat().st_size <= max_bytes:
             return q, True
-    # Smallest quality file is what's on disk; signal best-effort.
     return QUALITY_STEPS[-1], False
+
+
+def _build_exif_bytes(metadata: dict[str, Any]):
+    """Serialize metadata as EXIF UserComment-tagged bytes ready to
+    pass to `img.save(exif=...)`. Centralized so the same encoding
+    is used by both apply_image_cap (during quality search) and
+    write_metadata (after-the-fact)."""
+    from PIL import Image
+
+    payload = json.dumps(metadata).encode("utf-8")
+    exif = Image.Exif()
+    exif[_EXIF_USER_COMMENT_TAG] = _EXIF_USER_COMMENT_ASCII_PREFIX + payload
+    return exif.tobytes()
+
+
+def _build_png_info(metadata: dict[str, Any]):
+    """Build a PngInfo chunk for `img.save(pnginfo=...)`. Mirror of
+    _build_exif_bytes for the PNG output path so callers can pass
+    `metadata` to apply_image_cap regardless of which branch runs."""
+    from PIL.PngImagePlugin import PngInfo
+
+    info = PngInfo()
+    info.add_text("ai_dev_browser", json.dumps(metadata))
+    return info
 
 
 def write_metadata(path: str, metadata: dict[str, Any]) -> None:
@@ -169,7 +219,6 @@ def write_metadata(path: str, metadata: dict[str, Any]) -> None:
     from PIL import Image
 
     src = Path(path)
-    payload = json.dumps(metadata)
     suffix = src.suffix.lower()
 
     # Open + load + save inside the same `with` block. `.copy()` would
@@ -180,19 +229,13 @@ def write_metadata(path: str, metadata: dict[str, Any]) -> None:
     with Image.open(src) as img:
         img.load()
         if suffix == ".png":
-            from PIL.PngImagePlugin import PngInfo
-
-            meta = PngInfo()
-            meta.add_text("ai_dev_browser", payload)
-            img.save(src, format="PNG", pnginfo=meta)
+            img.save(src, format="PNG", pnginfo=_build_png_info(metadata))
         elif suffix in (".jpg", ".jpeg"):
-            exif = Image.Exif()
-            exif[_EXIF_USER_COMMENT_TAG] = (
-                _EXIF_USER_COMMENT_ASCII_PREFIX + payload.encode("utf-8")
-            )
             # quality="keep" preserves the JPEG quantization tables from
             # the last encode so this rewrite adds no generation loss.
-            img.save(src, format="JPEG", exif=exif.tobytes(), quality="keep")
+            img.save(
+                src, format="JPEG", exif=_build_exif_bytes(metadata), quality="keep"
+            )
         # Other formats: silently no-op (no place to embed). Callers
         # only ever produce PNG/JPEG today.
 

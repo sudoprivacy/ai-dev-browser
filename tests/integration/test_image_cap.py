@@ -93,13 +93,14 @@ async def tab():
 CAP_CASES = {
     "no_cap": None,
     "dim_only": {"max_dimension": 400},
-    # `bytes_only` deliberately doesn't set max_dimension, so the helper
-    # only re-encodes at the original (DPR-scaled) dims. The fixture's
-    # full_page render is tall (~3200px), so the byte target must be
-    # generous enough to be achievable via quality search alone — 80KB
-    # fits comfortably at quality 25-40. The impossible-cap path is
-    # covered by test_apply_image_cap_impossible_byte_target_returns_best_effort.
-    "bytes_only": {"max_bytes": 80_000},
+    # `bytes_only` deliberately doesn't set max_dimension, so the
+    # helper exercises the dim-halving fallback path on the tall
+    # fixture (~3200px). 100KB is generous enough that quality
+    # alone or one halving must fit — with the
+    # reserve_bytes_for_metadata budget the final EXIF-stamped file
+    # stays under 100KB. The impossible-cap path is covered by
+    # test_apply_image_cap_impossible_byte_target_returns_best_effort.
+    "bytes_only": {"max_bytes": 100_000},
     # `both` can be tighter because max_dimension pre-shrinks first.
     "both": {"max_dimension": 400, "max_bytes": 15_000},
 }
@@ -282,6 +283,46 @@ def test_apply_image_cap_impossible_byte_target_returns_best_effort(png_fixture)
         f"100-byte cap should be impossible to satisfy: {result}"
     )
     assert Path(result["final_path"]).exists(), "best-effort file must still be on disk"
+
+
+def test_reserve_bytes_for_metadata_keeps_final_under_cap(png_fixture):
+    """Regression for the v0.12.0 → v0.12.1 escape: apply_image_cap
+    measured pre-metadata bytes, then write_metadata appended ~250B
+    of EXIF UserComment that pushed borderline JPEGs over max_bytes
+    (CI flake at 80462B > 80000B cap). With reserve_bytes_for_metadata
+    the search runs against `max_bytes - METADATA_OVERHEAD_BUDGET` so
+    the post-metadata file always fits."""
+    from ai_dev_browser.core._image_cap import write_metadata
+
+    # Cap chosen to fit the high-entropy 1200x900 fixture at quality 25
+    # without triggering the dim-halving fallback — keeps this test
+    # focused on the metadata-budget contract, not the fallback path
+    # (which has its own test). Still tight enough that the EXIF
+    # overhead (~250B) is non-negligible — pre-fix v0.12.0 would have
+    # overshot by ~1% at this cap.
+    target = 80_000
+    result = apply_image_cap(
+        str(png_fixture), {"max_bytes": target}, reserve_bytes_for_metadata=True
+    )
+    assert result["capped"] is True, result
+
+    # Realistic screenshot metadata (matches page_screenshot's payload
+    # shape): scale_factor, viewport_*, image_*, device_pixel_ratio.
+    write_metadata(
+        result["final_path"],
+        {
+            "scale_factor": 1.234567,
+            "viewport_width": 1280,
+            "viewport_height": 800,
+            "image_width": result["final_width"],
+            "image_height": result["final_height"],
+            "device_pixel_ratio": 2,
+        },
+    )
+    final_size = Path(result["final_path"]).stat().st_size
+    assert final_size <= target, (
+        f"reserve_bytes_for_metadata failed: image+EXIF {final_size}B > cap {target}B"
+    )
 
 
 # ---------------------------------------------------------------------------

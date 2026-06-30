@@ -315,7 +315,10 @@ async def page_screenshot(
             # image_cap fully overrides the static max_* params: the
             # active LLM's cap is authoritative, not this tool's local
             # default. Apply DPR-normalized resize first (pre-shrinks
-            # for the helper), then hand off.
+            # for the helper), then hand off. apply_image_cap reserves
+            # a small headroom for the metadata write below so that the
+            # final on-disk JPEG (image bytes + EXIF UserComment) fits
+            # under max_bytes — not just the pre-metadata image bytes.
             if (target_width, target_height) != (orig_width, orig_height):
                 with Image.open(path) as img:
                     resized = img.resize(
@@ -325,7 +328,9 @@ async def page_screenshot(
 
             from . import _image_cap as _img_cap
 
-            cap_result = _img_cap.apply_image_cap(path, image_cap)
+            cap_result = _img_cap.apply_image_cap(
+                path, image_cap, reserve_bytes_for_metadata=True
+            )
             path = cap_result["final_path"]
             width = cap_result["final_width"]
             height = cap_result["final_height"]
