@@ -257,15 +257,22 @@ async def page_screenshot(
                           to disable. Claude API constraint; checked after
                           max_long_edge scaling. Ignored when `image_cap`
                           is provided.
-        image_cap: Per-call cap forwarded from the active LLM session's
-                   `_meta.imageCapability` (typical caller: sudowork). When
-                   provided, fully overrides `max_long_edge` / `max_total_pixels`
-                   so the screenshot fits the *active* model's accept-size
-                   rather than this tool's local defaults. Shape:
+        image_cap: Per-call cap the caller wants the screenshot to
+                   fit — typically the accept-limit of whichever
+                   downstream consumer (LLM API, upload endpoint,
+                   storage tier) will receive the image. When provided,
+                   fully overrides `max_long_edge` / `max_total_pixels`
+                   so the screenshot targets the *caller's* cap rather
+                   than this tool's static defaults. Shape:
                    `{"max_bytes": int, "max_dimension": int}` — both
                    optional. `max_bytes` triggers JPEG re-encode with a
                    quality-step search (output ext changes PNG → JPG).
                    `max_dimension` caps the longest edge in pixels.
+                   When omitted, falls back to `AI_DEV_BROWSER_IMAGE_CAP_MAX_BYTES`
+                   / `AI_DEV_BROWSER_IMAGE_CAP_MAX_DIMENSION` env vars
+                   so the enclosing process can pre-set a session-wide
+                   default without threading a per-call arg through
+                   every tool invocation. Precedence: per-call arg > env > None.
 
     Returns:
         dict with path, size, width, height. When `image_cap` is provided,
@@ -292,6 +299,14 @@ async def page_screenshot(
     dpr = vp["devicePixelRatio"]
 
     await tab.save_screenshot(path, full_page=full_page)
+
+    # Resolve image_cap: per-call arg wins, else env var, else None.
+    # Injected here rather than at CLI entry so Python-API callers
+    # also inherit the env-default.
+    if HAS_PIL:
+        from . import _image_cap as _img_cap
+
+        image_cap = _img_cap.resolve_cap(image_cap)
 
     scale_factor = 1.0
     cap_result: dict | None = None

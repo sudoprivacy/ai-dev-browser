@@ -540,12 +540,14 @@ async def screenshot_by_ref(
         tab: Tab instance
         ref: Element ref from page_discover()
         path: File path to save (default: screenshots/{timestamp}_element.png)
-        image_cap: Per-call cap forwarded from the active LLM session's
-                   `_meta.imageCapability` (typical caller: sudowork). Same
-                   shape and semantics as `page_screenshot`'s `image_cap`:
-                   `{"max_bytes": int, "max_dimension": int}` — both
-                   optional. `max_bytes` switches output to JPEG with a
-                   quality-step search (PNG → JPG extension change).
+        image_cap: Per-call cap the caller wants the screenshot to
+                   fit. Same shape and semantics as `page_screenshot`'s
+                   `image_cap`: `{"max_bytes": int, "max_dimension": int}`
+                   — both optional. `max_bytes` switches output to JPEG
+                   with a quality-step search (PNG → JPG extension
+                   change). Falls back to `AI_DEV_BROWSER_IMAGE_CAP_MAX_BYTES`
+                   / `AI_DEV_BROWSER_IMAGE_CAP_MAX_DIMENSION` env vars
+                   when omitted. Precedence: per-call arg > env > None.
 
     Returns:
         dict with path, size, ref, width, height. With `image_cap`,
@@ -565,9 +567,12 @@ async def screenshot_by_ref(
     element = await get_element_by_ref(tab, ref)
     saved = await element.save_screenshot(path)
 
-    if image_cap:
-        from . import _image_cap as _img_cap
+    # Resolve image_cap: per-call arg wins, else env var, else None.
+    from . import _image_cap as _img_cap
 
+    image_cap = _img_cap.resolve_cap(image_cap)
+
+    if image_cap:
         cap_result = _img_cap.apply_image_cap(saved, image_cap)
         return {
             "path": cap_result["final_path"],

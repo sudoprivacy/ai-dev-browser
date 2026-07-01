@@ -1,7 +1,8 @@
 """End-to-end: image_cap on page_screenshot and screenshot_by_ref.
 
-`image_cap` is the per-call cap forwarded from the active LLM
-session's `_meta.imageCapability`. The contract:
+`image_cap` is a per-call cap the caller wants the screenshot to
+fit — typically the accept-limit of whichever downstream consumer
+will receive the image. The contract:
 
   - When absent / empty → existing behaviour (PNG, static caps).
   - `max_dimension` → LANCZOS resize so longest edge fits.
@@ -353,6 +354,138 @@ def test_metadata_round_trips_through_jpeg(png_fixture):
     write_metadata(str(jpg), payload)
     out = read_metadata(str(jpg))
     assert out == payload, f"JPEG metadata mismatch: {out!r} vs {payload!r}"
+
+
+# ---------------------------------------------------------------------------
+# resolve_cap — env-fallback precedence (per-call arg > env > None)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_cap_explicit_arg_wins_over_env(monkeypatch):
+    """Per-call arg always overrides env — a dynamic per-call cap
+    must beat any stale process-wide env inherited from the shell."""
+    from ai_dev_browser.core._image_cap import (
+        ENV_MAX_BYTES,
+        ENV_MAX_DIMENSION,
+        resolve_cap,
+    )
+
+    monkeypatch.setenv(ENV_MAX_BYTES, "5242880")
+    monkeypatch.setenv(ENV_MAX_DIMENSION, "8000")
+    got = resolve_cap({"max_bytes": 100_000})
+    assert got == {"max_bytes": 100_000}, f"explicit arg should win verbatim, got {got}"
+
+
+def test_resolve_cap_env_fallback_when_arg_missing(monkeypatch):
+    """No per-call arg → env-derived cap. Both env vars set → both
+    keys present. This is the inject-once-in-parent-process workflow."""
+    from ai_dev_browser.core._image_cap import (
+        ENV_MAX_BYTES,
+        ENV_MAX_DIMENSION,
+        resolve_cap,
+    )
+
+    monkeypatch.setenv(ENV_MAX_BYTES, "524288")
+    monkeypatch.setenv(ENV_MAX_DIMENSION, "1568")
+    assert resolve_cap(None) == {"max_bytes": 524288, "max_dimension": 1568}
+
+
+def test_resolve_cap_partial_env_produces_partial_dict(monkeypatch):
+    """Only one env set → only that key. resolve_cap doesn't invent
+    a value for the missing knob."""
+    from ai_dev_browser.core._image_cap import (
+        ENV_MAX_BYTES,
+        ENV_MAX_DIMENSION,
+        resolve_cap,
+    )
+
+    monkeypatch.setenv(ENV_MAX_BYTES, "1048576")
+    monkeypatch.delenv(ENV_MAX_DIMENSION, raising=False)
+    assert resolve_cap(None) == {"max_bytes": 1048576}
+
+
+def test_resolve_cap_no_env_returns_none(monkeypatch):
+    """Neither env nor arg → None, so callers hit their uncapped
+    default (page_screenshot's max_long_edge/max_total_pixels path)."""
+    from ai_dev_browser.core._image_cap import (
+        ENV_MAX_BYTES,
+        ENV_MAX_DIMENSION,
+        resolve_cap,
+    )
+
+    monkeypatch.delenv(ENV_MAX_BYTES, raising=False)
+    monkeypatch.delenv(ENV_MAX_DIMENSION, raising=False)
+    assert resolve_cap(None) is None
+
+
+def test_resolve_cap_malformed_env_is_logged_not_raised(monkeypatch, caplog):
+    """A bad env value must never crash the agent loop. The
+    malformed key is dropped; other valid keys still surface."""
+    import logging
+
+    from ai_dev_browser.core._image_cap import (
+        ENV_MAX_BYTES,
+        ENV_MAX_DIMENSION,
+        resolve_cap,
+    )
+
+    monkeypatch.setenv(ENV_MAX_BYTES, "not-a-number")
+    monkeypatch.setenv(ENV_MAX_DIMENSION, "2048")
+    with caplog.at_level(logging.WARNING, logger="ai_dev_browser.core._image_cap"):
+        got = resolve_cap(None)
+    assert got == {"max_dimension": 2048}, (
+        f"malformed byte cap should be dropped, dimension kept: {got}"
+    )
+    assert any("malformed" in r.message.lower() for r in caplog.records), (
+        f"expected warning about malformed env, got: {[r.message for r in caplog.records]}"
+    )
+
+
+async def test_page_screenshot_uses_env_when_no_per_call_arg(
+    tab, tmp_path, monkeypatch
+):
+    """End-to-end: with env set + no per-call image_cap, page_screenshot
+    still respects the cap. This is the auto-inject path — enclosing
+    process sets env once, agent code doesn't need to know about
+    image_cap at the call site."""
+    from ai_dev_browser.core._image_cap import ENV_MAX_BYTES
+
+    monkeypatch.setenv(ENV_MAX_BYTES, "100000")
+    out = tmp_path / "shot_env.png"
+    result = await page_screenshot(tab, path=str(out), full_page=True)
+    # No image_cap arg → env kicks in → JPEG produced, size under cap.
+    assert Path(result["path"]).suffix == ".jpg", (
+        f"env AI_DEV_BROWSER_IMAGE_CAP_MAX_BYTES should force JPEG: {result}"
+    )
+    assert result["size"] <= 100_000, f"env cap not honored: {result['size']} > 100000"
+
+
+async def test_screenshot_by_ref_uses_env_when_no_per_call_arg(
+    tab, tmp_path, monkeypatch
+):
+    """Same env-fallback for the element-level surface. Both entry
+    points must resolve consistently."""
+    from ai_dev_browser.core._image_cap import ENV_MAX_DIMENSION
+
+    monkeypatch.setenv(ENV_MAX_DIMENSION, "300")
+    discover = await page_discover(tab, interactable_only=False)
+    nodes = discover if isinstance(discover, list) else discover.get("elements", [])
+    h1 = next(
+        (n for n in nodes if (n.get("name") or "").strip() == "Cap Fixture"),
+        None,
+    )
+    assert h1 is not None
+    out = tmp_path / "el_env.png"
+    result = await screenshot_by_ref(tab, ref=h1["ref"], path=str(out))
+    longest = max(result["width"], result["height"])
+    assert longest <= 300, (
+        f"env AI_DEV_BROWSER_IMAGE_CAP_MAX_DIMENSION not honored: {result}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Format dispatch — the mouse_click contract
+# ---------------------------------------------------------------------------
 
 
 def test_read_screenshot_metadata_dispatches_by_extension(png_fixture):

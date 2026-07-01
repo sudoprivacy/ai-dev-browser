@@ -1,18 +1,18 @@
-"""Apply LLM-cap constraints to a saved screenshot file, in place.
+"""Apply cap constraints to a saved screenshot file, in place.
 
-`image_cap` is a per-call override forwarded by consumers (most
-commonly sudowork) from the active LLM session's
-`_meta.imageCapability`. Shape:
+`image_cap` is a per-call cap the caller wants the screenshot
+to fit — typically the accept-limit of whichever downstream
+consumer (LLM API, upload endpoint, storage tier) will receive
+the image. Shape:
 
     {"max_bytes": int, "max_dimension": int}    # both optional
 
 When `max_dimension` is set: LANCZOS resize so the longest edge
 fits. When `max_bytes` is set: re-encode as JPEG with quality
-stepping `85 → 70 → 55 → 40 → 25` (mirrors sudocode-runtime's
-`preflight_base64` loop). If even quality=25 misses the byte
-target, we halve dimensions once and re-step; if still missing,
-return best-effort with `capped=False` so the caller can decide
-whether to warn or escalate.
+stepping `85 → 70 → 55 → 40 → 25`. If even quality=25 misses
+the byte target, we halve dimensions once and re-step; if still
+missing, return best-effort with `capped=False` so the caller
+can decide whether to warn or escalate.
 
 Also owns the screenshot metadata write/read path. PNG → text
 chunk via `PIL.PngImagePlugin.PngInfo`; JPEG → EXIF UserComment
@@ -24,12 +24,24 @@ metadata always travels with the image.
 from __future__ import annotations
 
 import json
+import logging
+import os
 from pathlib import Path
 from typing import Any
 
-# Matches sudocode-runtime/src/image_registry.rs preflight_base64.
+logger = logging.getLogger(__name__)
+
+# Env-var names for auto-injecting a default image_cap when the caller
+# doesn't pass one per-call. Same AI_DEV_BROWSER_* convention as
+# _CHROME / _HEADLESS / _PORT — the enclosing process sets these once
+# and every screenshot the agent takes inherits the cap without
+# boilerplate on the tool-call surface.
+ENV_MAX_BYTES = "AI_DEV_BROWSER_IMAGE_CAP_MAX_BYTES"
+ENV_MAX_DIMENSION = "AI_DEV_BROWSER_IMAGE_CAP_MAX_DIMENSION"
+
 # Discrete steps (not binary search) for predictable, bounded
-# iterations across both systems.
+# iterations. The [85, 70, 55, 40, 25] ladder matches what most
+# LLM-image-preflight implementations settle on empirically.
 QUALITY_STEPS = (85, 70, 55, 40, 25)
 
 # Don't let the byte-target fallback halving shrink an image below
@@ -41,7 +53,7 @@ MIN_DIMENSION_AFTER_HALVING = 96
 # screenshot metadata after capping. EXIF UserComment + JSON payload
 # (scale/viewport/dims) measured at ~250 B in practice; 500 B leaves
 # margin for variance in the JSON content. Negligible vs typical
-# 100 KB+ caps from sudowork.
+# typical 100 KB+ caps.
 METADATA_OVERHEAD_BUDGET = 500
 
 # Standard EXIF UserComment prefix: 8-byte character-code header
@@ -54,6 +66,39 @@ _EXIF_USER_COMMENT_ASCII_PREFIX = b"ASCII\x00\x00\x00"
 def _wants_cap(cap: dict[str, Any] | None) -> bool:
     """True iff cap is provided and has at least one active constraint."""
     return bool(cap) and bool(cap.get("max_bytes") or cap.get("max_dimension"))
+
+
+def resolve_cap(explicit: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Precedence: per-call arg > env var > None.
+
+    When `explicit` is truthy it wins verbatim (caller knows the
+    active cap for this specific call). When falsy, we synthesize a
+    cap from ENV_MAX_BYTES / ENV_MAX_DIMENSION so agents inherit a
+    process-wide default without threading it through every
+    screenshot call.
+
+    Malformed env values are logged and skipped, not raised — a bad
+    env var must not crash the agent's tool loop. Returns None only
+    when no cap is available anywhere.
+    """
+    if explicit:
+        return explicit
+
+    resolved: dict[str, Any] = {}
+    for env_name, cap_key in (
+        (ENV_MAX_BYTES, "max_bytes"),
+        (ENV_MAX_DIMENSION, "max_dimension"),
+    ):
+        raw = os.environ.get(env_name)
+        if not raw:
+            continue
+        try:
+            resolved[cap_key] = int(raw)
+        except ValueError:
+            logger.warning(
+                "Ignoring malformed %s=%r (must be an integer)", env_name, raw
+            )
+    return resolved or None
 
 
 def apply_image_cap(
