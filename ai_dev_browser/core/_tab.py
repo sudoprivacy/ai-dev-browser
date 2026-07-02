@@ -493,36 +493,34 @@ class Tab:
     # Scroll
     # =========================================================================
 
+    async def _scroll_by_viewport_percent(self, percent: float) -> None:
+        """Scroll by `percent` of viewport height (positive = down,
+        negative = up). Reads viewport height AND performs the scroll
+        in a single `Runtime.evaluate` call — no CDP Browser or
+        Input.synthesizeScrollGesture calls involved.
+
+        The previous implementation used `Browser.getWindowForTarget`
+        (browser-domain) to fetch bounds, then
+        `Input.synthesizeScrollGesture` for a smooth scroll. Both are
+        Chrome-specific CDP methods that embedded targets (Electron,
+        CEF, packaged Chromium apps exposing CDP via
+        `--remote-debugging-port`) may not implement — attaching
+        would 32601 the whole scroll path even though basic JS
+        `window.scrollBy` works fine. `Runtime.evaluate` is
+        universally supported, so we lean on that instead. Loses the
+        gesture-like smoothness, but agent scroll doesn't need
+        animation — the scroll event still fires so lazy-load and
+        scroll-listeners still trigger.
+        """
+        await self.evaluate(f"window.scrollBy(0, window.innerHeight * {percent / 100})")
+
     async def scroll_down(self, amount: int = 25):
         """Scroll down by percentage of viewport height."""
-        _window_id, bounds = await self.get_window()
-        await self.send(
-            cdp_input.synthesize_scroll_gesture(
-                x=0,
-                y=0,
-                y_distance=-(bounds.height * (amount / 100)),
-                y_overscroll=0,
-                x_overscroll=0,
-                prevent_fling=True,
-                repeat_delay_ms=0,
-                speed=7777,
-            )
-        )
+        await self._scroll_by_viewport_percent(amount)
 
     async def scroll_up(self, amount: int = 25):
         """Scroll up by percentage of viewport height."""
-        _window_id, bounds = await self.get_window()
-        await self.send(
-            cdp_input.synthesize_scroll_gesture(
-                x=0,
-                y=0,
-                y_distance=(bounds.height * (amount / 100)),
-                x_overscroll=0,
-                prevent_fling=True,
-                repeat_delay_ms=0,
-                speed=7777,
-            )
-        )
+        await self._scroll_by_viewport_percent(-amount)
 
     # =========================================================================
     # Navigation
