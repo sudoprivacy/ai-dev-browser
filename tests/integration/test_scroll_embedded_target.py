@@ -9,23 +9,31 @@ That CDP method is Chrome-browser-specific; embedded targets return
 `-32601 Method not found` and the whole scroll path aborts. Reported
 by a downstream integrator attaching to a packaged Electron app.
 
-Fix (in `_tab.py`): rewrite `scroll_down` / `scroll_up` to use
-`Runtime.evaluate` with `window.scrollBy(0, window.innerHeight * pct)`.
-Runtime is universally supported. Bounds lookup and gesture
-synthesis (Browser + Input.synthesizeScrollGesture) removed from the
-scroll path entirely.
+Fix (in `_tab._scroll_by_viewport_percent`): try the Chrome
+gesture path first (`get_window` + `synthesize_scroll_gesture` —
+still the preferred path because gesture-shape acceleration helps
+evade anti-bot heuristics that flag instant scroll jumps). If that
+returns CDP `-32601 method not found`, fall back to
+`Runtime.evaluate` + `window.scrollBy` — Runtime is universally
+supported. Any OTHER ProtocolException still surfaces so real
+protocol violations aren't silently downgraded to the fallback.
 
-Tests below verify BOTH sides of the contract:
+Tests below pin all three contracts:
   1. Positive — scroll_down actually scrolls a real Chrome fixture
-     (proves the JS-based rewrite works).
-  2. Negative — scroll_down succeeds even if `tab.get_window` is
-     patched to raise (proves the code path no longer depends on
-     the Browser-domain call that fails on Electron).
+     via the gesture path (proves it wasn't broken by the fallback
+     plumbing).
+  2. Fallback — scroll_down succeeds when `get_window` is patched
+     to raise `-32601 method not found` (proves the embedded-target
+     path works).
+  3. Guardrail — a NON-32601 ProtocolException must NOT be
+     downgraded to fallback (proves we didn't paper over real
+     protocol bugs).
 
-The negative test is the load-bearing one: without it, a future
-"cleanup" that reintroduces `get_window()` in the scroll path would
-silently re-break Electron users and CI wouldn't notice (regular
-Chrome has getWindowForTarget so the code would appear to work).
+Tests 2 + 3 are the load-bearing pair — without them a future
+"cleanup" could either reintroduce `get_window()` in the fallback
+path (re-breaking Electron users) or widen the except-clause to
+swallow all protocol errors (masking real bugs), and regular Chrome
+CI would go green for both regressions.
 """
 
 from __future__ import annotations
@@ -126,21 +134,21 @@ async def test_page_scroll_up_after_down_reverses(tab):
     )
 
 
-async def test_page_scroll_survives_broken_get_window(tab, monkeypatch):
-    """Regression pin: even if `tab.get_window` is completely broken —
-    the exact failure mode Electron / embedded targets exhibit —
-    page_scroll must still work. The rewrite guarantees this by never
-    calling get_window() from the scroll path.
+async def test_page_scroll_falls_back_on_cdp_method_not_found(tab, monkeypatch):
+    """The Electron path: `get_window` raises CDP -32601 'method not
+    found' → scroll must fall back to `window.scrollBy` via
+    Runtime.evaluate and still scroll.
 
-    If a future edit reintroduces `get_window()` into scroll_down or
-    a helper it calls, this test will fail on ProtocolException before
-    the scroll runs. That's the whole point — Electron users would
-    otherwise be silently broken again because regular Chrome CI
-    always has getWindowForTarget so the code would look green."""
+    Simulating the failure mode with the actual `ProtocolException`
+    shape the CDP transport produces (dict with `code: -32601`), not
+    a generic Exception — otherwise a future edit narrowing the
+    except-clause to only catch method-not-found would break this
+    test and force a re-think, which is exactly the point."""
+    from ai_dev_browser.core._transport import ProtocolException
 
     async def _boom():
-        raise RuntimeError(
-            "Browser.getWindowForTarget wasn't found — simulated Electron target"
+        raise ProtocolException(
+            {"code": -32601, "message": "'Browser.getWindowForTarget' wasn't found"}
         )
 
     monkeypatch.setattr(tab, "get_window", _boom)
@@ -151,8 +159,35 @@ async def test_page_scroll_survives_broken_get_window(tab, monkeypatch):
 
     after = await _get_scroll_y(tab)
     assert after > before, (
-        f"scroll_down with get_window broken failed to scroll: "
+        f"scroll_down did not fall back to JS scroll on -32601: "
         f"before={before}, after={after}"
+    )
+
+
+async def test_page_scroll_does_not_swallow_other_protocol_errors(tab, monkeypatch):
+    """Guardrail: only -32601 method-not-found triggers fallback. A
+    different CDP error (say a target crash, code -32000, or protocol
+    violation) must NOT be silently downgraded to the JS path —
+    that would mask real bugs in the transport / gesture pipeline.
+
+    Without this test, a maintainer could widen the except clause to
+    `except ProtocolException:` (catch-all) and Chrome CI would go
+    green, but any transport-layer failure would silently succeed
+    with a JS fallback — losing observability of a real bug."""
+    from ai_dev_browser.core._transport import ProtocolException
+
+    async def _boom():
+        # -32000 is a generic server error, NOT method-not-found.
+        raise ProtocolException(
+            {"code": -32000, "message": "Target crashed while loading window bounds"}
+        )
+
+    monkeypatch.setattr(tab, "get_window", _boom)
+
+    with pytest.raises(ProtocolException) as ei:
+        await page_scroll(tab, direction="down", amount=50)
+    assert ei.value.args[0].get("code") == -32000, (
+        f"expected -32000 to propagate, got: {ei.value.args}"
     )
 
 

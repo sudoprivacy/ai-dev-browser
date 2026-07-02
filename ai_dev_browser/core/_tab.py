@@ -27,6 +27,26 @@ if typing.TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# CDP JSON-RPC error code for "method not found" — sent by the
+# target when a domain method the client called isn't implemented
+# there. Embedded CDP targets (Electron, CEF, packaged Chromium
+# exposing --remote-debugging-port) commonly return this on
+# Chrome-browser-specific methods like Browser.getWindowForTarget or
+# Input.synthesizeScrollGesture. Anything else (protocol violation,
+# malformed params, target crash) must not be silently downgraded.
+_CDP_METHOD_NOT_FOUND = -32601
+
+
+def _is_cdp_method_not_found(exc: ProtocolException) -> bool:
+    """Robust match: prefer the numeric code from the CDP error dict;
+    fall back to the human-readable variants for older transports
+    that surface the error as a bare string."""
+    err = exc.args[0] if exc.args else None
+    if isinstance(err, dict) and err.get("code") == _CDP_METHOD_NOT_FOUND:
+        return True
+    text = str(exc)
+    return str(_CDP_METHOD_NOT_FOUND) in text or "wasn't found" in text
+
 
 class Tab:
     """CDP tab connection."""
@@ -495,24 +515,44 @@ class Tab:
 
     async def _scroll_by_viewport_percent(self, percent: float) -> None:
         """Scroll by `percent` of viewport height (positive = down,
-        negative = up). Reads viewport height AND performs the scroll
-        in a single `Runtime.evaluate` call — no CDP Browser or
-        Input.synthesizeScrollGesture calls involved.
+        negative = up).
 
-        The previous implementation used `Browser.getWindowForTarget`
-        (browser-domain) to fetch bounds, then
-        `Input.synthesizeScrollGesture` for a smooth scroll. Both are
-        Chrome-specific CDP methods that embedded targets (Electron,
-        CEF, packaged Chromium apps exposing CDP via
-        `--remote-debugging-port`) may not implement — attaching
-        would 32601 the whole scroll path even though basic JS
-        `window.scrollBy` works fine. `Runtime.evaluate` is
-        universally supported, so we lean on that instead. Loses the
-        gesture-like smoothness, but agent scroll doesn't need
-        animation — the scroll event still fires so lazy-load and
-        scroll-listeners still trigger.
+        Prefers Chrome's gesture-based path
+        (`Browser.getWindowForTarget` for bounds +
+        `Input.synthesizeScrollGesture` for a smooth swipe) so scroll
+        looks human-like — the gesture-shape acceleration + easing
+        matter for anti-bot heuristics that flag instant jumps.
+
+        Falls back to `Runtime.evaluate` + `window.scrollBy` only
+        when the gesture path returns CDP -32601 "method not found".
+        That signals an embedded target (Electron, CEF, packaged
+        Chromium exposing CDP via `--remote-debugging-port`) that
+        doesn't implement Browser or synthesizeScrollGesture. On
+        the fallback path, scroll events still fire so lazy-load /
+        IntersectionObserver / scroll-listener triggers still work —
+        we just lose the gesture-shape (which the embedded target
+        can't observe anyway).
         """
-        await self.evaluate(f"window.scrollBy(0, window.innerHeight * {percent / 100})")
+        try:
+            _window_id, bounds = await self.get_window()
+            await self.send(
+                cdp_input.synthesize_scroll_gesture(
+                    x=0,
+                    y=0,
+                    y_distance=-(bounds.height * (percent / 100)),
+                    y_overscroll=0,
+                    x_overscroll=0,
+                    prevent_fling=True,
+                    repeat_delay_ms=0,
+                    speed=7777,
+                )
+            )
+        except ProtocolException as e:
+            if not _is_cdp_method_not_found(e):
+                raise
+            await self.evaluate(
+                f"window.scrollBy(0, window.innerHeight * {percent / 100})"
+            )
 
     async def scroll_down(self, amount: int = 25):
         """Scroll down by percentage of viewport height."""
