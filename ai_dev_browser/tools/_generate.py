@@ -11,6 +11,8 @@ Usage:
 import inspect
 from pathlib import Path
 
+from ai_dev_browser._cli import INJECTED_FIRST_PARAMS
+
 # Functions in core.__all__ that should NOT become CLI tools.
 # These are infrastructure functions used internally by the CLI wrapper.
 INTERNAL = {
@@ -142,11 +144,14 @@ def _discover_tools():
         if not (inspect.isfunction(obj) or inspect.iscoroutinefunction(obj)):
             continue
 
-        # Detect requires_tab from first parameter name
+        # Detect requires_tab from first parameter name. The name set is
+        # shared with the CLI parser so the two cannot drift: whatever the
+        # generator calls "takes an injected handle", the parser must also
+        # decline to turn into a flag.
         sig = inspect.signature(obj)
         params = list(sig.parameters.keys())
         first_param = params[0] if params else ""
-        requires_tab = first_param in ("tab", "browser_or_tab")
+        requires_tab = first_param in INJECTED_FIRST_PARAMS
 
         # Get metadata
         meta = TOOL_META.get(name, {})

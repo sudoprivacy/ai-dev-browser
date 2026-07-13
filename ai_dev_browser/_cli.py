@@ -30,6 +30,19 @@ from collections.abc import Callable
 from typing import Any, Literal, get_args, get_origin, get_type_hints
 
 
+# Names of the live handle a tab-taking core function receives as its first
+# parameter. The CLI injects it and must never expose it as a flag — you cannot
+# pass a Tab object through a shell.
+#
+# Two names are in use: `tab`, and `browser_or_tab` for the tab-management tools
+# that also accept a BrowserClient. `tools/_generate.py` reads the same set to
+# decide `requires_tab`, which is the point of defining it once: the two used to
+# disagree — the generator knew both names, the parser only knew `tab` — so
+# `tab_list` / `tab_new` grew a required `--browser-or-tab` flag that no shell
+# could satisfy, and were unusable from the CLI.
+INJECTED_FIRST_PARAMS = frozenset({"tab", "browser_or_tab"})
+
+
 def _get_literal_choices(hint) -> list | None:
     """Extract choices from Literal type hint."""
     origin = get_origin(hint)
@@ -191,7 +204,9 @@ def _generate_parser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
-    # Add --port for browser connection (only when requires_tab)
+    # Connection-scope arguments — which browser, which tab. Injected here for
+    # every tab-taking tool rather than declared in 50 core signatures: they
+    # select the *target* of a call, they are not parameters of the action.
     if requires_tab:
         parser.add_argument(
             "--port",
@@ -200,10 +215,21 @@ def _generate_parser(
             default=None,
             help="Chrome debugging port (auto-detects running Chrome if not specified)",
         )
+        parser.add_argument(
+            "--tab-url",
+            type=str,
+            default=None,
+            help=(
+                "Act on the tab whose URL contains this substring (e.g. ':5173'). "
+                "Without it, a browser with several page targets — Electron "
+                "windows, a many-tab Chrome — is a guess. Settable process-wide "
+                "via AI_DEV_BROWSER_TAB_URL."
+            ),
+        )
 
-    # Add arguments from function signature (skip 'tab' parameter)
+    # Add arguments from function signature (skip the injected handle)
     for name, param in sig.parameters.items():
-        if name == "tab":
+        if name in INJECTED_FIRST_PARAMS:
             continue
 
         hint = hints.get(name, str)
@@ -345,13 +371,14 @@ def as_cli(requires_tab: bool = True):
                 async def run():
                     try:
                         browser = await connect_browser(port=args.port)
-                        tab = await get_active_tab(browser)
+                        tab = await get_active_tab(browser, url_contains=args.tab_url)
 
-                        # Build kwargs from args, excluding 'port'
+                        # Connection-scope args select the target, they are not
+                        # arguments to the core function — strip before calling.
                         kwargs = {
                             k.replace("-", "_"): v
                             for k, v in vars(args).items()
-                            if k != "port"
+                            if k not in ("port", "tab_url")
                         }
 
                         result = await func(tab, **kwargs)

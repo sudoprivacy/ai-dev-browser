@@ -405,7 +405,7 @@ def test_locked_cookies_db_raises_clear_runtime_error(tmp_path):
 
     try:
 
-        def fake_finder(_browser: str) -> Path:
+        def fake_finder(_browser: str, _user_data_dir: str | None = None) -> Path:
             return fake_db
 
         original = cookies_mod._find_cookie_db

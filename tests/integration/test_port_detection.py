@@ -89,7 +89,9 @@ def test_get_pid_on_port_returns_none_for_unused_port_without_crash():
     )
 
 
-def test_connect_browser_zero_arg_auto_discovery_works_end_to_end():
+def test_connect_browser_zero_arg_auto_discovery_works_end_to_end(
+    tmp_path, monkeypatch
+):
     """Integration: the bug's user-visible symptom was that
     `connect_browser()` zero-arg auto-detection broke and callers had
     to pass --port on every call. This exercises the full chain
@@ -98,8 +100,18 @@ def test_connect_browser_zero_arg_auto_discovery_works_end_to_end():
 
     Pre-fix on Chinese Windows: connect_browser() raised. Post-fix:
     returns a usable BrowserClient connected to the right port.
+
+    Runs from its own cwd. Zero-arg discovery scans the Chromes of the *current
+    workspace*, and a workspace is just a slug of the cwd — so run from the repo
+    root, this test could see any other Chrome anyone had started from the repo
+    root (another test's leftover, a developer's scratch browser) and assert
+    against it. That made it pass or fail depending on what else happened to be
+    running, which is the definition of a flaky test. A private cwd is a private
+    workspace, so the Chrome started below is provably the only candidate.
     """
     import asyncio
+
+    monkeypatch.chdir(tmp_path)
 
     start = browser_start(headless=True, temp=True)
     assert "error" not in start, f"browser_start should succeed: {start}"
@@ -114,7 +126,7 @@ def test_connect_browser_zero_arg_auto_discovery_works_end_to_end():
                 # same Chrome we just started.
                 assert browser.port == port, (
                     f"connect_browser() auto-detected port {browser.port} "
-                    f"but the only Chrome we started is on {port} — "
+                    f"but the only Chrome in this workspace is on {port} — "
                     "discovery picked the wrong process or no process."
                 )
             finally:

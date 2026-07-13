@@ -27,6 +27,34 @@ DEFAULT_PROFILE_PREFIX = "ai_dev_browser_"
 # Default output directory (relative to cwd — follows the consuming project)
 DEFAULT_OUTPUT_DIR = Path("output")
 
+# Env var for consumers to inject a persistent output directory, so LLMs don't
+# have to learn host-specific scratch/persistent conventions.
+OUTPUT_DIR_ENV = "AI_DEV_BROWSER_OUTPUT_DIR"
+
+# Env var pinning which page target every tool acts on, as a URL substring.
+# For a browser with one tab this is unnecessary; for one with several page
+# targets (Electron windows, a many-tab Chrome) it replaces a guess — see
+# `connection.get_active_tab`. Process-wide, so a consumer sets it once instead
+# of passing --tab-url to every call.
+TAB_URL_ENV = "AI_DEV_BROWSER_TAB_URL"
+
+
+def resolve_output_dir() -> Path:
+    """Directory that file-producing tools write to when `path` is omitted.
+
+    Order: `AI_DEV_BROWSER_OUTPUT_DIR` → `DEFAULT_OUTPUT_DIR` (./output/).
+
+    Every tool that saves a file resolves it through here. It used to live in
+    page.py, which meant `screenshot_by_ref` — over in ax.py — reached for
+    `DEFAULT_OUTPUT_DIR` directly and silently ignored the env var its sibling
+    screenshot tool honoured.
+    """
+    env_dir = os.environ.get(OUTPUT_DIR_ENV)
+    if env_dir:
+        return Path(env_dir).expanduser()
+    return DEFAULT_OUTPUT_DIR
+
+
 # Debug port range for scanning and allocation
 DEFAULT_DEBUG_HOST = "127.0.0.1"
 DEFAULT_DEBUG_PORT = 9350

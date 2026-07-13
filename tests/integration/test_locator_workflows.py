@@ -39,6 +39,7 @@ from ai_dev_browser.core.elements import (
     find_by_xpath,
 )
 from ai_dev_browser.core.ax import click_by_ref
+from ai_dev_browser.core.config import DEFAULT_OUTPUT_DIR
 from ai_dev_browser.core.navigation import page_goto
 from ai_dev_browser.core.page import page_screenshot
 
@@ -288,7 +289,12 @@ async def test_screenshot_honors_output_dir_env_var(tab, tmp_path, monkeypatch):
 async def test_screenshot_falls_back_to_default_dir_without_env(
     tab, tmp_path, monkeypatch
 ):
-    """No env var → fall back to ./screenshots/ as before (backward compat)."""
+    """No env var → fall back to DEFAULT_OUTPUT_DIR (./output/).
+
+    Every file-producing tool resolves its default through
+    `config.resolve_output_dir()`, so page_screenshot / page_pdf /
+    screenshot_by_ref all land in the same directory.
+    """
     monkeypatch.delenv("AI_DEV_BROWSER_OUTPUT_DIR", raising=False)
     # Redirect cwd to tmp to avoid polluting the real repo
     monkeypatch.chdir(tmp_path)
@@ -297,7 +303,7 @@ async def test_screenshot_falls_back_to_default_dir_without_env(
     result = await page_screenshot(tab=tab)
     saved = Path(result["path"])
     assert saved.exists()
-    assert "screenshots" in saved.parts
+    assert DEFAULT_OUTPUT_DIR.name in saved.parts
     saved.unlink()
 
 
@@ -347,10 +353,19 @@ async def test_find_by_text_returns_not_found_for_missing_text(tab):
     assert result["text"] == "definitely not on page"
 
 
-async def test_find_by_text_can_find_non_interactable_with_flag(tab):
+async def test_find_by_text_finds_non_interactable_by_default(tab):
     """Real scenario: verify a status message ("Success") appeared after a
-    form submit. The text is in a <div>, not a button — interactable_only
-    must be False to find it."""
+    form submit. The text is in a <div>, not a button.
+
+    `find_by_text` is two-tier: interactable elements win, and only when none
+    match does it fall back to StaticText / <div onclick>. The fallback is ON
+    by default (`interactable_only=False`) — a bare <div> nav menu is a real
+    click target that Chrome's AX tree does not mark interactable, and hiding
+    it by default made the tool useless on those pages.
+
+    `interactable_only=True` opts out, for when you want to assert that a real
+    button/link with this text exists.
+    """
     html = """
     <html><body>
       <div id="status">Success</div>
@@ -358,14 +373,14 @@ async def test_find_by_text_can_find_non_interactable_with_flag(tab):
     """
     await page_goto(tab, _data_url(html))
 
-    # Default (interactable_only=True) should NOT find the div
-    interactive_only = await find_by_text(tab, "Success")
-    assert interactive_only["found"] is False, (
-        "interactable_only=True should skip non-clickable text"
+    # Default: tier-2 fallback is enabled, so the plain <div> is found.
+    default = await find_by_text(tab, "Success")
+    assert default["found"] is True, (
+        "default (interactable_only=False) should fall back to the status div"
     )
 
-    # Opt-in to all elements
-    any_match = await find_by_text(tab, "Success", interactable_only=False)
-    assert any_match["found"] is True, (
-        "interactable_only=False should match the status div"
+    # Opt out: no interactable element carries this text, so nothing matches.
+    strict = await find_by_text(tab, "Success", interactable_only=True)
+    assert strict["found"] is False, (
+        "interactable_only=True should skip non-clickable text"
     )

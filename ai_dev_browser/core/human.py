@@ -532,6 +532,46 @@ async def type_text(
         await tab.send(cdp.input_.dispatch_key_event("char", text=char))
 
 
+async def click_box(
+    tab: Tab,
+    center: tuple[float, float],
+    width: float,
+    height: float,
+    from_x: float = None,
+    from_y: float = None,
+    use_offset: bool = None,
+) -> None:
+    """Human-like click inside a box: in-bounds random offset + gaussian path.
+
+    The actuator SSOT for every click that targets an element. A box is all it
+    needs, so it serves both ways of naming an element — a DOM `Element` (which
+    carries its own box) and an accessibility-tree ref (whose box comes from
+    `DOM.getBoxModel`). Before this existed, the ref path dispatched raw mouse
+    events at the exact box centre, which meant the `find_by_text → click_by_ref`
+    chain we recommend as the iframe/split-label fallback was *less* human-like
+    than the `click_by_text` it replaced.
+
+    Args:
+        tab: Browser tab
+        center: (x, y) centre of the element's box, in CSS pixels
+        width: Box width — offsets stay inside it
+        height: Box height
+        from_x: Starting X for mouse movement
+        from_y: Starting Y for mouse movement
+        use_offset: Apply random offset within the box (default: from config)
+    """
+    if use_offset is None:
+        use_offset = _config.click_offset_enabled
+
+    x, y = center[0], center[1]
+    if use_offset and width > 0 and height > 0:
+        offset_x, offset_y = calculate_click_offset(width, height)
+        x += offset_x
+        y += offset_y
+
+    await mouse_click(tab, x, y, from_x=from_x, from_y=from_y)
+
+
 async def click_element(
     tab: Tab,
     element: Element,
@@ -539,7 +579,7 @@ async def click_element(
     from_y: float = None,
     use_offset: bool = None,
 ) -> None:
-    """Click element with human-like behavior.
+    """Click a DOM Element with human-like behavior.
 
     Args:
         tab: Browser tab
@@ -558,17 +598,9 @@ async def click_element(
         await element.click()
         return
 
-    # Apply offset if enabled
-    if use_offset is None:
-        use_offset = _config.click_offset_enabled
-
-    x, y = center[0], center[1]
-    if use_offset and width > 0 and height > 0:
-        offset_x, offset_y = calculate_click_offset(width, height)
-        x += offset_x
-        y += offset_y
-
-    await mouse_click(tab, x, y, from_x=from_x, from_y=from_y)
+    await click_box(
+        tab, center, width, height, from_x=from_x, from_y=from_y, use_offset=use_offset
+    )
 
 
 async def double_click_element(

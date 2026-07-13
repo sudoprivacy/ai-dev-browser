@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import pickle
 import re
 import urllib.request
@@ -23,7 +24,7 @@ from ai_dev_browser.cdp import (
 from ._tab import Tab
 from ._transport import CDPConnection
 
-from .config import DEFAULT_DEBUG_HOST, DEFAULT_DEBUG_PORT
+from .config import DEFAULT_DEBUG_HOST, DEFAULT_DEBUG_PORT, TAB_URL_ENV
 
 logger = logging.getLogger(__name__)
 
@@ -366,8 +367,11 @@ async def connect_browser(
         ) from e
 
 
-async def get_active_tab(browser: BrowserClient | None = None) -> Tab:
-    """Get the active/main tab from a browser.
+async def get_active_tab(
+    browser: BrowserClient | None = None,
+    url_contains: str | None = None,
+) -> Tab:
+    """Get the tab to act on.
 
     When `browser` is omitted, auto-connects via `connect_browser()`
     (which itself auto-detects a workspace Chrome port). Lets Python
@@ -375,11 +379,32 @@ async def get_active_tab(browser: BrowserClient | None = None) -> Tab:
     get_active_tab(browser)` into a single `tab = await
     get_active_tab()` when they don't need to hold the browser handle.
 
+    **There is no "active tab" in CDP.** Nothing in the protocol reports which
+    window has focus, so with more than one page target the choice is a guess:
+    the first one whose URL isn't `about:*`, in whatever order the browser
+    listed them. On a plain Chrome with one tab that guess is always right. On a
+    browser with several page targets — an Electron app with background or
+    hidden windows, a Chrome with many tabs — it can land anywhere, and every
+    tool in this library then silently acts on the wrong page.
+
+    `url_contains` replaces the guess with a statement. Give it a substring of
+    the URL you mean (`":5173"`, `"/checkout"`) and the tab is chosen, not
+    inferred. Set `AI_DEV_BROWSER_TAB_URL` to apply it to every call in a
+    process without threading the argument through, and every CLI tool takes
+    `--tab-url` for the same reason.
+
     Args:
         browser: BrowserClient instance. None → auto-connect.
+        url_contains: Substring the target tab's URL must contain. Falls back to
+            `$AI_DEV_BROWSER_TAB_URL`. When it matches nothing, that's an error
+            rather than a silent fall-through to the guess — you asked for a
+            specific tab, so acting on a different one is never what you wanted.
 
     Returns:
-        Active tab, or creates a blank one if none exists.
+        The selected tab, or a fresh blank one if the browser has no page target.
+
+    Raises:
+        ValueError: `url_contains` was given and no page target matched.
     """
     if browser is None:
         browser = await connect_browser()
@@ -388,8 +413,21 @@ async def get_active_tab(browser: BrowserClient | None = None) -> Tab:
         t for t in browser.targets if getattr(t._target, "type_", "") == "page"
     ]
 
+    def _url(tab: Tab) -> str:
+        return getattr(tab._target, "url", "") or ""
+
+    wanted = url_contains or os.environ.get(TAB_URL_ENV) or ""
+    if wanted:
+        for tab in page_targets:
+            if wanted in _url(tab):
+                return tab
+        raise ValueError(
+            f"No tab whose URL contains {wanted!r}. Open page targets: "
+            f"{[_url(t) for t in page_targets] or 'none'}"
+        )
+
     for tab in page_targets:
-        url = getattr(tab._target, "url", "") or ""
+        url = _url(tab)
         if url and not url.startswith("about:"):
             return tab
 

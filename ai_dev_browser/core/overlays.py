@@ -70,10 +70,12 @@ async def _dismiss_overlays(
 
     selector_string = ", ".join(all_selectors)
 
-    # Step 1: Click on visible backdrop/overlay elements
+    # Step 1: Click on visible backdrop/overlay elements.
+    # IIFE, not a bare function literal — `() => {...}` merely *evaluates to*
+    # a function; it never runs, so the whole step was silently a no-op.
     try:
         clicked = await tab.evaluate(
-            f"""() => {{
+            f"""(() => {{
             const backdrops = document.querySelectorAll('{selector_string}');
             for (const backdrop of backdrops) {{
                 // Check if element is visible (has layout)
@@ -88,7 +90,7 @@ async def _dismiss_overlays(
                 }}
             }}
             return false;
-        }}"""
+        }})()"""
         )
         if clicked:
             logger.debug("Clicked backdrop overlay")
@@ -131,7 +133,7 @@ async def _dismiss_overlays(
             logger.debug(f"CDP Escape failed ({e}), trying JS fallback")
             try:
                 await tab.evaluate(
-                    """() => {
+                    """(() => {
                     document.dispatchEvent(new KeyboardEvent('keydown', {
                         key: 'Escape',
                         code: 'Escape',
@@ -139,7 +141,7 @@ async def _dismiss_overlays(
                         which: 27,
                         bubbles: true
                     }));
-                }"""
+                })()"""
                 )
                 await asyncio.sleep(delay)
             except Exception as e2:

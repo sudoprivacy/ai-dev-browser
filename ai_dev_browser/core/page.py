@@ -1,32 +1,15 @@
 """Page information operations."""
 
+import asyncio
 import base64
 import datetime
 import json
-import os
 import re
 from pathlib import Path
 
 from ._tab import Tab
-from .config import DEFAULT_OUTPUT_DIR
-
-
-# Env var for consumers (sudowork, etc.) to inject a persistent output directory
-# so LLMs don't have to learn host-specific scratch/persistent conventions.
-# When unset, falls back to DEFAULT_OUTPUT_DIR (./output/).
-_OUTPUT_DIR_ENV = "AI_DEV_BROWSER_OUTPUT_DIR"
-
-
-def _resolve_output_dir() -> Path:
-    """Resolve the default output directory.
-
-    Order: AI_DEV_BROWSER_OUTPUT_DIR env var (consumer-injected persistent
-    path) → DEFAULT_OUTPUT_DIR (./output/ relative to cwd).
-    """
-    env_dir = os.environ.get(_OUTPUT_DIR_ENV)
-    if env_dir:
-        return Path(env_dir).expanduser()
-    return DEFAULT_OUTPUT_DIR
+from .config import resolve_output_dir
+from .errors import JsEvaluationError
 
 
 # Optional PIL for image resizing
@@ -85,6 +68,11 @@ async def js_evaluate(tab: Tab, expression: str) -> dict:
             // multi-line JS here, no shell escaping
         ''')
 
+    A page-side `throw` **fails this call** — it does not come back as data.
+    That makes the expression usable directly as an assertion:
+
+        js_evaluate(tab, "if (count !== 3) throw new Error('want 3, got ' + count)")
+
     Args:
         tab: Tab instance
         expression: JavaScript code to execute. Result of last expression
@@ -95,14 +83,25 @@ async def js_evaluate(tab: Tab, expression: str) -> dict:
         dict with:
 
           - `result`: the expression's evaluated value (may be `None` if
-            the expression is a void side-effect like `.click()`)
+            the expression is a void side-effect like `.click()`).
+            Objects and arrays arrive as plain dicts / lists. A value with
+            no Python representation (DOM node, function, pending promise)
+            arrives as `{"__js_type__": ..., "hint": ...}` telling you what
+            it was and how to ask for it properly — ignore it if you only
+            wanted the side effect.
           - `console`: list of `{level, text}` entries emitted during
             the eval, if any (only present when non-empty)
           - `url_before` / `url_after` / `title_after` / `navigated`:
             top-level navigation observables, same shape as
             `click_by_*`. `navigated=True` iff URL changed.
-          - `error`: `{message, description, stack}` if the expression
-            threw; absent on success.
+
+    Failure:
+        The expression threw. The error text carries the JS message, the JS
+        stack, the expression, and any console output emitted before the throw
+        — read it rather than re-running with added logging. A SyntaxError
+        naming `return` means you wrote a bare `return` at top level, which is
+        illegal outside a function: drop it (the last expression is the result)
+        or wrap the body in an IIFE `(() => { ... })()`.
 
     Example:
         # Read — result field carries the answer
@@ -117,6 +116,9 @@ async def js_evaluate(tab: Tab, expression: str) -> dict:
         # Debugging — console lines captured
         await js_evaluate(tab, "console.log('x=', x); x + 1")
         # → {"result": 2, "console": [{"level": "log", "text": "x= 1"}], ...}
+
+        # Assertion — a throw raises JsEvaluationError, it is never a result
+        await js_evaluate(tab, "if (!document.querySelector('#ok')) throw new Error('no #ok')")
     """
     from ai_dev_browser.cdp import runtime
 
@@ -151,54 +153,27 @@ async def js_evaluate(tab: Tab, expression: str) -> dict:
     await tab.send(runtime.enable())
     tab.add_handler(runtime.ConsoleAPICalled, on_console)
 
-    result_value: object = None
-    error_info: dict | None = None
     try:
-        raw = await tab.evaluate(expression)
-    except Exception as e:
-        error_info = {"message": str(e)}
-    else:
-        # tab.evaluate returns ExceptionDetails on eval-time exceptions
-        # (not a Python raise), see _tab.py::evaluate.
-        if isinstance(raw, runtime.ExceptionDetails):
-            exc = getattr(raw, "exception", None)
-            stack = getattr(raw, "stack_trace", None)
-            error_info = {
-                "message": getattr(raw, "text", "") or "",
-                "description": getattr(exc, "description", None) if exc else None,
-                "stack": [
-                    {
-                        "function": f.function_name,
-                        "url": f.url,
-                        "line": f.line_number,
-                        "column": f.column_number,
-                    }
-                    for f in (stack.call_frames if stack else [])
-                ]
-                if stack
-                else None,
-            }
-        else:
-            try:
-                json.dumps(raw)
-                result_value = raw
-            except (TypeError, ValueError):
-                result_value = str(raw)
+        result_value = await tab.evaluate(expression)
+    except JsEvaluationError as e:
+        # Console lines emitted before the throw are the trail of how the page
+        # reached the failing state. They belong with the failure, not in a
+        # success dict the caller never reads.
+        e.console = console_msgs
+        raise
+    finally:
+        tab.remove_handler(runtime.ConsoleAPICalled, on_console)
 
     # Give any navigation triggered by the eval a moment to commit,
     # mirroring click_by_*'s _POST_CLICK_NAV_DELAY so URL snapshots
     # reflect the post-action state.
-    import asyncio as _asyncio
-
-    await _asyncio.sleep(_POST_CLICK_NAV_DELAY)
+    await asyncio.sleep(_POST_CLICK_NAV_DELAY)
 
     try:
         after = await _capture_page_state(tab)
     except Exception:
         # Context destroyed mid-read (full-page nav) — we know URL changed
         after = {"url": None, "title": None}
-
-    tab.remove_handler(runtime.ConsoleAPICalled, on_console)
 
     url_before = before.get("url", "") if isinstance(before, dict) else ""
     url_after = after.get("url") if isinstance(after, dict) else None
@@ -214,8 +189,6 @@ async def js_evaluate(tab: Tab, expression: str) -> dict:
     }
     if console_msgs:
         out["console"] = console_msgs
-    if error_info is not None:
-        out["error"] = error_info
     return out
 
 
@@ -242,9 +215,7 @@ async def page_screenshot(
         tab: Tab instance
         path: Path to save page_screenshot. When omitted, defaults to
               `$AI_DEV_BROWSER_OUTPUT_DIR/{timestamp}.png` if the env var
-              is set (consumers like sudowork use this to inject a
-              persistent output directory), otherwise
-              `./screenshots/{timestamp}.png` relative to cwd.
+              is set, otherwise `./output/{timestamp}.png` relative to cwd.
         full_page: If True, capture full page (not just viewport)
         css_scale: If True (default), resize page_screenshot so pixel coordinates
                    match CSS/click coordinates. Handles both DPR>1 (Retina)
@@ -285,17 +256,16 @@ async def page_screenshot(
         text chunk for .png, EXIF UserComment for .jpg).
     """
     if path is None:
-        out_dir = _resolve_output_dir()
+        out_dir = resolve_output_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         path = str(out_dir / f"{ts}.png")
 
     # Get viewport info and device pixel ratio for coordinate mapping
-    viewport_info = await tab.evaluate(
-        "JSON.stringify({width: window.innerWidth, height: window.innerHeight, "
+    vp = await tab.evaluate(
+        "({width: window.innerWidth, height: window.innerHeight, "
         "devicePixelRatio: window.devicePixelRatio})"
     )
-    vp = json.loads(viewport_info)
     dpr = vp["devicePixelRatio"]
 
     await tab.save_screenshot(path, full_page=full_page)
@@ -542,7 +512,7 @@ async def page_pdf(
     from ai_dev_browser.cdp import page as cdp_page
 
     if path is None:
-        out_dir = _resolve_output_dir()
+        out_dir = resolve_output_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         path = str(out_dir / f"{ts}.pdf")

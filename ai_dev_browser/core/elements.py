@@ -8,6 +8,7 @@ import time
 from . import human
 from ._element import Element
 from ._tab import Tab
+from .ax import click_by_ref, get_element_by_ref
 from .snapshot import _get_snapshot
 from .text_match import _best_match
 
@@ -19,31 +20,84 @@ from .text_match import _best_match
 _POST_CLICK_NAV_DELAY = 0.3
 
 
-async def _json_evaluate(tab: Tab, expression: str) -> dict:
-    """Evaluate JS that returns a JSON-serializable value and parse it Python-side.
-
-    Why: Tab.evaluate passes serialization_options=deep to CDP alongside
-    return_by_value, and the deep-serialized shape is `[[key, typed_value], ...]`
-    which isn't a plain Python dict. JSON.stringify round-tripping is the most
-    reliable way to get a plain dict out.
-    """
-    raw = await tab.evaluate(f"JSON.stringify(({expression}))")
-    if not isinstance(raw, str):
-        return {}
-    try:
-        return json.loads(raw)
-    except (TypeError, json.JSONDecodeError):
-        return {}
-
-
 async def _capture_page_state(tab: Tab) -> dict:
-    """Read current top-level URL + title as a JSON dict.
+    """Read current top-level URL + title as a dict.
 
     Used before and after actions to report navigation feedback.
     """
-    return await _json_evaluate(
-        tab, "{url: window.location.href, title: document.title}"
-    )
+    return await tab.evaluate("({url: window.location.href, title: document.title})")
+
+
+# Poll interval while waiting for text to appear in the accessibility tree.
+_AX_POLL_INTERVAL = 0.3
+
+
+async def _ax_by_text(
+    tab: Tab,
+    text: str,
+    interactable_only: bool = False,
+) -> dict | None:
+    """Locate an element by its *accessible name*. One shot, no waiting.
+
+    The single answer to "where is the element labelled X", shared by every
+    `*_by_text` tool so they cannot disagree with each other.
+
+    Two tiers inside the accessibility tree: interactable elements (button /
+    link / textbox) win, and only when none match does it fall back to
+    non-interactable nodes. That fallback matters because Chrome reports a bare
+    `<div onclick="...">` as StaticText — a real click target the strict tier
+    would hide. Pass `interactable_only=True` to assert a genuine
+    button/link/input carries the text.
+
+    Why the AX tree and not `DOM.performSearch`: the accessible name is what a
+    reader actually sees. It composes across element boundaries — Chrome reads
+    `<button><Icon/><span>Sudo</span> <span>Code</span></button>` as the single
+    name "Sudo Code", where a text-node search finds no node containing that
+    string and returns nothing. It also spans same-origin iframes, and it
+    resolves `<label for=x>` onto the input it labels, so typing by label lands
+    in the field rather than on the label.
+
+    Returns the element dict from `page_discover` (`ref`, `role`, `name`,
+    `x`, `y`), or None.
+    """
+    from .snapshot import page_discover
+
+    elements = await page_discover(tab, text=text, interactable_only=True)
+    if elements:
+        return _best_named(text, elements)
+    if interactable_only:
+        return None
+    elements = await page_discover(tab, text=text, interactable_only=False)
+    return _best_named(text, elements) if elements else None
+
+
+def _best_named(query: str, candidates: list[dict]) -> dict:
+    """Pick the candidate whose accessible name best matches `query`.
+
+    `page_discover`'s text filter is a case-insensitive *substring* test and it
+    yields matches in tree order, so a page with
+    `<input placeholder="Search products…">` above `<button>Search</button>`
+    hands back the input first for the query "Search". Taking the first hit
+    would click the box instead of the button. Score instead, so an exact name
+    beats a longer one that merely contains the query.
+    """
+    names = [c.get("name") or "" for c in candidates]
+    best = _best_match(query, names)
+    return candidates[best.index] if best else candidates[0]
+
+
+async def _wait_ax_by_text(tab: Tab, text: str, timeout: float) -> dict | None:
+    """`_ax_by_text`, retried until `timeout` — for the act-on-text tools,
+    whose `timeout` promises to wait out an async render."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while True:
+        hit = await _ax_by_text(tab, text)
+        if hit:
+            return hit
+        if loop.time() >= deadline:
+            return None
+        await asyncio.sleep(_AX_POLL_INTERVAL)
 
 
 async def _with_nav_feedback(tab: Tab, action_result: dict) -> dict:
@@ -463,39 +517,44 @@ async def click_by_text(
     human_like: bool = True,
 ) -> dict:
     """Use when: you know the element's visible text (button label, link
-    anchor, menu item) AND the target is in the top frame. Atomic
-    locate+click with fuzzy matching.
+    anchor, menu item). Atomic locate+click, and it locates the same way
+    `find_by_text` does — if `find_by_text` can see it, this can click it.
 
-    Returns `{clicked, url_before, url_after, title_after, navigated}` —
+    Returns `{clicked, ref, url_before, url_after, title_after, navigated}` —
     **don't** screenshot after the click just to see if it worked,
     `navigated` + `url_after` already tell you. Only screenshot when you
     need to inspect visual state the return values can't express
     (form-validation error rendering, captcha pixels for OCR, final
     result view for the user).
 
-    Prefer when text is unique / unambiguous and top-frame. For elements
-    you already identified via `page_discover`, use `click_by_ref`.
+    Matches on the element's *accessible name*, so it handles the two cases a
+    raw text search misses: a label split across children
+    (`<button><Icon/><span>Sudo</span> <span>Code</span></button>` reads as
+    "Sudo Code"), and text inside same-origin iframes. A `<div onclick>` nav
+    item works too — Chrome reports it as StaticText, and this clicks it anyway.
+
+    Prefer when text is unique / unambiguous. For elements you already
+    identified via `page_discover`, use `click_by_ref`.
 
     Args:
         tab: Tab instance
         text: Text content of the element to click
-        timeout: Search timeout in seconds
-        human_like: Use CDP events (default True, recommended)
+        timeout: How long to wait for the text to appear, in seconds
+        human_like: Use the human-like actuator (default True, recommended)
 
     Returns:
-        dict with clicked, text, url_before, url_after, title_after, navigated.
-        `navigated=True` means the top-level URL changed after the click
-        (SPA route change or full page load).
+        dict with clicked, text, ref, url_before, url_after, title_after,
+        navigated. `navigated=True` means the top-level URL changed after the
+        click (SPA route change or full page load).
 
     Failure:
-        Not found in the top frame. This tool uses CDP
-        `DOM.performSearch` on the main document only — it won't find
-        text inside iframes (nav menus in `<iframe>`, embedded
-        widgets). Try `find_by_text` → `click_by_ref` (scans
-        same-origin iframes and falls back to non-interactable AX
-        nodes like `<div onclick>`), or `click_by_xpath` /
-        `click_by_html_id` which recurse through `window.frames`
-        natively.
+        No element with this accessible name, in the main frame or any
+        same-origin iframe, within `timeout`. Check spelling / case (matching is
+        case-insensitive substring); try a shorter substring; raise `timeout` if
+        the page renders late. Or switch locator — `click_by_html_id` /
+        `click_by_xpath` when a DOM-level locator is known, or `page_discover`
+        for a survey of what is actually on the page. Cross-origin iframes are
+        not scanned.
 
     Example:
         click_by_text("登录")
@@ -503,13 +562,27 @@ async def click_by_text(
         click_by_text("Submit", timeout=5)
     """
     url_before_state = await _capture_page_state(tab)
-    result = await _click(tab, text=text, timeout=timeout, human_like=human_like)
+
+    # Tier 1 — accessible name, the locator `find_by_text` uses. Shared on
+    # purpose: two sibling tools that both claim to find "the element labelled
+    # X" must never return different answers.
+    located = await _wait_ax_by_text(tab, text, timeout)
+    if located:
+        result = await click_by_ref(tab, located["ref"], human_like=human_like)
+        result["text"] = text
+        return result
+
+    # Tier 2 — DOM text-node search. Reached only when the AX tree has nothing,
+    # and kept because it can still match what the tree never exposes: text
+    # living in an attribute, and nodes Chrome omits from the tree. Its limits
+    # (single text node, top frame only) are exactly why it is not tier 1.
+    clicked = await _click(tab, text=text, timeout=0, human_like=human_like)
     action = {
-        "clicked": result,
+        "clicked": clicked,
         "text": text,
         "url_before": url_before_state.get("url", ""),
     }
-    if not result:
+    if not clicked:
         action.update(
             {"navigated": False, "url_after": action["url_before"], "title_after": ""}
         )
@@ -572,30 +645,10 @@ async def find_by_text(
         survey of what's on the page, run `page_discover` without a
         text filter. Cross-origin iframes are not scanned.
     """
-    from .snapshot import page_discover
-
-    # Tier 1: prefer interactable matches — covers button/link/input
-    # cases including label-for-input (Chrome resolves <label for=...>
-    # into the input's accessible name, so a `<label>Username</label>
-    # <input id=user>` match on "Username" returns the input, not the
-    # label).
-    elements = await page_discover(tab, text=text, interactable_only=True)
-    if elements:
-        return {"found": True, **elements[0]}
-
-    if interactable_only:
+    hit = await _ax_by_text(tab, text, interactable_only=interactable_only)
+    if hit is None:
         return {"found": False, "text": text}
-
-    # Tier 2: fall back to non-interactable nodes. Chrome's AX tree
-    # gives `<div onclick="...">` role=StaticText (onclick isn't an AX
-    # interactable signal), so strict filtering would hide real click
-    # targets. `click_by_ref` on a StaticText ref fires the onclick
-    # handler because it dispatches a CDP mouse event to the node's
-    # backend_node_id — role isn't checked at click time.
-    elements = await page_discover(tab, text=text, interactable_only=False)
-    if not elements:
-        return {"found": False, "text": text}
-    return {"found": True, **elements[0]}
+    return {"found": True, **hit}
 
 
 async def type_by_text(
@@ -625,19 +678,31 @@ async def type_by_text(
         dict with typed status
 
     Failure:
-        Input with this accessible name not found in the top frame.
-        For iframe-embedded inputs, use `find_by_text` (AX-tree scan,
-        iframe-aware) to get a ref, then `type_by_ref`. If the input
-        lacks an accessible name, locate by html id with
-        `find_by_html_id` → `type_by_ref`.
+        No input with this accessible name, in the main frame or any same-origin
+        iframe, within `timeout`. If the input has no accessible name at all
+        (no label, no placeholder, no aria-label), locate it by html id or xpath
+        instead: `find_by_html_id` / `find_by_xpath` → `type_by_ref`.
+        Cross-origin iframes are not scanned.
 
     Example:
         type_by_text(name="用户名", text="myusername")
         type_by_text(name="Search", text="query", clear=True)
     """
-    result = await _find_element(tab, text=name, timeout=timeout)
-    element = result.get("element")
+    # Locator only — same accessible-name lookup as click_by_text / find_by_text.
+    # Locating by AX name is what this tool has always *claimed* to do; it was
+    # running a DOM text-node search, so a `<label for=email>Email</label>` match
+    # landed on the label instead of the input it labels.
+    #
+    # The typing actuator below is deliberately left alone. Unlike clicking —
+    # where the ref path could simply adopt the box-based actuator the text path
+    # already used — `type_by_ref` types with `Input.insertText` while this types
+    # per-character `char` events. Those produce different DOM event streams, so
+    # routing one through the other would silently change which pages work.
+    located = await _wait_ax_by_text(tab, name, timeout)
+    if located is None:
+        return {"typed": False, "error": f"Element with name '{name}' not found"}
 
+    element = await get_element_by_ref(tab, located["ref"])
     if element is None:
         return {"typed": False, "error": f"Element with name '{name}' not found"}
 
@@ -653,7 +718,7 @@ async def type_by_text(
     else:
         await element.send_keys(text)
 
-    return {"typed": True, "name": name}
+    return {"typed": True, "name": name, "ref": located["ref"]}
 
 
 # ---------------------------------------------------------------------------
@@ -877,7 +942,7 @@ async def find_by_html_id(tab: Tab, html_id: str) -> dict:
       return __elementInfo(search(window));
     })(%s)
     """ % (_ELEMENT_INFO_INLINE, json.dumps(html_id))
-    return await _json_evaluate(tab, expr)
+    return await tab.evaluate(expr)
 
 
 async def click_by_html_id(tab: Tab, html_id: str) -> dict:
@@ -936,7 +1001,7 @@ async def click_by_html_id(tab: Tab, html_id: str) -> dict:
       }
     })(%s)
     """ % json.dumps(html_id)
-    click = await _json_evaluate(tab, expr)
+    click = await tab.evaluate(expr)
     action = {
         "clicked": bool(click.get("clicked")),
         "html_id": html_id,
@@ -1001,7 +1066,7 @@ async def find_by_xpath(tab: Tab, xpath: str) -> dict:
       return __elementInfo(recurse(window));
     })(%s)
     """ % (_ELEMENT_INFO_INLINE, json.dumps(xpath))
-    return await _json_evaluate(tab, expr)
+    return await tab.evaluate(expr)
 
 
 async def click_by_xpath(tab: Tab, xpath: str) -> dict:
@@ -1064,7 +1129,7 @@ async def click_by_xpath(tab: Tab, xpath: str) -> dict:
       }
     })(%s)
     """ % json.dumps(xpath)
-    click = await _json_evaluate(tab, expr)
+    click = await tab.evaluate(expr)
     action = {
         "clicked": bool(click.get("clicked")),
         "xpath": xpath,

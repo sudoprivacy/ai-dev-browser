@@ -53,7 +53,11 @@ where = ["."]
 include = ["ai_dev_browser*"]
 
 [tool.ruff]
-extend-exclude = ["ai_dev_browser/cdp"]  # Vendored auto-generated CDP module
+# Both copies of the vendored CDP protocol module: the generated one inside the
+# package, and the submodule it is generated from. Without `vendor`, the
+# `ruff format .` in CONTRIBUTING rewrites the submodule's working tree — which
+# is not ours to reformat.
+extend-exclude = ["ai_dev_browser/cdp", "vendor"]
 
 [tool.mypy]
 exclude = ["ai_dev_browser/cdp"]

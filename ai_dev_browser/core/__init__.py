@@ -110,6 +110,10 @@ from .process import get_pid_on_port
 # Text matching (only the dataclass is public)
 from .text_match import MatchResult
 
+# Errors — exported so callers catch page-side JS failures by type instead of
+# string-matching a message.
+from .errors import JsEvaluationError
+
 # Snapshot (AI-friendly accessibility tree) - only tool-facing function
 from .snapshot import page_discover
 
@@ -186,6 +190,8 @@ __all__ = [
     "click_by_xpath",
     # Text matching
     "MatchResult",
+    # Errors
+    "JsEvaluationError",
     # Snapshot
     "page_discover",
     # Tabs

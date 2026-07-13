@@ -66,7 +66,7 @@ class TestFindAndClickByRef:
 
         # Step 1: Find all elements
         result = await page_discover(tab)
-        elements = result.get("elements", [])
+        elements = result
 
         # Step 2: Locate "Second Button" by name
         second_btn = None
@@ -110,9 +110,7 @@ class TestFindAndClickByRef:
 
         # Find and click "Go to Page 2"
         result = await page_discover(tab)
-        link = next(
-            (el for el in result["elements"] if "Page 2" in el.get("name", "")), None
-        )
+        link = next((el for el in result if "Page 2" in el.get("name", "")), None)
 
         assert link is not None
         await click_by_ref(tab, ref=link["ref"])
@@ -138,11 +136,11 @@ class TestFindAndClickByRef:
 
         # Find all elements
         all_result = await page_discover(tab, interactable_only=False)
-        all_elements = all_result.get("elements", [])
+        all_elements = all_result
 
         # Find interactable only
         interactive_result = await page_discover(tab, interactable_only=True)
-        interactive_elements = interactive_result.get("elements", [])
+        interactive_elements = interactive_result
 
         # Interactable should be subset
         assert len(interactive_elements) < len(all_elements)
@@ -176,7 +174,7 @@ class TestFindAndTypeByRef:
         # Find username input
         result = await page_discover(tab)
         username_input = next(
-            (el for el in result["elements"] if "Username" in el.get("name", "")), None
+            (el for el in result if "Username" in el.get("name", "")), None
         )
 
         assert username_input is not None
@@ -205,7 +203,7 @@ class TestFindAndTypeByRef:
         # Find search input
         result = await page_discover(tab)
         search_input = next(
-            (el for el in result["elements"] if "Search" in el.get("name", "")), None
+            (el for el in result if "Search" in el.get("name", "")), None
         )
 
         assert search_input is not None
@@ -234,9 +232,7 @@ class TestFindAndTypeByRef:
 
         # Find field
         result = await page_discover(tab)
-        field = next(
-            (el for el in result["elements"] if el.get("role") == "textbox"), None
-        )
+        field = next((el for el in result if el.get("role") == "textbox"), None)
 
         assert field is not None
 
@@ -407,7 +403,7 @@ class TestLoginFormWorkflow:
 
         # Step 1: Find all form elements
         result = await page_discover(tab)
-        elements = result.get("elements", [])
+        elements = result
 
         # Step 2: Find email and password inputs by placeholder
         email_input = next(
@@ -493,7 +489,7 @@ class TestMultiStepNavigationWorkflow:
 
         # Step 2: Find all elements
         result = await page_discover(tab)
-        elements = result.get("elements", [])
+        elements = result
 
         # Step 3: Find "Buy Product B" button by name
         product_b_btn = next(
@@ -545,9 +541,7 @@ class TestMultiStepNavigationWorkflow:
 
         # Find new elements
         result = await page_discover(tab)
-        item2 = next(
-            (el for el in result["elements"] if el.get("name") == "Item 2"), None
-        )
+        item2 = next((el for el in result if el.get("name") == "Item 2"), None)
 
         assert item2 is not None, "Should page_discover dynamically loaded Item 2"
 
@@ -594,9 +588,7 @@ class TestMixedApiWorkflow:
 
         # Phase 1: Find input and type by ref
         result = await page_discover(tab)
-        search_input = next(
-            (el for el in result["elements"] if el.get("role") == "textbox"), None
-        )
+        search_input = next((el for el in result if el.get("role") == "textbox"), None)
         assert search_input is not None
         await type_by_ref(tab, ref=search_input["ref"], text="laptop")
         await click_by_text(tab, text="Search")
@@ -605,9 +597,7 @@ class TestMixedApiWorkflow:
 
         # Phase 2: Ref-based result selection
         result = await page_discover(tab)
-        result2 = next(
-            (el for el in result["elements"] if el.get("name") == "Result 2"), None
-        )
+        result2 = next((el for el in result if el.get("name") == "Result 2"), None)
 
         assert result2 is not None
         await click_by_ref(tab, ref=result2["ref"])
@@ -656,7 +646,7 @@ class TestMixedApiWorkflow:
         # Select preference (page_discover + ref - need to pick specific button)
         result = await page_discover(tab)
         weekly_btn = next(
-            (el for el in result["elements"] if el.get("name") == "Weekly Updates"),
+            (el for el in result if el.get("name") == "Weekly Updates"),
             None,
         )
         assert weekly_btn is not None
@@ -695,7 +685,7 @@ class TestTrustedEventsWithNewApis:
         await asyncio.sleep(0.2)
 
         result = await page_discover(tab)
-        btn = next((el for el in result["elements"] if el.get("name") == "Click"), None)
+        btn = next((el for el in result if el.get("name") == "Click"), None)
         await click_by_ref(tab, ref=btn["ref"])
 
         trusted = await tab.evaluate("window.eventTrusted")
@@ -743,9 +733,7 @@ class TestTrustedEventsWithNewApis:
         await asyncio.sleep(0.2)
 
         result = await page_discover(tab)
-        input_el = next(
-            (el for el in result["elements"] if el.get("role") == "textbox"), None
-        )
+        input_el = next((el for el in result if el.get("role") == "textbox"), None)
         await type_by_ref(tab, ref=input_el["ref"], text="test")
 
         trusted = await tab.evaluate("window.inputTrusted")

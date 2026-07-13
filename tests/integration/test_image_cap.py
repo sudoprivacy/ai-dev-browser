@@ -174,7 +174,7 @@ async def test_screenshot_by_ref_honors_image_cap(tab, tmp_path, case_name):
     discover = await page_discover(tab, interactable_only=False)
     # page_discover may return either a list or a dict depending on
     # which API revision is live; tolerate both.
-    nodes = discover if isinstance(discover, list) else discover.get("elements", [])
+    nodes = discover
     h1 = next(
         (n for n in nodes if (n.get("name") or "").strip() == "Cap Fixture"),
         None,
@@ -469,7 +469,7 @@ async def test_screenshot_by_ref_uses_env_when_no_per_call_arg(
 
     monkeypatch.setenv(ENV_MAX_DIMENSION, "300")
     discover = await page_discover(tab, interactable_only=False)
-    nodes = discover if isinstance(discover, list) else discover.get("elements", [])
+    nodes = discover
     h1 = next(
         (n for n in nodes if (n.get("name") or "").strip() == "Cap Fixture"),
         None,

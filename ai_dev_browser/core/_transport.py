@@ -46,6 +46,17 @@ class ProtocolException(Exception):
         return f"{self.message} [code: {self.code}]" if self.code else f"{self.message}"
 
 
+class CommandTimeout(ProtocolException):
+    """A CDP command did not answer within its timeout.
+
+    A distinct type — rather than a string for callers to sniff — so a layer
+    that knows *what* it was running (Tab.evaluate knows the JS expression;
+    the transport only knows the CDP method name) can catch precisely this
+    case and add that context. Subclasses ProtocolException, so existing
+    handlers keep working unchanged.
+    """
+
+
 class Transaction(asyncio.Future):
     """Wraps a CDP generator into a Future that resolves when response arrives.
 
@@ -172,7 +183,7 @@ class CDPConnection:
             self._pending.pop(tx.id, None)
             logger.debug("CDP command timed out (%s), forcing reconnect", tx.method)
             await self._force_reconnect()
-            raise ProtocolException(
+            raise CommandTimeout(
                 f"CDP command timed out after {effective_timeout}s: {tx.method}",
                 method=tx.method,
                 params=tx.params,

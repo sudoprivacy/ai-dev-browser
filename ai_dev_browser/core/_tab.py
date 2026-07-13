@@ -20,7 +20,9 @@ from ai_dev_browser.cdp import (
 )
 
 from ._element import Element, create, filter_recurse
-from ._transport import CDPConnection, ProtocolException
+from ._js import unwrap
+from ._transport import CDPConnection, CommandTimeout, ProtocolException
+from .errors import js_snippet
 
 if typing.TYPE_CHECKING:
     from .connection import BrowserClient
@@ -231,9 +233,11 @@ class Tab:
         *,
         timeout: float | None = None,
     ):
-        """Evaluate JS expression and return Python value.
+        """Evaluate JS expression and return a plain Python value.
 
-        Uses deep serialization for complex return values.
+        Objects and arrays come back as dicts and lists — CDP's
+        deep-serialization envelope is unwrapped here, so callers never see
+        it and never need a `JSON.stringify` round trip.
 
         Args:
             timeout: Per-call CDP timeout (seconds). None = default 30s.
@@ -242,32 +246,47 @@ class Tab:
                 Note: timing out does NOT auto-retry — the JS may still
                 be running server-side, and replay would double-execute
                 any side effects.
+
+        Raises:
+            JsEvaluationError: the expression threw, or produced a value that
+                cannot cross the CDP boundary (DOM node, function, pending
+                promise). A page-side throw is an error, not a return value —
+                returning it would make every caller's result silently
+                type-shift, and the ones that read it as data would pass.
+            CommandTimeout: no answer within `timeout`. The message names the
+                expression, because "which eval hung?" is the whole question
+                in a long test.
         """
         ser = runtime.SerializationOptions(
             serialization="deep",
             max_depth=10,
             additional_parameters={"maxNodeDepth": 10, "includeShadowTree": "all"},
         )
-        remote_object, errors = await self.send(
-            runtime.evaluate(
-                expression=expression,
-                user_gesture=True,
-                await_promise=await_promise,
-                return_by_value=return_by_value,
-                allow_unsafe_eval_blocked_by_csp=True,
-                serialization_options=ser,
-            ),
-            timeout=timeout,
-        )
-        if errors:
-            return errors
-        if remote_object:
-            if return_by_value:
-                if remote_object.value is not None:
-                    return remote_object.value
-            elif remote_object.deep_serialized_value:
-                return remote_object.deep_serialized_value.value
-        return remote_object
+        try:
+            remote_object, errors = await self.send(
+                runtime.evaluate(
+                    expression=expression,
+                    user_gesture=True,
+                    await_promise=await_promise,
+                    return_by_value=return_by_value,
+                    allow_unsafe_eval_blocked_by_csp=True,
+                    serialization_options=ser,
+                ),
+                timeout=timeout,
+            )
+        except CommandTimeout as e:
+            # The transport names the CDP method ("Runtime.evaluate") because
+            # that is all it knows — correctly so. The expression is only in
+            # scope here, so this is the one frame that can name it.
+            # ASCII-only separator: an error message is the one string that
+            # must never itself fail to print on a cp1252 console.
+            raise CommandTimeout(
+                f"{e.message} | expression: {js_snippet(expression)}",
+                method=e.method,
+                params=e.params,
+            ) from None
+
+        return unwrap(remote_object, errors, expression=expression)
 
     # =========================================================================
     # Element finding

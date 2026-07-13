@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
-import re
 import typing
 
 from ai_dev_browser.cdp import dom, input_ as cdp_input, overlay, page, runtime
+
+from ._js import unwrap
 
 if typing.TYPE_CHECKING:
     from ._tab import Tab
@@ -14,42 +15,11 @@ if typing.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def get_element_by_ref(tab: Tab, ref: str) -> "Element":
-    """Resolve a ref string (from page_discover) to an Element object.
-
-    Args:
-        tab: Tab instance
-        ref: Element ref from page_discover (e.g., "5#214" or "FRAME_ABC:5#214")
-
-    Returns:
-        Element instance
-
-    Raises:
-        ValueError: If ref format is invalid or element not found
-    """
-    # Parse ref to extract node_id
-    node_id = None
-    local_ref = ref
-    frame_match = re.match(r"^(FRAME_[^:]+):(.+)$", ref)
-    if frame_match:
-        local_ref = frame_match.group(2)
-    node_match = re.match(r"^(\d+)#(\d+)$", local_ref)
-    if node_match:
-        node_id = int(node_match.group(2))
-
-    if node_id is None:
-        raise ValueError(f"Invalid ref format (no node_id): {ref}")
-
-    backend_node_id = dom.BackendNodeId(node_id)
-    try:
-        node_info = await tab.send(
-            dom.describe_node(backend_node_id=backend_node_id, depth=0)
-        )
-    except Exception as e:
-        raise ValueError(f"Element not found for ref {ref}: {e}") from e
-
-    elem = Element(node_info, tab)
-    return elem
+# `get_element_by_ref` used to live here. It doesn't belong: a `ref` is an
+# accessibility-tree name minted by snapshot.py, and this is the DOM layer that
+# _tab.py sits on — the bottom of the stack has no business knowing the top's
+# naming scheme. It also meant the ref grammar was parsed in two places, here
+# and in ax._parse_ref. It now lives in ax.py, on top of the one parser.
 
 
 # =============================================================================
@@ -200,15 +170,20 @@ class Element:
         return self._remote_object
 
     async def apply(self, js_function: str, return_by_value: bool = True):
-        """Execute JS function on this element.
+        """Execute JS function on this element and return a plain Python value.
 
         Args:
             js_function: JS function that receives this element as parameter.
                          e.g. '(el) => el.value' or 'function(el) { el.click() }'
             return_by_value: If True, return the JS value. If False, return RemoteObject.
+
+        Raises:
+            JsEvaluationError: the function threw. Same contract as
+                `Tab.evaluate` — both run page-side JS, so both report a
+                page-side throw the same way.
         """
         await self._resolve()
-        result = await self._tab.send(
+        remote_object, exception_details = await self._tab.send(
             runtime.call_function_on(
                 js_function,
                 object_id=self._remote_object.object_id,
@@ -219,11 +194,9 @@ class Element:
                 user_gesture=True,
             )
         )
-        if result and result[0]:
-            return result[0].value if return_by_value else result[0]
-        if result and result[1]:
-            return result[1]
-        return None
+        if not return_by_value and exception_details is None:
+            return remote_object
+        return unwrap(remote_object, exception_details, expression=js_function)
 
     async def click(self):
         """Click element via JS el.click()."""

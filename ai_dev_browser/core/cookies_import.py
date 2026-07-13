@@ -444,20 +444,30 @@ def _decrypt_linux(password: str, ciphertext: bytes) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _find_cookie_db(browser: str) -> Path:
+def _find_cookie_db(browser: str, user_data_dir: str | None = None) -> Path:
     """Locate the Cookies SQLite database for the given browser.
 
     Chromium >= 96 (~2021) moved Cookies into a `Network/` subdir of
     the profile (`Profile 1/Network/Cookies`); older versions kept it
     at the profile root (`Profile 1/Cookies`). Try the new location
     first, fall back to the legacy path.
-    """
-    plat = sys.platform
-    if plat.startswith("linux"):
-        plat = "linux"
 
-    paths = _BROWSER_PATHS.get(plat, {}).get(browser, [])
-    for base in paths:
+    `user_data_dir` overrides the platform default search roots with a
+    single explicit Chrome user-data directory — the same thing Chrome's
+    `--user-data-dir` names. Given, only that directory is searched. It
+    exists for portable / non-standard installs, and it is the seam that
+    lets a test point extraction at a synthetic profile instead of the
+    developer's live browser.
+    """
+    if user_data_dir:
+        bases = [user_data_dir]
+    else:
+        plat = sys.platform
+        if plat.startswith("linux"):
+            plat = "linux"
+        bases = _BROWSER_PATHS.get(plat, {}).get(browser, [])
+
+    for base in bases:
         expanded = Path(base).expanduser()
         # Try Default first, then numbered Profiles. The "first hit
         # wins" pick is a known UX limitation when users have multiple
@@ -469,9 +479,39 @@ def _find_cookie_db(browser: str) -> Path:
                     return db
 
     raise FileNotFoundError(
-        f"Could not find {browser} cookie database on {plat}. "
-        f"Searched: {[str(Path(p).expanduser()) for p in paths]}"
+        f"Could not find {browser} cookie database. "
+        f"Searched: {[str(Path(p).expanduser()) for p in bases]}"
     )
+
+
+def _win_user_data_dir(db_path: Path) -> Path:
+    """The Chrome user-data root that holds `Local State`, given a Cookies path.
+
+    Local State lives at the user-data root, not the profile dir. Layouts:
+      Modern (Chromium >= 96):  UserData/Profile/Network/Cookies → parent[3]
+      Legacy:                   UserData/Profile/Cookies         → parent[2]
+    """
+    if db_path.parent.name == "Network":
+        return db_path.parent.parent.parent
+    return db_path.parent.parent
+
+
+def _platform_keys(
+    browser: str, db_path: Path
+) -> tuple[bytes | None, bytes | None, str | None]:
+    """Fetch the platform decryption material: (mac_key, win_key, linux_password).
+
+    Split out and called lazily (see `cookies_extract`) so a domain whose
+    cookies are all plaintext never triggers a Keychain prompt, a DPAPI call, or
+    a libsecret lookup — and never fails on a missing/corrupt `Local State`.
+    """
+    if sys.platform == "darwin":
+        return _get_macos_key(browser), None, None
+    if sys.platform == "win32":
+        return None, _get_windows_key(_win_user_data_dir(db_path)), None
+    if sys.platform.startswith("linux"):
+        return None, None, _get_linux_password(browser)
+    return None, None, None
 
 
 def _decrypt_cookie_value(
@@ -531,6 +571,7 @@ def _decrypt_cookie_value(
 def cookies_extract(
     domain: str,
     browser: str = "chrome",
+    user_data_dir: str | None = None,
 ) -> list[dict[str, Any]]:
     """Use when: you need to inspect what cookies a domain has in the
     user's real browser — without an automation browser. Returns a list
@@ -541,13 +582,19 @@ def cookies_extract(
     using platform-native crypto APIs. No external dependencies required.
 
     A system dialog may appear on macOS asking to authorize Keychain access.
-    This serves as implicit user consent for cookie extraction.
+    This serves as implicit user consent for cookie extraction. The prompt
+    only appears when a cookie for the requested domain is actually
+    encrypted — an all-plaintext domain is read without touching the key.
 
     Args:
         domain: Domain to filter cookies (e.g. ".grok.com", "github.com").
                 Matches with SQL LIKE, so ".grok.com" matches subdomains.
         browser: Browser to read from. One of: "chrome", "chromium",
                  "brave", "edge". Default: "chrome".
+        user_data_dir: Explicit Chrome user-data directory to read from,
+                 the same thing Chrome's `--user-data-dir` names. Defaults
+                 to auto-detecting the platform install location. Set it for
+                 a portable / non-standard install.
 
     Returns:
         List of cookie dicts with keys: name, value, domain, path,
@@ -557,7 +604,7 @@ def cookies_extract(
         FileNotFoundError: If the cookie database cannot be located.
         RuntimeError: If decryption key cannot be obtained.
     """
-    db_path = _find_cookie_db(browser)
+    db_path = _find_cookie_db(browser, user_data_dir)
 
     # Copy the db to a temp file to avoid locking issues
     tmp_dir = tempfile.mkdtemp()
@@ -595,31 +642,18 @@ def cookies_extract(
             except PermissionError:
                 pass
 
-        # Get decryption key
-        mac_key = None
-        win_key = None
-        linux_password = None
+        # Decryption key, fetched lazily and at most once. Key retrieval is
+        # the slow, prompting, failure-prone step (Keychain dialog, DPAPI
+        # syscall, libsecret lookup, a readable Local State), and it is only
+        # needed for cookies whose value is encrypted. A domain served entirely
+        # from plaintext values — or any read where every hit is plaintext —
+        # returns without ever paying for it.
+        key_cache: dict[str, tuple] = {}
 
-        if sys.platform == "darwin":
-            mac_key = _get_macos_key(browser)
-        elif sys.platform == "win32":
-            # Local State lives at the User Data root, not the profile
-            # dir. Layouts:
-            #   Modern  (Chromium >= 96): UserData/Profile/Network/Cookies
-            #                             → user_data_dir = parent[2]
-            #   Legacy:                   UserData/Profile/Cookies
-            #                             → user_data_dir = parent[1]
-            # The previous fix to `_find_cookie_db` added the Network/
-            # subdir but left this lookup at .parent.parent, which on
-            # modern Chrome resolved to the profile dir and broke the
-            # whole pipeline with FileNotFoundError on Local State.
-            if db_path.parent.name == "Network":
-                browser_data_dir = db_path.parent.parent.parent
-            else:
-                browser_data_dir = db_path.parent.parent
-            win_key = _get_windows_key(browser_data_dir)
-        elif sys.platform.startswith("linux"):
-            linux_password = _get_linux_password(browser)
+        def _keys() -> tuple[bytes | None, bytes | None, str | None]:
+            if "v" not in key_cache:
+                key_cache["v"] = _platform_keys(browser, db_path)
+            return key_cache["v"]
 
         # Query cookies. text_factory=bytes prevents sqlite3 from
         # attempting UTF-8 decode on BLOB columns (encrypted_value).
@@ -649,6 +683,7 @@ def cookies_extract(
                 if plaintext:
                     value = plaintext
                 elif encrypted:
+                    mac_key, win_key, linux_password = _keys()
                     value = _decrypt_cookie_value(
                         encrypted,
                         mac_key=mac_key,
@@ -721,6 +756,7 @@ async def cookies_import(
     tab: Tab,
     domain: str,
     browser: str = "chrome",
+    user_data_dir: str | None = None,
 ) -> dict:
     """Use when: Cloudflare/Akamai blocks the automation browser — import
     auth cookies from the user's daily-driver browser to bypass.
@@ -738,12 +774,15 @@ async def cookies_import(
         domain: Domain to import cookies for (e.g. ".grok.com")
         browser: Source browser. One of: "chrome", "chromium", "brave",
                  "edge". Default: "chrome".
+        user_data_dir: Explicit Chrome user-data directory to read from.
+                 Forwarded to `cookies_extract`; defaults to auto-detecting
+                 the platform install location.
 
     Returns:
         dict with keys: imported (int), domain, browser, cookies (list
         of name/domain pairs for confirmation).
     """
-    cookies = cookies_extract(domain, browser)
+    cookies = cookies_extract(domain, browser, user_data_dir=user_data_dir)
 
     if not cookies:
         return {

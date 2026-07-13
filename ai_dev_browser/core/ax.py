@@ -1,47 +1,51 @@
 """Accessibility tree operations for element interaction."""
 
 import asyncio
-import contextlib
-import re
 
 from ai_dev_browser.cdp import dom
 from ai_dev_browser.cdp import input_ as cdp_input
 from ai_dev_browser.cdp import page
 
+from . import human
+from ._element import Element
+from ._ref import node_id_of, parse_ref
 from ._tab import Tab
 
 from .snapshot import _get_snapshot
 
 
-def _parse_ref(ref: str) -> tuple[str | None, str, int | None]:
-    """Parse ref to extract frame prefix, local ref, and embedded node_id.
+async def get_element_by_ref(tab: Tab, ref: str) -> Element:
+    """Resolve a `ref` from `page_discover` into a DOM Element.
 
-    Ref format: "index#nodeId" or "FRAME_xxx:index#nodeId"
-    Examples:
-        "9#214" -> (None, "9", 214)
-        "FRAME_ABC123:9#214" -> ("FRAME_ABC123", "9", 214)
-        "9" -> (None, "9", None)  # legacy format without node_id
+    The bridge between the two ways this library names an element: the
+    accessibility tree's `ref` and the DOM's `Element`. It belongs in the ref
+    layer, not the DOM layer — it used to live in `_element.py`, which put
+    knowledge of an AX-tree naming scheme at the bottom of the DOM stack and
+    re-implemented the ref grammar to do it. The grammar now lives once, in
+    `_ref.py`.
+
+    Args:
+        tab: Tab instance
+        ref: Element ref from page_discover (e.g., "5#214" or "FRAME_ABC:5#214")
 
     Returns:
-        (frame_id_prefix, local_ref, node_id)
+        Element instance
+
+    Raises:
+        ValueError: If ref carries no node_id, or the node is gone.
     """
-    frame_prefix = None
-    local_ref = ref
-    node_id = None
+    _, _, node_id = parse_ref(ref)
+    if node_id is None:
+        raise ValueError(f"Invalid ref format (no node_id): {ref}")
 
-    # Check for frame prefix
-    frame_match = re.match(r"^(FRAME_[^:]+):(.+)$", ref)
-    if frame_match:
-        frame_prefix = frame_match.group(1)
-        local_ref = frame_match.group(2)
+    try:
+        node_info = await tab.send(
+            dom.describe_node(backend_node_id=dom.BackendNodeId(node_id), depth=0)
+        )
+    except Exception as e:
+        raise ValueError(f"Element not found for ref {ref}: {e}") from e
 
-    # Check for embedded node_id
-    node_match = re.match(r"^(\d+)#(\d+)$", local_ref)
-    if node_match:
-        local_ref = node_match.group(1)
-        node_id = int(node_match.group(2))
-
-    return frame_prefix, local_ref, node_id
+    return Element(node_info, tab)
 
 
 async def _get_frame_id_by_prefix(tab: Tab, prefix: str) -> str | None:
@@ -68,12 +72,17 @@ async def _get_frame_id_by_prefix(tab: Tab, prefix: str) -> str | None:
 async def _click_by_node_id(
     tab: Tab,
     node_id: int,
+    human_like: bool = True,
 ) -> dict:
     """Click element by backend node ID via CDP.
 
     Args:
         tab: Tab instance
         node_id: Backend DOM node ID
+        human_like: Route through the shared human-like actuator (gaussian
+            approach path + in-bounds random offset). Same default and same
+            meaning as `click_by_text`'s `human_like` — an element is named
+            differently by each `*_by_*` tool, but clicked the same way.
 
     Returns:
         dict with clicked status
@@ -92,25 +101,27 @@ async def _click_by_node_id(
         x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4
         y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4
 
-        # Dispatch mouse events
-        await tab.send(
-            cdp_input.dispatch_mouse_event(
-                type_="mousePressed",
-                x=x,
-                y=y,
-                button=cdp_input.MouseButton.LEFT,
-                click_count=1,
+        if human_like:
+            await human.click_box(tab, (x, y), box.width, box.height)
+        else:
+            await tab.send(
+                cdp_input.dispatch_mouse_event(
+                    type_="mousePressed",
+                    x=x,
+                    y=y,
+                    button=cdp_input.MouseButton.LEFT,
+                    click_count=1,
+                )
             )
-        )
-        await tab.send(
-            cdp_input.dispatch_mouse_event(
-                type_="mouseReleased",
-                x=x,
-                y=y,
-                button=cdp_input.MouseButton.LEFT,
-                click_count=1,
+            await tab.send(
+                cdp_input.dispatch_mouse_event(
+                    type_="mouseReleased",
+                    x=x,
+                    y=y,
+                    button=cdp_input.MouseButton.LEFT,
+                    click_count=1,
+                )
             )
-        )
         return {"clicked": True, "node_id": node_id}
     except Exception as e:
         return {"clicked": False, "error": str(e)}
@@ -173,6 +184,7 @@ async def _click_ax_element(
     wait_for_name: str | None = None,
     wait_timeout: float = 5.0,
     wait_interval: float = 0.3,
+    human_like: bool = True,
 ) -> dict:
     """Click element by accessibility tree ref or node_id.
 
@@ -199,7 +211,7 @@ async def _click_ax_element(
 
     # If node_id provided directly, use it (stable, no re-fetch)
     if node_id is not None:
-        result = await _click_by_node_id(tab, node_id)
+        result = await _click_by_node_id(tab, node_id, human_like=human_like)
         if result.get("clicked") and (wait_for_role or wait_for_name):
             waited = await _wait_for_ax_element(
                 tab, wait_for_role, wait_for_name, wait_timeout, wait_interval
@@ -211,11 +223,11 @@ async def _click_ax_element(
         return result
 
     # Parse ref to extract frame prefix, local ref, and embedded node_id
-    frame_prefix, local_ref, embedded_node_id = _parse_ref(ref)
+    frame_prefix, local_ref, embedded_node_id = parse_ref(ref)
 
     # If ref contains embedded node_id, use it directly (most reliable)
     if embedded_node_id is not None:
-        result = await _click_by_node_id(tab, embedded_node_id)
+        result = await _click_by_node_id(tab, embedded_node_id, human_like=human_like)
         if result.get("clicked"):
             result["ref"] = ref
             if wait_for_role or wait_for_name:
@@ -239,12 +251,12 @@ async def _click_ax_element(
     # Get accessibility tree for the appropriate frame
     elements = await _get_snapshot(tab, frame_id=frame_id)
 
-    # Find element by local ref (without frame prefix or node_id suffix)
+    # Find element by local ref (without frame prefix or node_id suffix).
+    # The caller's ref may be a bare "9" while a freshly-taken snapshot mints
+    # "9#214", so compare on the index part.
     target = None
     for el in elements:
-        # Match by index part only (el.ref might be "9#214", we want to match "9")
-        el_ref = el.get("ref", "")
-        el_index = el_ref.split("#")[0] if "#" in el_ref else el_ref
+        _, el_index, _ = parse_ref(el.get("ref", ""))
         if el_index == local_ref:
             target = el
             break
@@ -252,18 +264,12 @@ async def _click_ax_element(
     if not target:
         return {"error": f"Element with ref '{ref}' not found"}
 
-    # Extract node_id from target's ref
-    target_ref = target.get("ref", "")
-    target_node_id = None
-    if "#" in target_ref:
-        with contextlib.suppress(ValueError):
-            target_node_id = int(target_ref.split("#")[1])
-
+    target_node_id = node_id_of(target.get("ref", ""))
     if not target_node_id:
         return {"error": f"Element ref '{ref}' has no nodeId"}
 
     # Click the element
-    result = await _click_by_node_id(tab, target_node_id)
+    result = await _click_by_node_id(tab, target_node_id, human_like=human_like)
     if result.get("clicked"):
         result["ref"] = ref
         result["element"] = {
@@ -285,6 +291,7 @@ async def _click_ax_element(
 async def click_by_ref(
     tab: Tab,
     ref: str,
+    human_like: bool = True,
 ) -> dict:
     """Use when: you already called `page_discover()` / `find_by_text`
     and have a ref (there was no natural id / xpath / text locator, or
@@ -304,6 +311,10 @@ async def click_by_ref(
     Args:
         tab: Tab instance
         ref: Element ref from page_discover() (e.g., "5#214" or "FRAME_ABC123:5#214")
+        human_like: Use the human-like actuator — gaussian approach path and a
+            random in-bounds offset instead of a dead-centre click. Default
+            True, same as `click_by_text`: how you *name* an element should not
+            change how it gets *clicked*.
 
     Returns:
         dict with clicked status, element info, and navigation feedback:
@@ -329,7 +340,7 @@ async def click_by_ref(
     from .elements import _capture_page_state, _with_nav_feedback
 
     url_before_state = await _capture_page_state(tab)
-    result = await _click_ax_element(tab, ref=ref)
+    result = await _click_ax_element(tab, ref=ref, human_like=human_like)
     result["url_before"] = url_before_state.get("url", "")
     if not result.get("clicked"):
         result.update(
@@ -362,7 +373,7 @@ async def focus_by_ref(
         focus_by_ref("5#214")
     """
     # Parse ref to extract node_id
-    _, _, node_id = _parse_ref(ref)
+    _, _, node_id = parse_ref(ref)
 
     if node_id is None:
         return {"focused": False, "error": f"Invalid ref format: {ref}"}
@@ -468,8 +479,6 @@ async def hover_by_ref(
     Returns:
         dict with hovered status
     """
-    from ._element import get_element_by_ref
-
     element = await get_element_by_ref(tab, ref)
     await element.mouse_move()
     return {"hovered": True, "ref": ref}
@@ -494,8 +503,6 @@ async def highlight_by_ref(
     Returns:
         dict with highlighted status
     """
-    from ._element import get_element_by_ref
-
     element = await get_element_by_ref(tab, ref)
     await element.highlight_overlay(duration=duration)
     return {"highlighted": True, "ref": ref}
@@ -518,8 +525,6 @@ async def html_by_ref(
     Returns:
         dict with html content
     """
-    from ._element import get_element_by_ref
-
     element = await get_element_by_ref(tab, ref)
     html = await element.get_html()
     return {"html": html, "ref": ref}
@@ -539,7 +544,10 @@ async def screenshot_by_ref(
     Args:
         tab: Tab instance
         ref: Element ref from page_discover()
-        path: File path to save (default: screenshots/{timestamp}_element.png)
+        path: File path to save. When omitted, defaults to
+              `$AI_DEV_BROWSER_OUTPUT_DIR/{timestamp}_element.png` if the env
+              var is set, otherwise `./output/{timestamp}_element.png`
+              relative to cwd — same resolution as `page_screenshot`.
         image_cap: Per-call cap the caller wants the screenshot to
                    fit. Same shape and semantics as `page_screenshot`'s
                    `image_cap`: `{"max_bytes": int, "max_dimension": int}`
@@ -556,13 +564,13 @@ async def screenshot_by_ref(
     import datetime
     from pathlib import Path
 
-    from ._element import get_element_by_ref
-    from .config import DEFAULT_OUTPUT_DIR
+    from .config import resolve_output_dir
 
     if path is None:
-        DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        out_dir = resolve_output_dir()
+        out_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        path = str(DEFAULT_OUTPUT_DIR / f"{ts}_element.png")
+        path = str(out_dir / f"{ts}_element.png")
 
     element = await get_element_by_ref(tab, ref)
     saved = await element.save_screenshot(path)
@@ -620,8 +628,6 @@ async def select_by_ref(
     Returns:
         dict with selected status
     """
-    from ._element import get_element_by_ref
-
     element = await get_element_by_ref(tab, ref)
     await element.select_option()
     return {"selected": True, "ref": ref}
@@ -646,8 +652,6 @@ async def upload_by_ref(
     Returns:
         dict with uploaded status and file count
     """
-    from ._element import get_element_by_ref
-
     element = await get_element_by_ref(tab, ref)
     file_list = [p.strip() for p in paths.split(",")]
     await element.send_file(*file_list)
@@ -676,8 +680,6 @@ async def drag_by_ref(
     Returns:
         dict with dragged status
     """
-    from ._element import get_element_by_ref
-
     element = await get_element_by_ref(tab, ref)
     await element.mouse_drag(to_x, to_y, steps=steps)
     return {"dragged": True, "ref": ref}

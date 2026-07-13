@@ -3,6 +3,7 @@
 from ai_dev_browser.cdp import accessibility
 from ai_dev_browser.cdp import page
 
+from ._ref import make_ref, node_id_of
 from ._tab import Tab
 
 
@@ -102,10 +103,7 @@ def _format_ax_node(
             except (TypeError, ValueError):
                 node_id = None
 
-        # Build ref with embedded node_id: "9#214" or just "9" if no node_id
-        ref_str = str(ref_counter[0])
-        if node_id is not None:
-            ref_str = f"{ref_counter[0]}#{node_id}"
+        ref_str = make_ref(ref_counter[0], node_id)
 
         info = {
             "ref": ref_str,
@@ -364,15 +362,7 @@ async def page_discover(
     # Add coordinates if requested
     if include_coordinates:
         for el in elements:
-            ref = el.get("ref", "")
-            # Extract node_id from ref (format: "5#214" or "FRAME_xxx:5#214")
-            node_id = None
-            if "#" in ref:
-                try:
-                    node_id_str = ref.split("#")[-1]
-                    node_id = int(node_id_str)
-                except (ValueError, IndexError):
-                    pass
+            node_id = node_id_of(el.get("ref", ""))
 
             if node_id:
                 try:

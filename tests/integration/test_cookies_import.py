@@ -1,18 +1,26 @@
-"""Integration tests for cookies_import: extract cookies from the user's
-real Chrome installation.
+"""Opt-in smoke tests that read the developer's REAL Chrome and decrypt.
 
-Unlike most integration tests in this suite, these do NOT need a running
-automation Chrome — they read from the user's daily-driver browser's
-SQLite cookie database. Every dev box has Chrome installed with at least
-a few cookies, so these tests are expected to pass on any macOS/Windows/
-Linux machine with Chrome and a non-empty cookie jar.
+These are the one thing `test_cookies_extract_hermetic.py` cannot cover: the
+actual platform decryption path — Keychain / DPAPI / libsecret — which needs a
+live browser profile and its OS key material, and so cannot be built from a
+synthetic SQLite file.
 
-The tests verify the full decryption pipeline end-to-end:
   macOS  — Keychain → PBKDF2 → AES-CBC via CommonCrypto
   Windows — Local State → DPAPI → AES-GCM via BCrypt
   Linux  — libsecret / "peanuts" → PBKDF2 → AES-CBC via libcrypto
 
-Skipped in CI via SKIP_INTEGRATION=1 (no real user Chrome profile).
+They are OFF by default, and not merely by SKIP_INTEGRATION. Reading the real
+Cookies DB conflicts with a running browser (Windows holds it with an exclusive
+lock) and assumes the machine happens to have the expected cookies — so left on
+by default they fail for reasons that have nothing to do with the code, which is
+exactly what made the old suite flaky. Turn them on deliberately, with Chrome
+closed:
+
+    AI_DEV_BROWSER_TEST_REAL_CHROME=1 pytest tests/integration/test_cookies_import.py
+
+Everything platform-independent — discovery, copy, WAL, filter, epoch, shape,
+lazy-key — is verified hermetically and always runs, in
+`test_cookies_extract_hermetic.py`.
 """
 
 import os
@@ -27,7 +35,7 @@ from ai_dev_browser.core.cookies_import import (
 )
 
 
-SKIP_INTEGRATION = os.environ.get("SKIP_INTEGRATION", "").lower() in (
+RUN_REAL_CHROME = os.environ.get("AI_DEV_BROWSER_TEST_REAL_CHROME", "").lower() in (
     "1",
     "true",
     "yes",
@@ -35,9 +43,12 @@ SKIP_INTEGRATION = os.environ.get("SKIP_INTEGRATION", "").lower() in (
 
 
 @pytest.fixture(autouse=True)
-def _integration_guard():
-    if SKIP_INTEGRATION:
-        pytest.skip("SKIP_INTEGRATION is set")
+def _real_chrome_guard():
+    if not RUN_REAL_CHROME:
+        pytest.skip(
+            "real-Chrome decryption test — opt in with "
+            "AI_DEV_BROWSER_TEST_REAL_CHROME=1 and Chrome closed"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +57,11 @@ def _integration_guard():
 
 
 def test_find_cookie_db_chrome():
-    """Chrome's Cookies SQLite file must be locatable on the dev box."""
+    """Chrome's Cookies SQLite file must be locatable on the dev box.
+
+    (Discovery of a *synthetic* profile, and the not-found-raises contract, are
+    covered hermetically — this one asserts the real install is where we expect.)
+    """
     db = _find_cookie_db("chrome")
     assert db.exists(), f"Cookie DB not found at {db}"
     assert db.name == "Cookies"
@@ -149,8 +164,7 @@ def test_cookies_extract_domain_filtering():
 
     for c in cookies:
         assert domain.lstrip(".") in c["domain"], (
-            f"Cookie {c['name']} domain {c['domain']} does not match "
-            f"filter {domain}"
+            f"Cookie {c['name']} domain {c['domain']} does not match filter {domain}"
         )
 
 
@@ -178,9 +192,7 @@ def test_cookies_extract_chrome_has_some_cookies():
             assert len(cookies) >= 1
             return
 
-    pytest.skip(
-        "No cookies found for google/youtube/github — very unusual dev box"
-    )
+    pytest.skip("No cookies found for google/youtube/github — very unusual dev box")
 
 
 # ---------------------------------------------------------------------------
@@ -244,9 +256,7 @@ async def test_cookies_import_into_automation_browser(browser):
     # Verify cookies were actually injected by reading them back via CDP
     all_cookies = await browser.cookies.get_all()
     injected_names = {c["name"] for c in result["cookies"]}
-    browser_names = {
-        getattr(c, "name", "") for c in all_cookies
-    }
+    browser_names = {getattr(c, "name", "") for c in all_cookies}
     # At least some of the injected cookies should be readable
     overlap = injected_names & browser_names
     assert len(overlap) > 0, (
