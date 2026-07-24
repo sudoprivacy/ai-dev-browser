@@ -721,6 +721,151 @@ async def type_by_text(
     return {"typed": True, "name": name, "ref": located["ref"]}
 
 
+# JS that selects a text range in the top document or the first same-origin
+# frame that contains the text, then fires the tail of a real selection
+# gesture. Kept as one expression (IIFE) so tab.evaluate gets a single value.
+#
+# Why this exists as a primitive and not a coordinate drag: a
+# DevTools-synthesized mouse drag does not drive Blink's cross-frame text
+# selection state machine — the events reach an iframe's JS listeners but no
+# Selection is populated, and a same-origin iframe has no separate CDP target
+# to route frame-local input to. Building the Range directly in the correct
+# document is the deterministic path that actually works.
+_SELECT_TEXT_JS = """
+    (function(startText, endText) {
+      function findRange(doc) {
+        const root = doc.body || doc.documentElement;
+        if (!root) return null;
+        const walk = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+        let startNode = null, startOff = -1;
+        while (walk.nextNode()) {
+          const tn = walk.currentNode;
+          const i = (tn.nodeValue || '').indexOf(startText);
+          if (i >= 0) { startNode = tn; startOff = i; break; }
+        }
+        if (!startNode) return null;
+        const rg = doc.createRange();
+        rg.setStart(startNode, startOff);
+        if (endText) {
+          // Extend to the first endText at or after the start node, so the
+          // selection can span formatting boundaries / multiple elements.
+          const walk2 = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+          let seen = false, endNode = null, endOff = -1;
+          while (walk2.nextNode()) {
+            const tn = walk2.currentNode;
+            if (tn === startNode) seen = true;
+            if (!seen) continue;
+            const from = (tn === startNode) ? startOff : 0;
+            const j = (tn.nodeValue || '').indexOf(endText, from);
+            if (j >= 0) { endNode = tn; endOff = j + endText.length; break; }
+          }
+          if (!endNode) return null;
+          rg.setEnd(endNode, endOff);
+        } else {
+          rg.setEnd(startNode, startOff + startText.length);
+        }
+        return rg;
+      }
+      function recurse(win, ctx) {
+        let doc;
+        try { doc = win.document; } catch (e) { return null; }  // cross-origin
+        let rg = null;
+        try { rg = findRange(doc); } catch (e) { rg = null; }
+        if (rg) return { win: win, doc: doc, rg: rg, ctx: ctx };
+        for (let i = 0; i < win.frames.length; i++) {
+          try {
+            const hit = recurse(win.frames[i], 'iframe');
+            if (hit) return hit;
+          } catch (e) {}
+        }
+        return null;
+      }
+      const hit = recurse(window, 'top');
+      if (!hit) return { selected: false, text: startText };
+      const win = hit.win, doc = hit.doc, rg = hit.rg;
+      const sel = win.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(rg);
+      const out = sel.toString();
+      const collapsed = sel.isCollapsed;
+      const ok = sel.rangeCount > 0 && !collapsed && out.length > 0;
+      // Notify selection listeners. Only `selectionchange` — the platform's own
+      // signal for a selection change — is fired. A synthetic `mouseup` is
+      // deliberately NOT dispatched: on real pages a mouseup handler routinely
+      // clears the selection (an untrusted synthetic mouseup can't finalize a
+      // native gesture anyway), which would wipe the very selection we just
+      // made. Callers wanting a trusted pointer event drive it separately.
+      try { doc.dispatchEvent(new win.Event('selectionchange')); } catch (e) {}
+      return {
+        selected: ok, text: out, query: startText, frame: hit.ctx,
+        chars: out.length, collapsed: collapsed
+      };
+    })(%s, %s)
+"""
+
+
+async def select_text(tab: Tab, text: str, to_text: str | None = None) -> dict:
+    """Use when: you need a real text *selection* (highlight) over on-page text
+    — to drive a select-to-comment / annotate / quote widget, or anything that
+    reads `window.getSelection()`. Returns `{selected, text, frame, chars}`;
+    `selected` + `text` already confirm what got highlighted, so there's no need
+    to screenshot or re-read the selection to check.
+
+    Works in the top document AND same-origin iframes (it recurses frames the
+    way `find_by_xpath` does). This is the capability `mouse_drag` lacks: a
+    synthetic coordinate drag doesn't drive the browser's cross-frame selection
+    state machine, so dragging over iframe text selects nothing. Locate by the
+    text itself, not pixels — the frame and character offsets are resolved for
+    you.
+
+    Selects the first occurrence of `text` within a single text node. For a run
+    that spans formatting boundaries (a bold word, a link) or several elements,
+    pass `to_text`: the selection runs from the start of `text` to the end of
+    the first `to_text` at or after it — the text equivalent of a click-drag
+    from one point to another.
+
+    The selection is real and persists; the only event fired is
+    `selectionchange` (the platform's selection signal). It does not simulate a
+    pointer gesture — a widget that reacts solely to a trusted `mouseup` won't
+    fire from this alone (drive that separately, e.g. with `mouse_click`).
+
+    Not for native `<select>` dropdowns — that's `select_by_ref` (which picks an
+    `<option>`). This selects arbitrary rendered text.
+
+    Args:
+        tab: Tab instance
+        text: Visible text to select, matched as a substring within one text
+            node. Case-sensitive against the rendered text.
+        to_text: Optional. When given, the selection extends to the end of the
+            first occurrence of this text at or after `text`, spanning any
+            elements in between. Use for multi-node / multi-element runs.
+
+    Returns:
+        dict: on success `{selected: True, text, query, frame, chars,
+        collapsed: False}`, where `text` is the actual
+        `getSelection().toString()` (may differ from the query — e.g. CSS
+        `text-transform` renders it upper-case) and `frame` is `"top"` or
+        `"iframe"`. On miss `{selected: False, text: <query>}`.
+
+    Failure:
+        Text not found in the main frame or any same-origin iframe (or, with
+        `to_text`, no `to_text` at/after `text`). The match is a case-sensitive
+        substring *within a single text node* — if the run spans elements,
+        select a shorter substring that lives in one node, or pass `to_text` for
+        the span. Confirm the text is present with `find_by_text` / `page_html`.
+        Cross-origin iframes are not reachable.
+
+    Example:
+        select_text("Term Sheet")
+        select_text("除本意向书", to_text="明确允许")
+    """
+    expr = _SELECT_TEXT_JS % (
+        json.dumps(text),
+        json.dumps(to_text) if to_text else "null",
+    )
+    return await tab.evaluate(expr)
+
+
 # ---------------------------------------------------------------------------
 # Fuzzy matching functions (accessibility tree + text_match scoring)
 # ---------------------------------------------------------------------------

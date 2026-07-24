@@ -130,6 +130,12 @@ async def mouse_drag(
     specific element drag (reorder, drop on target), prefer `drag_by_ref`
     — it doesn't need coordinates.
 
+    Not for selecting text: a synthetic drag does not drive the browser's
+    text-selection state machine, and never crosses into an iframe's document —
+    dragging over page or iframe text leaves `getSelection()` empty even though
+    this returns `dragged: True`. Use `select_text` (locate by the text, works
+    in same-origin iframes) to produce a real selection.
+
     Args:
         tab: Tab instance
         from_x: Start X (in screenshot space if screenshot provided)

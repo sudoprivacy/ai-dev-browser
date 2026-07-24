@@ -79,6 +79,7 @@ from .elements import (
     find_by_xpath,
     page_scroll,
     page_wait_element,
+    select_text,
     type_by_text,
 )
 
@@ -188,6 +189,7 @@ __all__ = [
     "click_by_html_id",
     "find_by_xpath",
     "click_by_xpath",
+    "select_text",
     # Text matching
     "MatchResult",
     # Errors

@@ -45,6 +45,7 @@ TOOL_META = {
     "find_by_text": {"result_key": "found"},
     "find_by_html_id": {"result_key": "found"},
     "find_by_xpath": {"result_key": "found"},
+    "select_text": {"result_key": "selected"},
     "type_by_ref": {"result_key": "typed"},
     "type_by_text": {"result_key": "typed"},
     "focus_by_ref": {"result_key": "focused"},
