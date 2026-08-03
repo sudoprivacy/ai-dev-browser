@@ -291,41 +291,199 @@ async def _type_text(
     return True
 
 
+# Find-and-scroll-the-real-scroller JS, run for to_bottom / to_top.
+#
+# `window.scrollTo` on the top document is wrong the moment the page's
+# scrollable content lives somewhere else — a nested `overflow:auto`
+# pane or a same-origin iframe (e.g. a doc viewer that embeds the body
+# in an <iframe>). The top window then has nothing to scroll and the
+# command is a silent no-op. This walks the top document AND every
+# reachable same-origin frame, collects the genuinely-scrollable
+# containers, scrolls the right one to the requested edge, and reports
+# what it did so the caller can fail loud when nothing was scrollable.
+#
+# `__DIR__` is substituted with the literal 'bottom' or 'top' (never
+# user input — no injection surface).
+_SCROLL_TO_EDGE_JS = r"""(() => {
+  const DIR = '__DIR__';
+  const MIN = 4;  // scrollHeight - clientHeight must exceed this to count
+
+  const roomOf = (el) => el.scrollHeight - el.clientHeight;
+
+  const describe = (el, win, root) => {
+    if (el === root) return win === window ? 'window' : 'frame-document';
+    const id = el.id ? '#' + el.id : '';
+    const cls = (typeof el.className === 'string' && el.className.trim())
+      ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
+    return (el.tagName || 'node').toLowerCase() + id + cls;
+  };
+
+  const candidates = [];
+  let crossOrigin = false;
+
+  const collect = (win, prefix) => {
+    let doc;
+    try { doc = win.document; } catch (e) { crossOrigin = true; return; }
+    if (!doc) return;
+    const root = doc.scrollingElement || doc.documentElement || doc.body;
+    if (root && roomOf(root) > MIN) {
+      candidates.push({ el: root, win, room: roomOf(root),
+                        label: prefix + describe(root, win, root), top: prefix === '' });
+    }
+    for (const el of doc.querySelectorAll('*')) {
+      if (el === root || roomOf(el) <= MIN) continue;
+      const oy = win.getComputedStyle(el).overflowY;
+      if (oy === 'auto' || oy === 'scroll' || oy === 'overlay') {
+        candidates.push({ el, win, room: roomOf(el),
+                          label: prefix + describe(el, win, root), top: false });
+      }
+    }
+    for (const frame of doc.querySelectorAll('iframe, frame')) {
+      let cw;
+      try { cw = frame.contentWindow; if (cw) void cw.document; }
+      catch (e) { crossOrigin = true; continue; }
+      if (!cw) continue;
+      const tag = frame.id ? '#' + frame.id
+                  : (frame.name ? '[name=' + frame.name + ']' : '');
+      collect(cw, prefix + 'iframe' + tag + ' > ');
+    }
+  };
+
+  collect(window, '');
+  if (candidates.length === 0) return { found: false, crossOrigin };
+
+  // "Scroll the page" means the top window when it can scroll; only when
+  // the page itself is not scrollable do we hunt for the embedded scroller
+  // (pick the one with the most room — the doc-viewer iframe, not a stray
+  // 10px widget).
+  let t = candidates.find((c) => c.top);
+  if (!t) t = candidates.reduce((a, b) => (b.room > a.room ? b : a));
+
+  const el = t.el;
+  const before = el.scrollTop;
+  el.scrollTop = DIR === 'bottom' ? el.scrollHeight : 0;
+  return {
+    found: true, target: t.label, before, after: el.scrollTop,
+    delta: el.scrollTop - before, crossOrigin, candidates: candidates.length,
+  };
+})()"""
+
+
+async def _scroll_to_edge(tab: Tab, edge: str) -> dict:
+    """Scroll the real scroll container (top window, nested pane, or
+    same-origin iframe) to `edge` ('bottom' | 'top'). Returns the JS
+    diagnostics dict (`found`, `target`, `delta`, `crossOrigin`, ...)."""
+    return await tab.evaluate(_SCROLL_TO_EDGE_JS.replace("__DIR__", edge))
+
+
+async def _resolve_scroll_target(tab: Tab, target: Element | str) -> Element | None:
+    """Turn a `to_element` value into an Element. A string is looked up
+    the same way the `*_by_text` tools locate things — accessible name
+    first (spans same-origin iframes), then a raw text-node search — so
+    scrolling to a landmark agrees with clicking/finding it. An Element
+    is returned unchanged."""
+    if not isinstance(target, str):
+        return target
+    hit = await _ax_by_text(tab, target)
+    if hit and hit.get("ref"):
+        try:
+            return await get_element_by_ref(tab, hit["ref"])
+        except Exception:
+            pass
+    return await tab.find(target, timeout=3)
+
+
 async def page_scroll(
     tab: Tab,
     direction: str = "down",
     amount: int = 25,
     to_bottom: bool = False,
     to_top: bool = False,
-    to_element: Element | None = None,
-) -> bool:
+    to_element: Element | str | None = None,
+) -> dict:
     """Use when: the target element isn't in the viewport — lazy-loaded
-    content, infinite scroll feed, or a long form. Returns `True` on
-    success. Follow-ups: `page_discover` to see newly-rendered items,
-    or a direct `click_by_*` / `find_by_*` if you know the locator.
+    content, infinite scroll feed, or a long form. Returns
+    `{scrolled: True, target, ...}` on success, or
+    `{scrolled: False, reason}` when nothing moved. Follow-ups:
+    `page_discover` to see newly-rendered items, or a direct
+    `click_by_*` / `find_by_*` if you know the locator.
+
+    `to_element` accepts the element's visible text (or an `Element`) and
+    scrolls it into view — resolved via the same accessible-name locator
+    as `find_by_text`, so it reaches targets inside same-origin iframes.
+
+    `to_bottom` / `to_top` scroll the *actually* scrollable container, not
+    just the top window: a page whose body is embedded in an
+    `overflow:auto` pane or a same-origin iframe (doc viewers, editors)
+    is scrolled correctly, and `target` names what was scrolled. If the
+    page has nothing scrollable, `scrolled` is False with a `reason`
+    instead of a false success.
 
     Args:
         tab: Tab instance
-        direction: "up" or "down"
-        amount: Scroll amount (percentage)
-        to_bottom: Scroll to bottom of page
-        to_top: Scroll to top of page
-        to_element: Scroll element into view
+        direction: "up" or "down" (incremental gesture scroll)
+        amount: Scroll amount (percentage of viewport) for direction scroll
+        to_bottom: Scroll the scrollable container to its bottom
+        to_top: Scroll the scrollable container to its top
+        to_element: Visible text (or an Element) to scroll into view
 
     Returns:
-        True on success
+        dict — `{scrolled: True, target, ...}` on success;
+        `{scrolled: False, reason}` when nothing was scrollable.
+
+    Failure:
+        `scrolled: false` means nothing moved. `reason` says why: no
+        element matched `to_element` (check the text with `page_discover`),
+        the page has no scrollable content, or the content lives in a
+        cross-origin iframe JS scroll can't reach — for that case try
+        `direction='down'`, whose gesture scroll routes to whatever is
+        under the cursor. When `to_bottom`/`to_top` succeed, the `target`
+        field names the container that was scrolled; if it picked the
+        wrong one, scroll that element by text via `to_element` instead.
     """
-    if to_element:
-        await to_element.scroll_into_view()
-    elif to_bottom:
-        await tab.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-    elif to_top:
-        await tab.evaluate("window.scrollTo(0, 0)")
-    elif direction == "up":
+    if to_element is not None:
+        element = await _resolve_scroll_target(tab, to_element)
+        if element is None:
+            return {
+                "scrolled": False,
+                "reason": f"no element found to scroll to for {to_element!r}",
+            }
+        await element.scroll_into_view()
+        return {
+            "scrolled": True,
+            "target": to_element if isinstance(to_element, str) else repr(element),
+        }
+
+    if to_bottom or to_top:
+        info = await _scroll_to_edge(tab, "bottom" if to_bottom else "top")
+        if not info.get("found"):
+            if info.get("crossOrigin"):
+                reason = (
+                    "the scrollable content is inside a cross-origin iframe that "
+                    "JS scroll can't reach; try direction='down' (gesture scroll "
+                    "routes to whatever is under the cursor)"
+                )
+            else:
+                reason = (
+                    "nothing on this page is scrollable (content fits the viewport)"
+                )
+            return {"scrolled": False, "reason": reason}
+        return {
+            "scrolled": True,
+            "target": info.get("target"),
+            "y": info.get("after"),
+            "delta": info.get("delta"),
+        }
+
+    # Incremental scroll keeps the gesture path (Browser.getWindow +
+    # Input.synthesizeScrollGesture, JS-scrollBy fallback on embedded
+    # targets) — its gesture-shape acceleration matters for anti-bot
+    # heuristics, so it is deliberately not routed through the JS scroller.
+    if direction == "up":
         await tab.scroll_up(amount)
     else:
         await tab.scroll_down(amount)
-    return True
+    return {"scrolled": True, "direction": direction, "amount": amount}
 
 
 async def _wait_for_element(

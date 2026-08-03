@@ -38,9 +38,14 @@ CI would go green for both regressions.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
+import json
 import os
+import subprocess
+import sys
+import urllib.parse
 
 import pytest
 
@@ -110,7 +115,7 @@ async def test_page_scroll_down_actually_scrolls(tab):
     assert before == 0, f"fixture should start at scrollY=0, got {before}"
 
     ok = await page_scroll(tab, direction="down", amount=50)
-    assert ok is True
+    assert ok["scrolled"] is True
 
     after = await _get_scroll_y(tab)
     assert after > before, (
@@ -155,7 +160,7 @@ async def test_page_scroll_falls_back_on_cdp_method_not_found(tab, monkeypatch):
 
     before = await _get_scroll_y(tab)
     ok = await page_scroll(tab, direction="down", amount=50)
-    assert ok is True
+    assert ok["scrolled"] is True
 
     after = await _get_scroll_y(tab)
     assert after > before, (
@@ -203,9 +208,239 @@ async def test_page_scroll_to_bottom_survives_broken_get_window(tab, monkeypatch
     monkeypatch.setattr(tab, "get_window", _boom)
 
     ok = await page_scroll(tab, to_bottom=True)
-    assert ok is True
+    assert ok["scrolled"] is True
+    assert ok["target"] == "window", f"expected top-window scroll, got {ok}"
 
     after = await _get_scroll_y(tab)
     assert after > 500, (
         f"to_bottom should scroll a 6000px page substantially; got scrollY={after}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Bug-report regressions (page_scroll · 2 bugs)
+#   Bug 1: `to_element="<text>"` threw `'str' object has no attribute
+#          scroll_into_view` — the CLI passes a string, the core expected a
+#          pre-resolved Element. Now the string is resolved to an element.
+#   Bug 2: `to_bottom` on iframe-wrapped content returned scrolled=True but
+#          did nothing — it scrolled the top window, which isn't the scroller.
+#          Now it finds the real scroller (same-origin iframe) and fails loud
+#          when nothing is scrollable at all.
+# ---------------------------------------------------------------------------
+
+
+async def _data_url(html: str) -> str:
+    return "data:text/html;base64," + base64.b64encode(html.encode()).decode()
+
+
+async def _iframe_scroll_room(tab, selector: str) -> float:
+    """Vertical scroll room (px) inside a same-origin iframe's document —
+    used to wait out srcdoc layout before asserting on scroll behavior."""
+    js = (
+        "(() => { const f = document.querySelector(" + repr(selector) + ");"
+        " const d = f && f.contentDocument;"
+        " const s = d && (d.scrollingElement || d.documentElement);"
+        " return s ? s.scrollHeight - s.clientHeight : 0; })()"
+    )
+    return float(await tab.evaluate(js, return_by_value=True) or 0)
+
+
+async def _wait_iframe_room(tab, selector: str, minimum: float = 500) -> float:
+    """Poll until the iframe has laid out `minimum` px of scroll room."""
+    for _ in range(20):
+        room = await _iframe_scroll_room(tab, selector)
+        if room > minimum:
+            return room
+        await asyncio.sleep(0.1)
+    return await _iframe_scroll_room(tab, selector)
+
+
+async def test_page_scroll_to_element_by_text_resolves_string(tab):
+    """Bug 1: a *text* target (what the CLI always passes) must resolve to
+    an element and scroll it into view — not blow up with
+    `'str' object has no attribute 'scroll_into_view'`. The fixture page is
+    6000px tall with 'Row N' landmarks, so scrolling to a late row moves
+    scrollY forward from the top."""
+    before = await _get_scroll_y(tab)
+    assert before == 0
+
+    ok = await page_scroll(tab, to_element="Row 28")
+    assert ok["scrolled"] is True, f"to_element by text failed: {ok}"
+
+    after = await _get_scroll_y(tab)
+    assert after > before, (
+        f"to_element='Row 28' did not scroll it into view: "
+        f"before={before}, after={after}"
+    )
+
+
+async def test_page_scroll_to_bottom_scrolls_same_origin_iframe(tab):
+    """Bug 2: when the page body fits the viewport but its content lives in
+    a (same-origin) iframe, `to_bottom` must scroll the *iframe*, not
+    silent-no-op on the un-scrollable top window."""
+    inner = (
+        "<body style='margin:0'>"
+        + "".join(f"<div style='height:200px'>Inner {i}</div>" for i in range(30))
+        + "</body>"
+    )
+    outer = (
+        "<html><body style='margin:0'>"
+        f'<iframe id="viewer" style="width:100%;height:300px;border:0" '
+        f'srcdoc="{inner}"></iframe>'
+        "</body></html>"
+    )
+    await page_goto(tab, await _data_url(outer))
+
+    # Wait for the same-origin iframe document to lay out scroll room.
+    assert await _wait_iframe_room(tab, "#viewer") > 500, (
+        "iframe fixture never gained scroll room"
+    )
+
+    top_before = await _get_scroll_y(tab)
+    ok = await page_scroll(tab, to_bottom=True)
+
+    assert ok["scrolled"] is True, f"iframe to_bottom reported no scroll: {ok}"
+    assert "iframe" in ok["target"], (
+        f"expected the iframe to be the scroll target, got target={ok.get('target')!r}"
+    )
+    # Top window never moved (it can't) — the scroll happened inside the frame.
+    assert await _get_scroll_y(tab) == top_before
+
+    inner_top = await tab.evaluate(
+        "document.querySelector('#viewer').contentDocument.scrollingElement.scrollTop",
+        return_by_value=True,
+    )
+    assert float(inner_top or 0) > 500, (
+        f"iframe content did not scroll to bottom: scrollTop={inner_top}"
+    )
+
+
+async def test_page_scroll_to_bottom_fails_loud_when_nothing_scrollable(tab):
+    """Bug 2 (other half): a page that fits the viewport has nothing to
+    scroll. `to_bottom` must say so — `scrolled: False` with a reason —
+    rather than the old unconditional `True`."""
+    short = "<html><body style='margin:0'><p>tiny page</p></body></html>"
+    await page_goto(tab, await _data_url(short))
+
+    ok = await page_scroll(tab, to_bottom=True)
+    assert ok["scrolled"] is False, f"expected fail-loud, got {ok}"
+    assert "scrollable" in ok.get("reason", ""), (
+        f"reason should explain nothing was scrollable, got {ok.get('reason')!r}"
+    )
+
+
+async def test_page_scroll_to_element_reaches_same_origin_iframe(tab):
+    """The reporter's real goal: reach a landmark ('Appendix A') that lives
+    inside the doc-viewer's same-origin iframe. `to_element` resolves the
+    text with the same accessible-name locator `find_by_text` uses (which
+    spans same-origin iframes), then scrolls the *iframe* to bring it into
+    view — the top window can't reach it."""
+    marker = "APPENDIX-A-MARKER"
+    inner = (
+        "<body style='margin:0'>"
+        + "".join(f"<div style='height:200px'>pad {i}</div>" for i in range(30))
+        + f"<div id='mark'>{marker}</div></body>"
+    )
+    outer = (
+        '<html><body style="margin:0">'
+        '<iframe id="viewer" style="width:100%;height:300px;border:0" '
+        f'srcdoc="{inner}"></iframe></body></html>'
+    )
+    await page_goto(tab, await _data_url(outer))
+
+    assert await _wait_iframe_room(tab, "#viewer") > 500, (
+        "iframe fixture never gained scroll room"
+    )
+
+    ok = await page_scroll(tab, to_element=marker)
+    assert ok["scrolled"] is True, f"to_element across iframe failed: {ok}"
+
+    inner_top = await tab.evaluate(
+        "document.querySelector('#viewer').contentDocument.scrollingElement.scrollTop",
+        return_by_value=True,
+    )
+    assert float(inner_top or 0) > 500, (
+        f"iframe did not scroll to bring {marker!r} into view: scrollTop={inner_top}"
+    )
+
+
+async def test_page_scroll_to_bottom_reports_cross_origin_iframe(tab):
+    """A cross-origin iframe's document is unreachable from JS, so
+    `to_bottom` cannot scroll it — but it must say *why* (fail loud +
+    steer to the gesture path), not silent-succeed. Reproduced
+    hermetically with a data: iframe inside a data: page: two distinct
+    opaque origins, so `contentDocument` access throws exactly as a real
+    cross-origin embed would."""
+    inner_html = "<body style='margin:0'><div style='height:5000px'>x</div></body>"
+    inner_src = "data:text/html," + urllib.parse.quote(inner_html)
+    outer = (
+        '<html><body style="margin:0">'
+        f'<iframe style="width:100%;height:200px;border:0" src="{inner_src}"></iframe>'
+        "</body></html>"
+    )
+    await page_goto(tab, await _data_url(outer))
+
+    ok = await page_scroll(tab, to_bottom=True)
+    assert ok["scrolled"] is False, f"expected fail-loud on cross-origin, got {ok}"
+    assert "cross-origin" in ok.get("reason", ""), (
+        f"reason should call out the cross-origin iframe, got {ok.get('reason')!r}"
+    )
+
+
+async def test_page_scroll_to_element_via_real_cli_boundary():
+    """Bug 1 lived at the CLI boundary: `page_scroll --to-element "<text>"`
+    handed a *string* to a core that expected an Element, printing
+    `{"error": "'str' object has no attribute 'scroll_into_view'"}`. The
+    Python-level tests above pass a str too, but only a real subprocess
+    exercises argv → argparse → wrap_core → core → JSON stdout — the exact
+    surface the bug was reported on. Drive it against a live browser."""
+    result = browser_start(headless=True, temp=True, reuse="none")
+    assert "error" not in result, f"browser_start failed: {result}"
+    port = result["port"]
+    browser_client = None
+    try:
+        browser_client = await connect_browser(port=port)
+        the_tab = await get_active_tab(browser_client)
+        html = (
+            "<html><body style='margin:0'>"
+            + "".join(f"<div style='height:200px'>Row {i}</div>" for i in range(30))
+            + "</body></html>"
+        )
+        data_url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
+        await page_goto(the_tab, data_url)
+        # Hand the browser to the CLI cleanly — it connects fresh by --port.
+        await browser_client.close()
+        browser_client = None
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "ai_dev_browser.tools.page_scroll",
+                "--to-element",
+                "Row 28",
+                "--port",
+                str(port),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env={**os.environ, "PYTHONUTF8": "1"},
+            timeout=90,
+        )
+        assert proc.returncode == 0, (
+            f"CLI exited {proc.returncode}\nstdout={proc.stdout}\nstderr={proc.stderr}"
+        )
+        out = json.loads(proc.stdout)
+        assert out.get("scrolled") is True, f"expected scrolled:true, got {out}"
+        assert out.get("target") == "Row 28", f"unexpected target: {out}"
+        # The exact pre-fix failure string must never reappear.
+        assert "scroll_into_view" not in proc.stdout, (
+            f"the Bug 1 AttributeError leaked back: {proc.stdout}"
+        )
+    finally:
+        if browser_client is not None:
+            with contextlib.suppress(Exception):
+                await browser_client.close()
+        with contextlib.suppress(Exception):
+            browser_stop(port=port)
