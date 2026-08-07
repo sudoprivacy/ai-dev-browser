@@ -42,6 +42,10 @@ htmlcov/
 
 # Screenshots (default output of page_screenshot)
 screenshots/
+output/
+
+# Scratch space for dev repros / one-off verification scripts
+scratch/
 
 # Temporary files
 *.tmp
