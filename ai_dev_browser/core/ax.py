@@ -431,6 +431,47 @@ def _resolve_key(name: str) -> tuple[str, str, int, str | None] | None:
     return _KEY_SPECS.get(norm)
 
 
+async def _dispatch_key(
+    tab: Tab,
+    dom_key: str,
+    code: str,
+    vkey: int,
+    modifiers: int = 0,
+    text: str | None = None,
+) -> None:
+    """The one key-dispatch path: send a real keyDown + keyUp via CDP.
+
+    Both `press_key` and `type_by_ref`'s select-all/backspace clear route
+    through here so the event shape can't drift between them — in particular
+    `windowsVirtualKeyCode` is always set, so `event.keyCode` is populated
+    (legacy frameworks gate on it). `text` on the keyDown is what makes Blink
+    also fire `keypress` (and, in an editable, `beforeinput`/`input`); it is
+    None for non-text keys and keyUp never carries it.
+    """
+    await tab.send(
+        cdp_input.dispatch_key_event(
+            "keyDown",
+            key=dom_key,
+            code=code,
+            windows_virtual_key_code=vkey,
+            native_virtual_key_code=vkey,
+            modifiers=modifiers,
+            text=text,
+            unmodified_text=text,
+        )
+    )
+    await tab.send(
+        cdp_input.dispatch_key_event(
+            "keyUp",
+            key=dom_key,
+            code=code,
+            windows_virtual_key_code=vkey,
+            native_virtual_key_code=vkey,
+            modifiers=modifiers,
+        )
+    )
+
+
 async def press_key(
     tab: Tab,
     key: str,
@@ -468,11 +509,11 @@ async def press_key(
         `{pressed: False, reason}` for an unknown key / invalid ref.
 
     Failure:
-        Unknown key name — pass one of the supported keys above. If a heavy
-        framework still ignores Enter, confirm the field is focused (press
-        with no `ref` right after `type_by_ref`, which leaves focus on it)
-        and that the text actually landed. A stale `ref` — re-run
-        `page_discover` / `find_by_*` for a fresh one.
+        If a heavy framework still ignores Enter, confirm the field is
+        focused — press with no `ref` right after `type_by_ref`, which leaves
+        focus on it — and that the text actually landed. A stale `ref`:
+        re-run `page_discover` / `find_by_*`. (An unknown key name comes back
+        inline with the supported list.)
     """
     spec = _resolve_key(key)
     if spec is None:
@@ -492,33 +533,7 @@ async def press_key(
         except Exception as e:
             return {"pressed": False, "reason": f"could not focus {ref!r}: {e}"}
 
-    mods = modifiers or 0
-    # `text` on the keyDown is what makes Blink also fire `keypress` (and, in an
-    # editable, `beforeinput`/`input`). For keys without text (Tab, arrows, …)
-    # `text` is None and dispatch_key_event simply omits it; keyUp never carries
-    # text either way.
-    await tab.send(
-        cdp_input.dispatch_key_event(
-            "keyDown",
-            key=dom_key,
-            code=code,
-            windows_virtual_key_code=vkey,
-            native_virtual_key_code=vkey,
-            modifiers=mods,
-            text=text,
-            unmodified_text=text,
-        )
-    )
-    await tab.send(
-        cdp_input.dispatch_key_event(
-            "keyUp",
-            key=dom_key,
-            code=code,
-            windows_virtual_key_code=vkey,
-            native_virtual_key_code=vkey,
-            modifiers=mods,
-        )
-    )
+    await _dispatch_key(tab, dom_key, code, vkey, modifiers=modifiers or 0, text=text)
     return {"pressed": True, "key": dom_key, "ref": ref}
 
 
@@ -561,40 +576,13 @@ async def type_by_ref(
     if not focus_result.get("focused"):
         return {"typed": False, "error": focus_result.get("error", "Focus failed")}
 
-    # Clear if requested (select all + delete)
+    # Clear if requested: select-all then delete the selection. Same real
+    # key-dispatch path as press_key (virtual key codes included) — 65 = 'A',
+    # and Backspace comes straight from the _KEY_SPECS table.
     if clear:
-        # Select all
-        await tab.send(
-            cdp_input.dispatch_key_event(
-                type_="keyDown",
-                modifiers=2,  # Ctrl/Cmd
-                key="a",
-                code="KeyA",
-            )
-        )
-        await tab.send(
-            cdp_input.dispatch_key_event(
-                type_="keyUp",
-                modifiers=2,
-                key="a",
-                code="KeyA",
-            )
-        )
-        # Delete
-        await tab.send(
-            cdp_input.dispatch_key_event(
-                type_="keyDown",
-                key="Backspace",
-                code="Backspace",
-            )
-        )
-        await tab.send(
-            cdp_input.dispatch_key_event(
-                type_="keyUp",
-                key="Backspace",
-                code="Backspace",
-            )
-        )
+        bs_key, bs_code, bs_vkey, _ = _KEY_SPECS["backspace"]
+        await _dispatch_key(tab, "a", "KeyA", 65, modifiers=2)  # Ctrl/Cmd + A
+        await _dispatch_key(tab, bs_key, bs_code, bs_vkey)
 
     # Type text using insertText (most reliable for input fields)
     await tab.send(cdp_input.insert_text(text=text))

@@ -169,6 +169,19 @@ async def test_type_by_ref_enter_types_and_submits(tab):
     assert st["log"] == "SUBMITTED:widget", f"handler saw wrong value: {st['log']!r}"
 
 
+async def test_type_by_ref_clear_replaces_text(tab):
+    """Guard the refactor: type_by_ref(clear=True) still wipes existing text
+    before typing — the select-all/backspace now route through the shared
+    _dispatch_key (real virtual key codes) instead of a hand-rolled dispatch,
+    so a full-replace must still yield only the new value, not a concatenation."""
+    ref = await _box_ref(tab)
+    await type_by_ref(tab, ref, "OLDVALUE")
+    assert (await _state(tab))["value"] == "OLDVALUE"
+
+    await type_by_ref(tab, ref, "NEWVALUE", clear=True)
+    assert (await _state(tab))["value"] == "NEWVALUE", "clear did not wipe old text"
+
+
 async def test_press_key_with_ref_focuses_then_presses(tab):
     """press_key(ref=...) focuses the element first, so it works even when
     nothing is focused (or focus drifted)."""
