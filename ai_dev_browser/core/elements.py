@@ -488,55 +488,83 @@ async def page_scroll(
     return {"scrolled": True, "direction": direction, "amount": amount}
 
 
-# JS run on a resolved element: is it actually rendered, and where. An element
-# can be in the DOM yet unusable — 0-size, display:none, visibility:hidden (a
-# search box mounted collapsed until its panel opens is the classic SPA trap).
-# Waiting on mere presence returns too early; this checks it's really visible.
-_VISIBLE_PROBE_JS = (
-    "(e) => { const r = e.getBoundingClientRect();"
-    " const s = getComputedStyle(e);"
-    " return { vis: r.width > 2 && r.height > 2 &&"
-    " s.visibility !== 'hidden' && s.display !== 'none',"
-    " left: Math.round(r.left), top: Math.round(r.top),"
-    " right: Math.round(r.right), bottom: Math.round(r.bottom) }; }"
-)
+# Cheap presence+visibility probe for the wait loop: resolve the target by CSS
+# `selector` or visible `text` and report whether it's rendered + its rect — in
+# ONE `querySelector` / text-walk, with NO `DOM.getDocument`. Polling the full
+# pierced document every tick is what made page_wait_element crawl to minutes on
+# heavy pages (an ERP console can carry 3800+ actionable nodes). An element in
+# the DOM can still be unusable — 0-size, display:none, visibility:hidden (a
+# search box mounted collapsed until its panel opens is the classic SPA trap) —
+# so presence alone returns too early; this checks it's really visible. The
+# backend node id for the ref is resolved ONCE, only after it's stably visible.
+_WAIT_PROBE_JS = r"""(function (selector, text) {
+  var el = null, idx = -1;
+  var vis = function (e) {
+    var r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    return r.width > 2 && r.height > 2 &&
+           s.visibility !== 'hidden' && s.display !== 'none';
+  };
+  if (selector) {
+    // First VISIBLE match, not just the first match — a menu/grid can have
+    // many same-class nodes where the leading ones are collapsed.
+    var els = document.querySelectorAll(selector);
+    for (var i = 0; i < els.length; i++) {
+      if (vis(els[i])) { el = els[i]; idx = i; break; }
+    }
+  } else if (text) {
+    var w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+    var n;
+    while ((n = w.nextNode())) {
+      if ((n.nodeValue || '').indexOf(text) !== -1) {
+        var p = n.parentElement;
+        if (p && vis(p)) { el = p; break; }
+      }
+    }
+  }
+  if (!el) return null;
+  var r = el.getBoundingClientRect();
+  return {
+    idx: idx,
+    left: Math.round(r.left), top: Math.round(r.top),
+    right: Math.round(r.right), bottom: Math.round(r.bottom),
+  };
+})(__SELECTOR__, __TEXT__)"""
 
 
-async def _resolve_visible(
-    tab: Tab,
-    text: str | None = None,
-    selector: str | None = None,
-) -> dict | None:
-    """Resolve a `text` / CSS `selector` to a currently-**visible** element,
-    returning an AX-shaped hit (`ref`, `role`, `name`, `x`, `y`, `box`) or
-    None if it's absent or present-but-hidden. One shot, no waiting."""
+async def _wait_probe(tab: Tab, text: str | None, selector: str | None) -> dict | None:
+    """One cheap shot (no getDocument): the first VISIBLE `selector`/`text`
+    match's `{idx, left, top, right, bottom}`, or None if none is visible."""
+    js = _WAIT_PROBE_JS.replace(
+        "__SELECTOR__", json.dumps(selector) if selector else "null"
+    ).replace("__TEXT__", json.dumps(text) if text else "null")
+    try:
+        return await tab.evaluate(js)
+    except Exception:
+        return None
+
+
+async def _resolve_ref(
+    tab: Tab, text: str | None, selector: str | None, idx: int
+) -> tuple[str, str, str | None] | None:
+    """Resolve the located element to `(ref, role, name)` — the one
+    `DOM.getDocument`, run once the element is confirmed stably visible. `idx`
+    picks the same (first-visible) match the probe chose."""
     if selector:
-        element = await tab.query_selector(selector)
+        elements = await tab.query_selector_all(selector)
+        if not elements:
+            return None
+        element = elements[idx] if 0 <= idx < len(elements) else elements[0]
     elif text:
         element = await tab.find_element_by_text(text)
     else:
-        return None
+        element = None
     if element is None:
         return None
-    try:
-        info = await element.apply(_VISIBLE_PROBE_JS)
-    except Exception:
-        return None
-    if not info or not info.get("vis"):
-        return None
-    return {
-        "ref": make_ref(1, int(element.backend_node_id)),
-        "role": (element.node_name or "").lower(),
-        "name": (element.text_all or "").strip()[:80] or None,
-        "x": round((info["left"] + info["right"]) / 2),
-        "y": round((info["top"] + info["bottom"]) / 2),
-        "box": {
-            "left": info["left"],
-            "top": info["top"],
-            "right": info["right"],
-            "bottom": info["bottom"],
-        },
-    }
+    return (
+        make_ref(1, int(element.backend_node_id)),
+        (element.node_name or "").lower(),
+        (element.text_all or "").strip()[:80] or None,
+    )
 
 
 async def _focus_element(
@@ -674,20 +702,35 @@ async def page_wait_element(
     """
     loop = asyncio.get_running_loop()
     start = loop.time()
-    prev_ref: str | None = None
+    was_visible = False
     while True:
-        hit = await _resolve_visible(tab, text=text, selector=selector)
-        if hit is not None:
-            # Require the same element visible on two consecutive polls, so a
-            # ref snapshotted mid-remount (which would make type_by_ref act on
-            # a stale node) isn't handed back.
-            if hit["ref"] == prev_ref:
-                hit["found"] = True
-                hit["elapsed"] = round(loop.time() - start, 2)
-                return hit
-            prev_ref = hit["ref"]
+        probe = await _wait_probe(tab, text, selector)
+        if probe is not None:
+            # Require visible on two consecutive polls before resolving the ref,
+            # so a node caught mid-remount (stale for type_by_ref) isn't handed
+            # back. The ref costs one DOM.getDocument — paid once, here.
+            if was_visible:
+                resolved = await _resolve_ref(tab, text, selector, probe["idx"])
+                if resolved is not None:
+                    ref, role, name = resolved
+                    return {
+                        "found": True,
+                        "ref": ref,
+                        "role": role,
+                        "name": name,
+                        "x": round((probe["left"] + probe["right"]) / 2),
+                        "y": round((probe["top"] + probe["bottom"]) / 2),
+                        "box": {
+                            "left": probe["left"],
+                            "top": probe["top"],
+                            "right": probe["right"],
+                            "bottom": probe["bottom"],
+                        },
+                        "elapsed": round(loop.time() - start, 2),
+                    }
+            was_visible = True
         else:
-            prev_ref = None
+            was_visible = False
 
         if loop.time() - start > timeout:
             return {

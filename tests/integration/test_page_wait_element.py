@@ -44,6 +44,9 @@ def _integration_guard():
 _FIXTURE = """<!DOCTYPE html><html><body style="margin:0">
 <button id="trigger">open search</button>
 <input id="box" placeholder="search" style="display:none;width:200px;height:26px">
+<span class="pick" style="display:none">HIDDEN-A</span>
+<span class="pick" style="display:none">HIDDEN-B</span>
+<span class="pick">VISIBLE-C</span>
 <script>
   document.getElementById('trigger').addEventListener('click', function () {
     setTimeout(function () {
@@ -101,6 +104,15 @@ async def test_wait_returns_visible_ref_after_async_reveal(tab):
         "document.getElementById('box').value", return_by_value=True
     )
     assert value == "hello", f"the returned ref wasn't usable: value={value!r}"
+
+
+async def test_wait_picks_first_visible_not_first_match(tab):
+    """With several same-class nodes whose leading ones are hidden (a menu/grid
+    with 63 same-class links where only some are rendered), the wait must return
+    the first VISIBLE one — not querySelector's first (hidden) match."""
+    result = await page_wait_element(tab, selector=".pick", timeout=3)
+    assert result["found"] is True, result
+    assert result["name"] == "VISIBLE-C", f"resolved a hidden sibling: {result}"
 
 
 async def test_wait_not_found_fails_loud(tab):
