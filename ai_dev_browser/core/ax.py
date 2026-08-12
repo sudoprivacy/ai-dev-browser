@@ -576,12 +576,24 @@ async def type_by_ref(
     if not focus_result.get("focused"):
         return {"typed": False, "error": focus_result.get("error", "Focus failed")}
 
-    # Clear if requested: select-all then delete the selection. Same real
-    # key-dispatch path as press_key (virtual key codes included) — 65 = 'A',
-    # and Backspace comes straight from the _KEY_SPECS table.
+    # Clear if requested: select the field's content in JS, then delete it
+    # with a real Backspace (so frameworks see a genuine delete event).
+    # Selection is done via el.select() rather than a Ctrl/Cmd+A chord because
+    # select-all is platform-specific — Ctrl+A is a caret move on macOS, so the
+    # old key-based clear deleted only one char there ("OLDVALUE" -> "OLDVALU").
     if clear:
+        try:
+            element = await get_element_by_ref(tab, ref)
+            await element.apply(
+                "(el) => { if (el.focus) el.focus();"
+                " if (typeof el.select === 'function') { el.select(); }"
+                " else { const r = document.createRange();"
+                " r.selectNodeContents(el); const s = window.getSelection();"
+                " s.removeAllRanges(); s.addRange(r); } }"
+            )
+        except Exception:
+            pass
         bs_key, bs_code, bs_vkey, _ = _KEY_SPECS["backspace"]
-        await _dispatch_key(tab, "a", "KeyA", 65, modifiers=2)  # Ctrl/Cmd + A
         await _dispatch_key(tab, bs_key, bs_code, bs_vkey)
 
     # Type text using insertText (most reliable for input fields)
