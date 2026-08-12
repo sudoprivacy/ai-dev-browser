@@ -2,13 +2,13 @@
 
 import asyncio
 import json
-import time
 
 
 from ai_dev_browser.cdp import input_ as cdp_input
 
 from . import human
 from ._element import Element
+from ._ref import make_ref
 from ._tab import Tab
 from .ax import click_by_ref, get_element_by_ref
 from .snapshot import _get_snapshot
@@ -488,54 +488,55 @@ async def page_scroll(
     return {"scrolled": True, "direction": direction, "amount": amount}
 
 
-async def _wait_for_element(
+# JS run on a resolved element: is it actually rendered, and where. An element
+# can be in the DOM yet unusable — 0-size, display:none, visibility:hidden (a
+# search box mounted collapsed until its panel opens is the classic SPA trap).
+# Waiting on mere presence returns too early; this checks it's really visible.
+_VISIBLE_PROBE_JS = (
+    "(e) => { const r = e.getBoundingClientRect();"
+    " const s = getComputedStyle(e);"
+    " return { vis: r.width > 2 && r.height > 2 &&"
+    " s.visibility !== 'hidden' && s.display !== 'none',"
+    " left: Math.round(r.left), top: Math.round(r.top),"
+    " right: Math.round(r.right), bottom: Math.round(r.bottom) }; }"
+)
+
+
+async def _resolve_visible(
     tab: Tab,
     text: str | None = None,
     selector: str | None = None,
-    timeout: float = 30,
-) -> dict:
-    """Wait for element to appear.
-
-    Args:
-        tab: Tab instance
-        text: Text to wait for
-        selector: CSS selector to wait for
-        timeout: Maximum wait time in seconds
-
-    Returns:
-        dict with found, elapsed
-    """
-    start_time = time.time()
-
-    while True:
-        elapsed = time.time() - start_time
-
-        if elapsed > timeout:
-            return {
-                "found": False,
-                "elapsed": round(elapsed, 2),
-            }
-
-        try:
-            if text:
-                element = await tab.find(text, timeout=1)
-                if element:
-                    return {
-                        "found": True,
-                        "elapsed": round(elapsed, 2),
-                    }
-            elif selector:
-                js_code = f"document.querySelector({repr(selector)}) !== null"
-                found = await tab.evaluate(js_code)
-                if found:
-                    return {
-                        "found": True,
-                        "elapsed": round(elapsed, 2),
-                    }
-        except Exception:
-            pass
-
-        await asyncio.sleep(0.5)
+) -> dict | None:
+    """Resolve a `text` / CSS `selector` to a currently-**visible** element,
+    returning an AX-shaped hit (`ref`, `role`, `name`, `x`, `y`, `box`) or
+    None if it's absent or present-but-hidden. One shot, no waiting."""
+    if selector:
+        element = await tab.query_selector(selector)
+    elif text:
+        element = await tab.find_element_by_text(text)
+    else:
+        return None
+    if element is None:
+        return None
+    try:
+        info = await element.apply(_VISIBLE_PROBE_JS)
+    except Exception:
+        return None
+    if not info or not info.get("vis"):
+        return None
+    return {
+        "ref": make_ref(1, int(element.backend_node_id)),
+        "role": (element.node_name or "").lower(),
+        "name": (element.text_all or "").strip()[:80] or None,
+        "x": round((info["left"] + info["right"]) / 2),
+        "y": round((info["top"] + info["bottom"]) / 2),
+        "box": {
+            "left": info["left"],
+            "top": info["top"],
+            "right": info["right"],
+            "bottom": info["bottom"],
+        },
+    }
 
 
 async def _focus_element(
@@ -633,41 +634,68 @@ async def page_wait_element(
     selector: str | None = None,
     timeout: float = 30,
 ) -> dict:
-    """Use when: an element is expected to appear asynchronously (after a
-    navigation, XHR, SPA render) and you need to block until it's there
-    before acting. Returns `{found, elapsed, message}` — then call the
-    matching `click_*` / `type_*` to interact.
+    """Use when: an element appears **asynchronously after an action** — you
+    click a menu and its panel/input renders, open a modal, a suggestion list
+    drops, a tab swaps in a new panel — and you must wait for it to be usable
+    before acting. This is the fix for the `mouse_click` → `sleep` → re-discover
+    dance: `click_* → page_wait_element(selector=…) → type_by_ref(ref)`.
+
+    Returns `{found, ref, role, name, x, y, box, elapsed}` — feed `ref`
+    STRAIGHT into `type_by_ref` / `click_by_ref` / `focus_by_ref`, no
+    intermediate `page_discover`.
+
+    Waits for the element to be **visible**, not merely present: a control
+    that's mounted collapsed (0-size / `display:none` / `visibility:hidden`
+    until its panel opens — very common in SPAs/ERPs) is skipped until it
+    actually renders, and the returned `ref` is one that stayed put across two
+    polls (so it isn't a node caught mid-remount). Locate ARIA-less controls by
+    CSS `selector` (`input[datarole=x]`, `[placeholder*=智能]`, `.kd-foo`);
+    `text` matches visible text in the top frame.
 
     Args:
         tab: Tab instance
-        text: Text to wait for
-        selector: CSS selector to wait for
+        text: Visible text to wait for
+        selector: CSS selector to wait for (use this for ARIA-less / datarole
+            controls, or anything without visible text)
         timeout: Maximum wait time in seconds
 
     Returns:
-        dict with found, elapsed, message
+        dict `{found: True, ref, role, name, x, y, box, elapsed}` once the
+        element is visible, or `{found: False, elapsed, message}` on timeout.
 
     Failure:
-        Element didn't appear within `timeout` seconds. Try a longer
-        timeout if the page is slow; a broader locator (partial text
-        instead of exact, less-specific CSS selector); or confirm the
-        element is expected on this page via `page_discover`. For
-        iframe-embedded targets with a text locator, note that
-        text-based wait scans the top frame only — use
-        `find_by_text` + `click_by_ref` pattern instead of waiting.
+        The element never became visible within `timeout`. It may be present
+        but still collapsed (its trigger action may not have opened its panel
+        yet — re-do the click, or raise `timeout`); the locator may be wrong
+        (check with `page_discover`, try a broader `selector` / partial
+        `text`); or it's in a cross-origin iframe (unreachable). A `text`
+        locator scans the top frame only — prefer a CSS `selector` for
+        iframe/ARIA-less targets.
     """
-    result = await _wait_for_element(tab, text=text, selector=selector, timeout=timeout)
-
-    # Add descriptive message
-    if result.get("found"):
-        if text:
-            result["message"] = f"Element with text '{text}' found"
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    prev_ref: str | None = None
+    while True:
+        hit = await _resolve_visible(tab, text=text, selector=selector)
+        if hit is not None:
+            # Require the same element visible on two consecutive polls, so a
+            # ref snapshotted mid-remount (which would make type_by_ref act on
+            # a stale node) isn't handed back.
+            if hit["ref"] == prev_ref:
+                hit["found"] = True
+                hit["elapsed"] = round(loop.time() - start, 2)
+                return hit
+            prev_ref = hit["ref"]
         else:
-            result["message"] = f"Element '{selector}' found"
-    else:
-        result["message"] = f"Timeout after {timeout}s"
+            prev_ref = None
 
-    return result
+        if loop.time() - start > timeout:
+            return {
+                "found": False,
+                "elapsed": round(loop.time() - start, 2),
+                "message": f"Timeout after {timeout}s (not visible)",
+            }
+        await asyncio.sleep(0.3)
 
 
 async def click_by_text(
