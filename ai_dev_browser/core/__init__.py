@@ -22,6 +22,7 @@ from .ax import (
     highlight_by_ref,
     hover_by_ref,
     html_by_ref,
+    press_key,
     screenshot_by_ref,
     select_by_ref,
     type_by_ref,
@@ -140,6 +141,7 @@ __all__ = [
     "select_by_ref",
     "type_by_ref",
     "upload_by_ref",
+    "press_key",
     # Browser lifecycle
     "browser_start",
     "browser_stop",

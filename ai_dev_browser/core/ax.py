@@ -386,30 +386,175 @@ async def focus_by_ref(
         return {"focused": False, "error": str(e)}
 
 
+# Keyboard keys — real CDP key events carrying the fields heavy / legacy
+# frameworks actually read. `type_by_ref` types via `Input.insertText` (an
+# IME-style commit): it lands text reliably but dispatches NO key events, so
+# "press Enter to submit" has no path. A naive `Input.dispatchKeyEvent(Enter)`
+# also commonly fails on ERP-grade UIs: they gate Enter on `event.keyCode === 13`
+# (which only exists when `windowsVirtualKeyCode` is set) and some listen on
+# `keypress` (which only fires when the key carries `text`). Each spec sets both
+# plus the DOM `key`/`code`, so the event is indistinguishable from a real press.
+#
+#   name -> (dom key, dom code, virtual key code, text | None)
+_KEY_SPECS: dict[str, tuple[str, str, int, str | None]] = {
+    "enter": ("Enter", "Enter", 13, "\r"),
+    "tab": ("Tab", "Tab", 9, None),
+    "escape": ("Escape", "Escape", 27, None),
+    "backspace": ("Backspace", "Backspace", 8, None),
+    "delete": ("Delete", "Delete", 46, None),
+    "space": (" ", "Space", 32, " "),
+    "arrowup": ("ArrowUp", "ArrowUp", 38, None),
+    "arrowdown": ("ArrowDown", "ArrowDown", 40, None),
+    "arrowleft": ("ArrowLeft", "ArrowLeft", 37, None),
+    "arrowright": ("ArrowRight", "ArrowRight", 39, None),
+    "home": ("Home", "Home", 36, None),
+    "end": ("End", "End", 35, None),
+    "pageup": ("PageUp", "PageUp", 33, None),
+    "pagedown": ("PageDown", "PageDown", 34, None),
+}
+
+# Aliases the LLM is likely to pass for the same key.
+_KEY_ALIASES = {
+    "esc": "escape",
+    "del": "delete",
+    "return": "enter",
+    "up": "arrowup",
+    "down": "arrowdown",
+    "left": "arrowleft",
+    "right": "arrowright",
+}
+
+
+def _resolve_key(name: str) -> tuple[str, str, int, str | None] | None:
+    norm = name.strip().lower().replace("_", "").replace("-", "").replace(" ", "")
+    norm = _KEY_ALIASES.get(norm, norm)
+    return _KEY_SPECS.get(norm)
+
+
+async def press_key(
+    tab: Tab,
+    key: str,
+    ref: str | None = None,
+    modifiers: int = 0,
+) -> dict:
+    """Use when: text is already in a field (via `type_by_ref` /
+    `type_by_text`) and you need to *submit* or navigate with a real key —
+    most often **Enter** to fire a search / form, or Tab / Escape / arrows.
+
+    Sends a genuine CDP key event (isTrusted=true) to the focused element
+    with the `keyCode` and `keypress` that heavy / legacy frameworks (ERP,
+    jQuery-era widgets) require — a synthetic `KeyboardEvent`, or a bare
+    `dispatchKeyEvent` without a virtual key code, does NOT trigger those.
+
+    Pass `ref` to focus that element first (from `page_discover` /
+    `find_by_*`); omit it to press on whatever is currently focused — e.g.
+    right after `type_by_ref`, which leaves the field focused. For the common
+    "type then Enter", prefer `type_by_ref(..., enter=True)` (one call).
+
+    Returns once the key is dispatched, not when the app reacts — an Enter
+    that kicks off a search resolves before the dropdown renders. Poll for
+    the result with `page_wait_element` / `page_discover`, don't screenshot.
+
+    Args:
+        tab: Tab instance
+        key: Key name — Enter, Tab, Escape, Backspace, Delete, Space,
+            ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown
+            (case-insensitive; aliases: esc, del, return, up/down/left/right)
+        ref: Optional element ref to focus before pressing
+        modifiers: Modifier bitmask (Alt=1, Ctrl=2, Meta=4, Shift=8)
+
+    Returns:
+        dict `{pressed: True, key, ref}` on success, or
+        `{pressed: False, reason}` for an unknown key / invalid ref.
+
+    Failure:
+        Unknown key name — pass one of the supported keys above. If a heavy
+        framework still ignores Enter, confirm the field is focused (press
+        with no `ref` right after `type_by_ref`, which leaves focus on it)
+        and that the text actually landed. A stale `ref` — re-run
+        `page_discover` / `find_by_*` for a fresh one.
+    """
+    spec = _resolve_key(key)
+    if spec is None:
+        return {
+            "pressed": False,
+            "reason": f"unknown key {key!r}; supported: "
+            + ", ".join(sorted(_KEY_SPECS)),
+        }
+    dom_key, code, vkey, text = spec
+
+    if ref is not None:
+        _, _, node_id = parse_ref(ref)
+        if node_id is None:
+            return {"pressed": False, "reason": f"invalid ref (no node id): {ref!r}"}
+        try:
+            await tab.send(dom.focus(backend_node_id=dom.BackendNodeId(node_id)))
+        except Exception as e:
+            return {"pressed": False, "reason": f"could not focus {ref!r}: {e}"}
+
+    mods = modifiers or 0
+    # `text` on the keyDown is what makes Blink also fire `keypress` (and, in an
+    # editable, `beforeinput`/`input`). For keys without text (Tab, arrows, …)
+    # `text` is None and dispatch_key_event simply omits it; keyUp never carries
+    # text either way.
+    await tab.send(
+        cdp_input.dispatch_key_event(
+            "keyDown",
+            key=dom_key,
+            code=code,
+            windows_virtual_key_code=vkey,
+            native_virtual_key_code=vkey,
+            modifiers=mods,
+            text=text,
+            unmodified_text=text,
+        )
+    )
+    await tab.send(
+        cdp_input.dispatch_key_event(
+            "keyUp",
+            key=dom_key,
+            code=code,
+            windows_virtual_key_code=vkey,
+            native_virtual_key_code=vkey,
+            modifiers=mods,
+        )
+    )
+    return {"pressed": True, "key": dom_key, "ref": ref}
+
+
 async def type_by_ref(
     tab: Tab,
     ref: str,
     text: str,
     clear: bool = False,
+    enter: bool = False,
 ) -> dict:
     """Use when: you have a `ref` from `page_discover()` and want to type
-    into that specific input. Returns `{typed, ref, text}`.
+    into that specific input. Returns `{typed, ref, text}` (plus `entered`
+    when `enter=True`).
 
     If you can identify the input by its visible label / placeholder, skip
     `page_discover` and use `type_by_text` directly.
+
+    Set `enter=True` to press Enter after typing — the atomic "type into the
+    search box and submit" for heavy JS UIs (ERP smart-search, etc.) where the
+    dropdown only appears on a real Enter. For other submit keys use
+    `press_key` separately.
 
     Args:
         tab: Tab instance
         ref: Element ref from page_discover() (e.g., "5#214")
         text: Text to type into the element
         clear: If True, clear existing content first
+        enter: If True, press Enter after typing (submits the field)
 
     Returns:
-        dict with typed status
+        dict with typed status; includes `entered` when `enter=True`
 
     Example:
         type_by_ref("5#214", "myusername")
         type_by_ref("5#214", "newvalue", clear=True)
+        type_by_ref("5#214", "widget", enter=True)   # type + submit
     """
     # First focus the element
     focus_result = await focus_by_ref(tab, ref)
@@ -454,7 +599,13 @@ async def type_by_ref(
     # Type text using insertText (most reliable for input fields)
     await tab.send(cdp_input.insert_text(text=text))
 
-    return {"typed": True, "ref": ref, "text": text}
+    result = {"typed": True, "ref": ref, "text": text}
+    if enter:
+        # Re-focus the same ref before Enter so the key lands on this field
+        # even if insertText or a framework moved focus.
+        pressed = await press_key(tab, "Enter", ref=ref)
+        result["entered"] = bool(pressed.get("pressed"))
+    return result
 
 
 # ---------------------------------------------------------------------------

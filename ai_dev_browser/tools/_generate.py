@@ -48,6 +48,7 @@ TOOL_META = {
     "select_text": {"result_key": "selected"},
     "type_by_ref": {"result_key": "typed"},
     "type_by_text": {"result_key": "typed"},
+    "press_key": {"result_key": "pressed"},
     "focus_by_ref": {"result_key": "focused"},
     "hover_by_ref": {"result_key": "hovered"},
     "highlight_by_ref": {"result_key": "highlighted"},
