@@ -846,11 +846,12 @@ async def click_row_by_text(
     checkbox: bool = False,
 ) -> dict:
     """Use when: you need to act on a row in a **grid table** by its visible
-    text and `page_discover` / `click_by_text` can't reliably — grids whose
-    rows are bare `div[class*=row]` (Kingdee K3Cloud F7 pick-lists,
-    authorization tables). Locates the row that actually *contains* `text` and
-    clicks it, so it can't drift onto the neighbour the way an estimated
-    `mouse_click --x --y` does.
+    text — click it, double-click it, or **toggle its checkbox** — and
+    `page_discover` / `click_by_text` can't reliably (grids whose rows are bare
+    `div[class*=row]`: Kingdee K3Cloud F7 pick-lists, authorization tables).
+    Locates the row that actually *contains* `text` and acts on its exact
+    target, so it can't drift onto the neighbour an estimated
+    `mouse_click --x --y` would hit.
 
     Returns `{clicked, text, matches, x, y}` — `text` is the row it actually
     hit (confirm it's the one you meant) and `matches` how many rows contained
