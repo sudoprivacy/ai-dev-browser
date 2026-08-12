@@ -437,14 +437,23 @@ async def page_discover(
     elements get `FRAME_xxx:` prefix on their refs, so filter the
     returned list by prefix to narrow to one frame).
 
+    Also surfaces **ARIA-less controls the accessibility tree can't see** —
+    custom `datarole` inputs, `div[class*=row]` grid rows, `kd-*` widgets
+    (enterprise apps / ERPs like Kingdee K3Cloud) — each with a real `ref` +
+    `box`. So this is the tool to reach a control when `click_by_text` /
+    `find_by_text` come up empty on a heavy JS app. For a ref-less grid ROW,
+    `click_row_by_text` clicks it directly.
+
     Returns a **list** of element dicts you iterate directly
     (`for el in await page_discover(tab): ...`). Feed each `ref` into
     `click_by_ref` / `type_by_ref` / `focus_by_ref` and each `x`/`y`
     into `mouse_click`. Use `len(result)` if you need the count.
 
-    Skip this when you already know how to locate your target — go
-    directly to `click_by_html_id` / `click_by_xpath` / `click_by_text`
-    (one call, no intermediate ref catalog).
+    Pass `text` to filter by label — cheapest and most precise on a huge
+    page (an ERP grid can have thousands of nodes; the filter runs before the
+    costly geometry pass). Skip this tool entirely when you already know a
+    locator: go straight to `click_by_html_id` / `click_by_xpath` /
+    `click_by_text` (one call, no intermediate ref catalog).
 
     Args:
         tab: Tab instance
@@ -452,6 +461,11 @@ async def page_discover(
         interactable_only: If True (default), only return interactive elements
         include_coordinates: If True (default), include x/y coordinates
         include_iframes: If True (default), include iframe content
+        dom_scan: If True (default), also scan the DOM for actionable elements
+            the AX tree misses (ARIA-less `datarole` / `div` grids / `kd-*`).
+            Read-only — never mutates the page. Turn off for pure-AX results.
+        dom_limit: Max DOM-scanned elements to return (default 200); a `text`
+            filter keeps a real scan far under this.
 
     Returns:
         list of element dicts, each containing:
@@ -460,13 +474,14 @@ async def page_discover(
         - name: accessible name
         - x, y: center coordinates (if include_coordinates=True)
         - box: {left, top, right, bottom} (if include_coordinates=True)
+        - datarole: value of a custom `datarole` attribute, when present
 
     Example:
         elements = await page_discover()               # All interactive elements
         for el in elements:                            # Iterate directly
             if "Sign in" in el.get("name", ""):
                 await click_by_ref(tab, el["ref"])
-        page_discover(text="登录")                     # Filter by text
+        page_discover(text="登录")                     # Filter by label
     """
     from ai_dev_browser.cdp import dom
 
