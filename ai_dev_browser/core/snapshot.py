@@ -23,8 +23,17 @@ from ._tab import Tab
 # NEVER mutates the page — tagging nodes to resolve refs would trip the grid's
 # MutationObservers, so refs come from the pierced-document walk instead.
 _ACTIONABLE_TAGS = {"input", "textarea", "select", "button", "a"}
-_ACTIONABLE_ATTRS = ("onclick", "datarole", "role", "tabindex", "contenteditable")
-_ACTIONABLE_CLASS = re.compile(r"cell|row|grid|kd-|k-icon", re.IGNORECASE)
+_ACTIONABLE_ATTRS = (
+    "onclick",
+    "datarole",
+    "data-role",
+    "role",
+    "tabindex",
+    "contenteditable",
+)
+_ACTIONABLE_CLASS = re.compile(
+    r"cell|row|grid|kd-|k-icon|check|switch|toggle|radio", re.IGNORECASE
+)
 
 
 def _node_attr(node, name: str) -> str | None:
@@ -105,6 +114,7 @@ async def _dom_scan(tab: Tab, text: str | None = None, limit: int = 200) -> list
         el = {
             "ref": make_ref(len(results) + 1, int(backend)),
             "role": _node_attr(node, "role")
+            or _node_attr(node, "data-role")
             or _node_attr(node, "datarole")
             or (getattr(node, "node_name", "") or "").lower(),
             "name": label,
@@ -117,7 +127,7 @@ async def _dom_scan(tab: Tab, text: str | None = None, limit: int = 200) -> list
                 "bottom": round(bottom),
             },
         }
-        datarole = _node_attr(node, "datarole")
+        datarole = _node_attr(node, "datarole") or _node_attr(node, "data-role")
         if datarole:
             el["datarole"] = datarole
         results.append(el)

@@ -176,3 +176,133 @@ async def test_click_row_by_text_not_found_fails_loud(tab):
     result = await click_row_by_text(tab, "NO_SUCH_ROLE_XYZ")
     assert result["clicked"] is False, result
     assert "no grid row" in result["reason"].lower()
+
+
+# --- Grid checkbox: the Kingdee / MUI / AntD locked-input + wrapper pattern ---
+# The real <input> has onclick="return false" (or is hidden); the actual toggle
+# handler lives on a wrapper the input sits inside. Clicking the input is a
+# no-op; the wrapper must be clicked. Reproduced faithfully (verified against
+# live Kingdee port 9460: input onclick="return false;", data-role=checkbox
+# wrapper). The div is wider than the input so its centre misses the input,
+# exactly like the real cell.
+_CHECKBOX_FIXTURE = """<!DOCTYPE html><html><body style="margin:0">
+<table id="grid" style="border-collapse:collapse"></table>
+<script>
+  const rows = [['财务会计 总账', true], ['财务会计 报表', true], ['无复选框行', false]];
+  const grid = document.getElementById('grid');
+  rows.forEach(function (pair) {
+    const name = pair[0], hasBox = pair[1];
+    const tr = document.createElement('tr');
+    tr.setAttribute('role', 'row');
+    const td1 = document.createElement('td');
+    td1.setAttribute('role', 'gridcell');
+    td1.style.cssText = 'width:90px;height:34px';
+    if (hasBox) {
+      const div = document.createElement('div');
+      div.setAttribute('data-role', 'checkbox');
+      div.className = 'kd-checkbox-div gridCheck';
+      div.style.cssText = 'width:70px;height:24px;position:relative;cursor:pointer';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.className = 'gridCheck';
+      input.setAttribute('onclick', 'return false;');       // locked like Kingdee
+      input.style.cssText = 'position:absolute;left:2px;top:4px';
+      div.appendChild(input);
+      div.appendChild(document.createElement('label'));
+      // Only a click NOT on the locked input toggles it — the wrapper handler.
+      div.addEventListener('click', function (e) {
+        if (e.target !== input) input.checked = !input.checked;
+      });
+      td1.appendChild(div);
+    }
+    tr.appendChild(td1);
+    const td2 = document.createElement('td');
+    td2.setAttribute('role', 'gridcell');
+    td2.textContent = name;
+    tr.appendChild(td2);
+    grid.appendChild(tr);
+  });
+</script>
+</body></html>"""
+
+
+@pytest.fixture
+async def cb_tab():
+    result = browser_start(headless=True, temp=True, reuse="none")
+    assert "error" not in result, f"browser_start failed: {result}"
+    port = result["port"]
+    browser_client = None
+    try:
+        browser_client = await connect_browser(port=port)
+        the_tab = await get_active_tab(browser_client)
+        url = (
+            "data:text/html;charset=utf-8;base64,"
+            + base64.b64encode(_CHECKBOX_FIXTURE.encode()).decode()
+        )
+        await page_goto(the_tab, url)
+        yield the_tab
+    finally:
+        if browser_client is not None:
+            with contextlib.suppress(Exception):
+                await browser_client.close()
+        with contextlib.suppress(Exception):
+            browser_stop(port=port)
+
+
+async def _cb_checked(tab, needle: str) -> bool:
+    js = (
+        "(()=>{const r=[...document.querySelectorAll('tr')]"
+        f".find(r=>(r.innerText||'').indexOf({needle!r})!==-1);"
+        "const c=r&&r.querySelector('input[type=checkbox]');"
+        "return c?c.checked:null;})()"
+    )
+    return await tab.evaluate(js, return_by_value=True)
+
+
+async def test_direct_input_click_is_a_noop_then_checkbox_mode_toggles(cb_tab):
+    """The reporter's exact bug + fix. A direct click on the locked <input>
+    does NOT toggle (onclick=return false); click_row_by_text(checkbox=True),
+    which clicks the wrapper, DOES."""
+    assert await _cb_checked(cb_tab, "总账") is False
+
+    # Contrast: click the locked input's own centre — must stay unchecked.
+    rect = await cb_tab.evaluate(
+        "(()=>{const r=[...document.querySelectorAll('tr')]"
+        ".find(r=>(r.innerText||'').indexOf('总账')!==-1);"
+        "const c=r.querySelector('input');const b=c.getBoundingClientRect();"
+        "return {x:Math.round(b.left+b.width/2),y:Math.round(b.top+b.height/2)};})()"
+    )
+    await cb_tab.mouse_click(rect["x"], rect["y"])
+    assert await _cb_checked(cb_tab, "总账") is False, (
+        "direct input click toggled — fixture isn't reproducing the locked input"
+    )
+
+    # The fix: checkbox mode clicks the wrapper → toggles, and verifies it.
+    result = await click_row_by_text(cb_tab, "总账", checkbox=True)
+    assert result["clicked"] is True, result
+    assert result["was"] is False and result["checked"] is True, result
+    assert await _cb_checked(cb_tab, "总账") is True
+
+
+async def test_checkbox_mode_toggles_back_off(cb_tab):
+    """Second checkbox click toggles it back — bidirectional, state verified."""
+    on = await click_row_by_text(cb_tab, "报表", checkbox=True)
+    assert on["checked"] is True, on
+    off = await click_row_by_text(cb_tab, "报表", checkbox=True)
+    assert off["was"] is True and off["checked"] is False, off
+
+
+async def test_page_discover_surfaces_the_checkbox_wrapper(cb_tab):
+    """The wrapper div (data-role=checkbox) is surfaced as a checkbox-role,
+    clickable ref — not just the locked input."""
+    els = await page_discover(cb_tab, dom_scan=True)
+    wrapper = next((e for e in els if (e.get("role") or "") == "checkbox"), None)
+    assert wrapper is not None, f"no checkbox-role wrapper surfaced: {_names(els)}"
+    assert wrapper.get("ref") and wrapper.get("box"), wrapper
+
+
+async def test_checkbox_mode_on_row_without_checkbox_fails_loud(cb_tab):
+    """A matched row with no checkbox → fail loud, don't silent-click the row."""
+    result = await click_row_by_text(cb_tab, "无复选框行", checkbox=True)
+    assert result["clicked"] is False, result
+    assert "no checkbox" in result["reason"].lower()

@@ -750,11 +750,18 @@ async def click_by_text(
     return await _with_nav_feedback(tab, action)
 
 
-# Locate a grid ROW by its text and click its exact centre — for ARIA-less
-# div-grids (Kingdee K3Cloud F7 pick-lists / authorization tables) whose rows
-# are bare `div[class*=row]` with no ref of their own, where estimating
-# coordinates from a screenshot mis-clicks the neighbouring row.
-_FIND_ROW_JS = """(function (needle, nth) {
+# Locate a grid ROW by its text, then act on it — for grids (Kingdee K3Cloud
+# F7 pick-lists / authorization tables) where estimating coordinates from a
+# screenshot mis-clicks the neighbouring row. One row-finder, three modes:
+#   "row"      -> the row's centre (click / double-click the row)
+#   "checkbox" -> the clickable target of the row's checkbox
+#   "verify"   -> read the row checkbox's checked state (post-click)
+#
+# The checkbox target is the widget that actually toggles: many frameworks
+# (Kingdee `<input onclick="return false">`, MUI, AntD, Element UI) lock or
+# hide the real `<input>` and route the click through a wrapper `<div>` / label,
+# so clicking the input does nothing. This prefers the visible wrapper.
+_FIND_ROW_JS = r"""(function (needle, nth, mode) {
   const cand = Array.prototype.slice
     .call(document.querySelectorAll('[class*=row],[role=row],tr'))
     .filter(function (el) { return (el.innerText || '').indexOf(needle) !== -1; })
@@ -769,16 +776,66 @@ _FIND_ROW_JS = """(function (needle, nth) {
     while (p) { if (set.has(p)) return false; p = p.parentElement; }
     return true;
   });
-  const el = outer[nth];
-  if (!el) return null;
-  const r = el.getBoundingClientRect();
-  return {
-    x: Math.round(r.left + r.width / 2),
-    y: Math.round(r.top + r.height / 2),
-    matches: outer.length,
-    text: (el.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 80),
+  const row = outer[nth];
+  if (!row) return null;
+  const vis = function (el) {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 2 && r.height > 2;
   };
-})(__NEEDLE__, __NTH__)"""
+  const cb = row.querySelector('input[type=checkbox],input[type=radio]');
+
+  if (mode === 'verify') {
+    return { checked: cb ? !!cb.checked : null,
+             ariaSelected: row.getAttribute('aria-selected') };
+  }
+
+  const info = {
+    matches: outer.length,
+    text: (row.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+  };
+
+  if (mode !== 'checkbox') {
+    const r = row.getBoundingClientRect();
+    info.x = Math.round(r.left + r.width / 2);
+    info.y = Math.round(r.top + r.height / 2);
+    return info;
+  }
+
+  // checkbox mode — click the widget that actually handles the toggle.
+  let target = null;
+  const roleCb = row.querySelector(
+    '[role=checkbox],[data-role=checkbox],[datarole=checkbox]');
+  if (cb) {
+    info.checkedBefore = !!cb.checked;
+    let wrapper = null, n = cb;
+    for (let i = 0; i < 5 && n; i++) {
+      n = n.parentElement;
+      if (!n || n === row) break;
+      if (n.matches('[role=checkbox],[data-role=checkbox],[datarole=checkbox]') ||
+          /check|switch|toggle/i.test(n.className || '')) { wrapper = n; break; }
+    }
+    let label = null;
+    try {
+      label = cb.id
+        ? row.querySelector('label[for="' +
+            (window.CSS && CSS.escape ? CSS.escape(cb.id) : cb.id) + '"]')
+        : cb.closest('label');
+    } catch (e) {}
+    const locked = cb.hasAttribute('onclick');   // e.g. onclick="return false"
+    target = (locked && vis(wrapper)) ? wrapper
+      : (vis(cb) ? cb : (vis(wrapper) ? wrapper : (vis(label) ? label
+      : (wrapper || cb))));
+  } else if (roleCb) {
+    target = roleCb;
+    info.checkedBefore = roleCb.getAttribute('aria-checked') === 'true';
+  }
+  if (!target) { info.nocheckbox = true; return info; }
+  const tr = target.getBoundingClientRect();
+  info.x = Math.round(tr.left + tr.width / 2);
+  info.y = Math.round(tr.top + tr.height / 2);
+  return info;
+})(__NEEDLE__, __NTH__, __MODE__)"""
 
 
 async def click_row_by_text(
@@ -786,47 +843,68 @@ async def click_row_by_text(
     text: str,
     double: bool = False,
     nth: int = 0,
+    checkbox: bool = False,
 ) -> dict:
-    """Use when: you need to select a row in a **grid table** by its visible
-    text and `page_discover` / `click_by_text` can't — the rows are bare
-    `div[class*=row]` with no accessible role (Kingdee K3Cloud F7 pick-lists,
+    """Use when: you need to act on a row in a **grid table** by its visible
+    text and `page_discover` / `click_by_text` can't reliably — grids whose
+    rows are bare `div[class*=row]` (Kingdee K3Cloud F7 pick-lists,
     authorization tables). Locates the row that actually *contains* `text` and
-    clicks its exact centre, so it can't drift onto the neighbour the way an
-    estimated `mouse_click --x --y` does.
+    clicks it, so it can't drift onto the neighbour the way an estimated
+    `mouse_click --x --y` does.
 
     Returns `{clicked, text, matches, x, y}` — `text` is the row it actually
-    hit (verify it's the one you meant) and `matches` how many rows contained
+    hit (confirm it's the one you meant) and `matches` how many rows contained
     the text (if >1, disambiguate with `nth`).
 
-    Set `double=True` to double-click (the common "double-click a row to
-    choose it" in F7 pick dialogs). For a normally-labelled control prefer
-    `click_by_text`; this is specifically for ref-less grid rows.
+    `checkbox=True` toggles the row's **checkbox** instead of clicking the row,
+    and clicks the element that actually handles the toggle — many grids
+    (Kingdee `<input onclick="return false">`, MUI, AntD) lock or hide the real
+    `<input>` and route the click through a wrapper `<div>`/label, so clicking
+    the input is a no-op. The return adds `{was, checked}` (the checkbox state
+    before/after, read back from the DOM) so you can confirm the toggle took
+    without a second call. `double=True` double-clicks the row ("double-click
+    to choose" in F7 dialogs); ignored when `checkbox=True`.
+
+    For a normally-labelled control prefer `click_by_text`; this is for
+    ref-less grid rows and their locked/wrapped checkboxes.
 
     Args:
         tab: Tab instance
         text: Text the target row contains (substring)
-        double: Double-click instead of single-click
+        double: Double-click the row instead of single-click
         nth: 0-based index when several rows match the text
+        checkbox: Toggle the row's checkbox (via its real clickable target)
+            instead of clicking the row
 
     Returns:
-        dict `{clicked: True, text, matches, x, y, double}` on success, or
-        `{clicked: False, reason}` when no row contains the text.
+        dict `{clicked: True, text, matches, x, y}` (+ `double`), or for
+        `checkbox=True` `{clicked: True, text, matches, x, y, was, checked}`
+        where `checked` is the verified post-click state. `{clicked: False,
+        reason}` when no row contains the text (or it has no checkbox).
 
     Failure:
-        No grid row contained the text. Check spelling; try a shorter unique
-        substring; confirm the grid is rendered (`page_screenshot`); or the
-        control isn't a grid row — use `find_by_text` + `click_by_ref`, or
-        `click_by_text` for a normally-labelled element.
+        No grid row contained the text — check spelling, try a shorter unique
+        substring, confirm the grid is rendered (`page_screenshot`), or the
+        control isn't a grid row (use `find_by_text` + `click_by_ref`, or
+        `click_by_text`). With `checkbox=True`, the matched row may simply have
+        no checkbox — `reason` says so.
     """
-    js = _FIND_ROW_JS.replace("__NEEDLE__", json.dumps(text)).replace(
-        "__NTH__", str(int(nth))
-    )
-    hit = await tab.evaluate(js)
+
+    def _row_js(mode: str) -> str:
+        return (
+            _FIND_ROW_JS.replace("__NEEDLE__", json.dumps(text))
+            .replace("__NTH__", str(int(nth)))
+            .replace("__MODE__", json.dumps(mode))
+        )
+
+    hit = await tab.evaluate(_row_js("checkbox" if checkbox else "row"))
     if not hit:
         return {"clicked": False, "reason": f"no grid row containing {text!r}"}
+    if checkbox and hit.get("nocheckbox"):
+        return {"clicked": False, "reason": f"row {hit.get('text')!r} has no checkbox"}
 
     x, y = hit["x"], hit["y"]
-    if double:
+    if double and not checkbox:
         # Two press/release pairs, the second with click_count=2, so a real
         # `dblclick` fires (a plain double mouse_click doesn't).
         btn = cdp_input.MouseButton("left")
@@ -843,14 +921,24 @@ async def click_row_by_text(
             )
     else:
         await tab.mouse_click(x, y)
-    return {
+
+    result = {
         "clicked": True,
         "text": hit.get("text"),
         "matches": hit.get("matches"),
         "x": x,
         "y": y,
-        "double": double,
     }
+    if checkbox:
+        # Read the checkbox state back so the caller can confirm the toggle
+        # took — the whole point, since clicking a locked <input> wouldn't.
+        await tab.sleep(0.15)
+        after = await tab.evaluate(_row_js("verify"))
+        result["was"] = hit.get("checkedBefore")
+        result["checked"] = (after or {}).get("checked")
+    else:
+        result["double"] = double
+    return result
 
 
 async def find_by_text(
