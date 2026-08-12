@@ -111,10 +111,16 @@ def _format_ax_node(
         }
 
         if name:
-            info["name"] = name[:100]
+            # AX names/values are usually strings but a slider / spinbutton /
+            # progress node reports a NUMBER — slicing that raised
+            # "'int' object is not subscriptable" and aborted the whole
+            # snapshot, so page_discover returned an error instead of refs
+            # (fatal on ARIA-poor apps full of numeric inputs). Coerce first.
+            info["name"] = str(name)[:100]
 
         if hasattr(node, "value") and node.value:
-            val = node.value.value if hasattr(node.value, "value") else str(node.value)
+            raw = node.value.value if hasattr(node.value, "value") else node.value
+            val = str(raw) if raw is not None else ""
             if val:
                 info["value"] = val[:50]
 
