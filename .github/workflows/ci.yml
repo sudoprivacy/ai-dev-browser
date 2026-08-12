@@ -74,7 +74,8 @@ jobs:
             tests/integration/test_image_cap.py \
             tests/integration/test_scroll_embedded_target.py \
             tests/integration/test_press_key.py \
-            tests/integration/test_page_discover.py
+            tests/integration/test_page_discover.py \
+            tests/integration/test_dom_discovery.py
 
   # ─────────────────────────────────────────────────────────────────────
   # CI-integration dogfood: prove the documented "consumer's CI" recipe

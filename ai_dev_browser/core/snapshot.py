@@ -1,10 +1,127 @@
 """AI-friendly page snapshot using accessibility tree."""
 
+import re
+
 from ai_dev_browser.cdp import accessibility
+from ai_dev_browser.cdp import dom
 from ai_dev_browser.cdp import page
 
+from ._element import filter_recurse_all
 from ._ref import make_ref, node_id_of
 from ._tab import Tab
+
+
+# DOM-based discovery. The AX-tree snapshot only sees elements the browser
+# gives a role — useless on enterprise apps (Kingdee K3Cloud etc.) that build
+# controls from bare `<div class="kd-*">` + custom `datarole="..."` attributes
+# with NO standard ARIA. `getFullAXTree` returns a fraction of the real
+# controls, so `page_discover` handed back too few refs and the agent was
+# forced to guess click coordinates. This walks the real DOM for actionable
+# nodes and returns each as an AX-shaped dict (ref + bbox + text label).
+#
+# Read-only by construction: reads `DOM.getDocument` + `DOM.getBoxModel` and
+# NEVER mutates the page — tagging nodes to resolve refs would trip the grid's
+# MutationObservers, so refs come from the pierced-document walk instead.
+_ACTIONABLE_TAGS = {"input", "textarea", "select", "button", "a"}
+_ACTIONABLE_ATTRS = ("onclick", "datarole", "role", "tabindex", "contenteditable")
+_ACTIONABLE_CLASS = re.compile(r"cell|row|grid|kd-|k-icon", re.IGNORECASE)
+
+
+def _node_attr(node, name: str) -> str | None:
+    """Read one attribute value from a CDP DOM.Node's flat [n, v, n, v] list."""
+    attrs = getattr(node, "attributes", None) or []
+    for i in range(0, len(attrs) - 1, 2):
+        if attrs[i] == name:
+            return attrs[i + 1]
+    return None
+
+
+def _is_actionable(node) -> bool:
+    """A node the user could click / type into — by tag, by an interaction
+    attribute, or by a grid/widget class (the ARIA-less K3Cloud pattern)."""
+    if (getattr(node, "node_name", "") or "").lower() in _ACTIONABLE_TAGS:
+        return True
+    if any(_node_attr(node, a) is not None for a in _ACTIONABLE_ATTRS):
+        return True
+    return bool(_ACTIONABLE_CLASS.search(_node_attr(node, "class") or ""))
+
+
+def _node_label(node) -> str:
+    """Best-effort human label: an interaction attribute if present, else the
+    node's own text (grid rows carry their text, not an attribute)."""
+    for attr in ("aria-label", "placeholder", "value", "title", "datarole"):
+        val = _node_attr(node, attr)
+        if val and val.strip():
+            return val.strip()[:80]
+    texts = [
+        tn.node_value
+        for tn in filter_recurse_all(node, lambda n: getattr(n, "node_type", 0) == 3)
+        if getattr(tn, "node_value", None)
+    ]
+    joined = re.sub(r"\s+", " ", " ".join(texts)).strip()
+    return joined[:80] if joined else (_node_attr(node, "name") or "").strip()[:80]
+
+
+async def _dom_scan(tab: Tab, text: str | None = None, limit: int = 200) -> list[dict]:
+    """Discover actionable elements straight from the DOM (not the AX tree).
+
+    Read-only. Returns element dicts shaped like the AX ones — `ref`, `role`,
+    `name`, `x`, `y`, `box` (+ `datarole` when present) — so callers can't tell
+    which source a ref came from and `click_by_ref` / `type_by_ref` work
+    uniformly. `text`, when given, filters by label substring BEFORE the
+    per-node box-model round trip, so a text-scoped scan stays cheap.
+    """
+    doc = await tab.send(dom.get_document(-1, True))
+    text_l = text.lower() if text else None
+
+    results: list[dict] = []
+    seen: set = set()
+    for node in filter_recurse_all(doc, _is_actionable):
+        if len(results) >= limit:
+            break
+        label = _node_label(node)
+        if text_l and text_l not in label.lower():
+            continue
+        backend = getattr(node, "backend_node_id", None)
+        if backend is None:
+            continue
+        try:
+            box = await tab.send(
+                dom.get_box_model(backend_node_id=dom.BackendNodeId(int(backend)))
+            )
+        except Exception:
+            continue  # not rendered / detached — invisible, skip
+        if not box or not box.content:
+            continue
+        q = box.content
+        left, right = min(q[0], q[2], q[4], q[6]), max(q[0], q[2], q[4], q[6])
+        top, bottom = min(q[1], q[3], q[5], q[7]), max(q[1], q[3], q[5], q[7])
+        if right - left < 3 or bottom - top < 3:
+            continue  # zero-size
+        key = (round(left), round(top), round(right - left), round(bottom - top), label)
+        if key in seen:  # drop container/child duplicates sharing rect + label
+            continue
+        seen.add(key)
+        el = {
+            "ref": make_ref(len(results) + 1, int(backend)),
+            "role": _node_attr(node, "role")
+            or _node_attr(node, "datarole")
+            or (getattr(node, "node_name", "") or "").lower(),
+            "name": label,
+            "x": round((left + right) / 2),
+            "y": round((top + bottom) / 2),
+            "box": {
+                "left": round(left),
+                "top": round(top),
+                "right": round(right),
+                "bottom": round(bottom),
+            },
+        }
+        datarole = _node_attr(node, "datarole")
+        if datarole:
+            el["datarole"] = datarole
+        results.append(el)
+    return results
 
 
 def _format_ax_node(
@@ -312,6 +429,8 @@ async def page_discover(
     interactable_only: bool = True,
     include_coordinates: bool = True,
     include_iframes: bool = True,
+    dom_scan: bool = True,
+    dom_limit: int = 200,
 ) -> list[dict]:
     """Use when: you DON'T know what's on the page yet — broad exploration
     of all interactable elements (including same-origin iframes; iframe
@@ -397,5 +516,28 @@ async def page_discover(
                 except Exception:
                     # Skip coordinates for this element if we can't get them
                     pass
+
+    # Augment with DOM-based discovery: surfaces ARIA-less controls (custom
+    # `datarole`, `div` grid rows/cells, `kd-*` widgets) the AX tree can't see.
+    # When a control is found both ways (same backend node id), ENRICH the AX
+    # entry with the DOM-only signal — the custom `datarole`, and a text label
+    # when the AX name was empty — rather than dropping it (that would lose the
+    # only handle the agent has on an unlabelled input). DOM-only hits are
+    # appended; they already carry x/y/box from the scan.
+    if dom_scan:
+        ax_by_backend = {
+            nid: e
+            for e in elements
+            if (nid := node_id_of(e.get("ref", ""))) is not None
+        }
+        for de in await _dom_scan(tab, text=text, limit=dom_limit):
+            existing = ax_by_backend.get(node_id_of(de["ref"]))
+            if existing is None:
+                elements.append(de)
+                continue
+            if de.get("datarole") and not existing.get("datarole"):
+                existing["datarole"] = de["datarole"]
+            if not existing.get("name") and de.get("name"):
+                existing["name"] = de["name"]
 
     return elements

@@ -40,6 +40,7 @@ TOOL_META = {
     "browser_list": {"result_key": "count"},
     "click_by_ref": {"result_key": "clicked"},
     "click_by_text": {"result_key": "clicked"},
+    "click_row_by_text": {"result_key": "clicked"},
     "click_by_html_id": {"result_key": "clicked"},
     "click_by_xpath": {"result_key": "clicked"},
     "find_by_text": {"result_key": "found"},

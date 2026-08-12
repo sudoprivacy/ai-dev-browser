@@ -5,6 +5,8 @@ import json
 import time
 
 
+from ai_dev_browser.cdp import input_ as cdp_input
+
 from . import human
 from ._element import Element
 from ._tab import Tab
@@ -746,6 +748,109 @@ async def click_by_text(
         )
         return action
     return await _with_nav_feedback(tab, action)
+
+
+# Locate a grid ROW by its text and click its exact centre — for ARIA-less
+# div-grids (Kingdee K3Cloud F7 pick-lists / authorization tables) whose rows
+# are bare `div[class*=row]` with no ref of their own, where estimating
+# coordinates from a screenshot mis-clicks the neighbouring row.
+_FIND_ROW_JS = """(function (needle, nth) {
+  const cand = Array.prototype.slice
+    .call(document.querySelectorAll('[class*=row],[role=row],tr'))
+    .filter(function (el) { return (el.innerText || '').indexOf(needle) !== -1; })
+    .filter(function (el) {
+      const r = el.getBoundingClientRect();
+      return r.width > 20 && r.height > 2 && r.bottom > 0 && r.top < innerHeight;
+    });
+  const set = new Set(cand);
+  // Keep only the outermost matching row (a grid row can nest sub-rows).
+  const outer = cand.filter(function (el) {
+    let p = el.parentElement;
+    while (p) { if (set.has(p)) return false; p = p.parentElement; }
+    return true;
+  });
+  const el = outer[nth];
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return {
+    x: Math.round(r.left + r.width / 2),
+    y: Math.round(r.top + r.height / 2),
+    matches: outer.length,
+    text: (el.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 80),
+  };
+})(__NEEDLE__, __NTH__)"""
+
+
+async def click_row_by_text(
+    tab: Tab,
+    text: str,
+    double: bool = False,
+    nth: int = 0,
+) -> dict:
+    """Use when: you need to select a row in a **grid table** by its visible
+    text and `page_discover` / `click_by_text` can't — the rows are bare
+    `div[class*=row]` with no accessible role (Kingdee K3Cloud F7 pick-lists,
+    authorization tables). Locates the row that actually *contains* `text` and
+    clicks its exact centre, so it can't drift onto the neighbour the way an
+    estimated `mouse_click --x --y` does.
+
+    Returns `{clicked, text, matches, x, y}` — `text` is the row it actually
+    hit (verify it's the one you meant) and `matches` how many rows contained
+    the text (if >1, disambiguate with `nth`).
+
+    Set `double=True` to double-click (the common "double-click a row to
+    choose it" in F7 pick dialogs). For a normally-labelled control prefer
+    `click_by_text`; this is specifically for ref-less grid rows.
+
+    Args:
+        tab: Tab instance
+        text: Text the target row contains (substring)
+        double: Double-click instead of single-click
+        nth: 0-based index when several rows match the text
+
+    Returns:
+        dict `{clicked: True, text, matches, x, y, double}` on success, or
+        `{clicked: False, reason}` when no row contains the text.
+
+    Failure:
+        No grid row contained the text. Check spelling; try a shorter unique
+        substring; confirm the grid is rendered (`page_screenshot`); or the
+        control isn't a grid row — use `find_by_text` + `click_by_ref`, or
+        `click_by_text` for a normally-labelled element.
+    """
+    js = _FIND_ROW_JS.replace("__NEEDLE__", json.dumps(text)).replace(
+        "__NTH__", str(int(nth))
+    )
+    hit = await tab.evaluate(js)
+    if not hit:
+        return {"clicked": False, "reason": f"no grid row containing {text!r}"}
+
+    x, y = hit["x"], hit["y"]
+    if double:
+        # Two press/release pairs, the second with click_count=2, so a real
+        # `dblclick` fires (a plain double mouse_click doesn't).
+        btn = cdp_input.MouseButton("left")
+        for count in (1, 2):
+            await tab.send(
+                cdp_input.dispatch_mouse_event(
+                    "mousePressed", x=x, y=y, button=btn, click_count=count
+                )
+            )
+            await tab.send(
+                cdp_input.dispatch_mouse_event(
+                    "mouseReleased", x=x, y=y, button=btn, click_count=count
+                )
+            )
+    else:
+        await tab.mouse_click(x, y)
+    return {
+        "clicked": True,
+        "text": hit.get("text"),
+        "matches": hit.get("matches"),
+        "x": x,
+        "y": y,
+        "double": double,
+    }
 
 
 async def find_by_text(

@@ -75,6 +75,7 @@ from .elements import (
     click_by_html_id,
     click_by_text,
     click_by_xpath,
+    click_row_by_text,
     find_by_html_id,
     find_by_text,
     find_by_xpath,
@@ -183,6 +184,7 @@ __all__ = [
     "page_wait_url",
     # Elements
     "click_by_text",
+    "click_row_by_text",
     "type_by_text",
     "page_scroll",
     "page_wait_element",
