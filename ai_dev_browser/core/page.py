@@ -44,12 +44,19 @@ def read_screenshot_metadata(path: str) -> dict:
     return _image_cap.read_metadata(path)
 
 
-async def js_evaluate(tab: Tab, expression: str) -> dict:
+async def js_evaluate(tab: Tab, expression: str, frame: str | None = None) -> dict:
     """Use when: NO specific tool fits — the last-resort raw JS escape
     hatch. Works equally for **read** expressions (`document.title`,
     `innerText`) and **side-effect** expressions (`.click()`, `.submit()`,
     DOM mutations) — the return dict captures *everything* observable
     during the eval, not just the expression value.
+
+    Pass `frame` (a URL substring or CDP target id) to run the expression
+    **inside a cross-origin iframe** — government / bank sites embed forms in
+    OOPIFs that the top document (and `find_by_text` / `click_by_text`) can't
+    reach ("Cross-origin iframes are not scanned"). `js_evaluate(expr,
+    frame="chinatax.gov")` runs `expr` in that frame's own context, where
+    `document` is the iframe's document. Same-origin iframes don't need this.
 
     Before picking this: the locate+act combinations below cover almost
     all intents atomically and are more specific:
@@ -101,7 +108,9 @@ async def js_evaluate(tab: Tab, expression: str) -> dict:
         — read it rather than re-running with added logging. A SyntaxError
         naming `return` means you wrote a bare `return` at top level, which is
         illegal outside a function: drop it (the last expression is the result)
-        or wrap the body in an IIFE `(() => { ... })()`.
+        or wrap the body in an IIFE `(() => { ... })()`. If you passed `frame`
+        and it didn't match, the error lists the page's real cross-origin
+        frames — retry with any substring of one of those URLs.
 
     Example:
         # Read — result field carries the answer
@@ -123,6 +132,9 @@ async def js_evaluate(tab: Tab, expression: str) -> dict:
     from ai_dev_browser.cdp import runtime
 
     from .elements import _POST_CLICK_NAV_DELAY, _capture_page_state
+
+    # Cross-origin iframe: route the eval into that OOPIF's own CDP session.
+    session_id = await tab.frame_session(frame) if frame else None
 
     before = await _capture_page_state(tab)
 
@@ -150,11 +162,11 @@ async def js_evaluate(tab: Tab, expression: str) -> dict:
         console_msgs.append({"level": level, "text": text})
 
     # Runtime.enable() is idempotent and required for consoleAPICalled events.
-    await tab.send(runtime.enable())
+    await tab.send(runtime.enable(), session_id=session_id)
     tab.add_handler(runtime.ConsoleAPICalled, on_console)
 
     try:
-        result_value = await tab.evaluate(expression)
+        result_value = await tab.evaluate(expression, session_id=session_id)
     except JsEvaluationError as e:
         # Console lines emitted before the throw are the trail of how the page
         # reached the failing state. They belong with the failure, not in a

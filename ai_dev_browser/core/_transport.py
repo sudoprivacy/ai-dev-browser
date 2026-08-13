@@ -70,12 +70,23 @@ class Transaction(asyncio.Future):
         super().__init__()
         self.__cdp_obj__ = cdp_obj
         self.id: int | None = None
+        # Optional CDP flat-session id. When set, the command is routed into
+        # that session (a cross-origin OOPIF, say) instead of the top page. The
+        # response still comes back keyed by `id`, so demux is unchanged.
+        self.session_id: str | None = None
         self.method, *params = next(self.__cdp_obj__).values()
         self.params = params.pop() if params else {}
 
     @property
     def message(self) -> str:
-        return json.dumps({"method": self.method, "params": self.params, "id": self.id})
+        msg: dict[str, Any] = {
+            "method": self.method,
+            "params": self.params,
+            "id": self.id,
+        }
+        if self.session_id:
+            msg["sessionId"] = self.session_id
+        return json.dumps(msg)
 
     def __call__(self, **response):  # type: ignore[override]
         """Process CDP response: feed to generator or set exception."""
@@ -150,6 +161,7 @@ class CDPConnection:
         _is_update: bool = False,
         *,
         timeout: float | None = None,
+        session_id: str | None = None,
     ) -> Any:
         """Send a CDP command and await the response.
 
@@ -160,6 +172,8 @@ class CDPConnection:
             timeout: Per-call timeout in seconds. None uses COMMAND_TIMEOUT.
                 Pass a larger value for commands known to take time
                 (e.g. Runtime.evaluate with await_promise on a long fetch).
+            session_id: CDP flat-session id to route the command into (a
+                cross-origin iframe's target). None = the top page session.
         """
         if self.closed:
             await self.connect()
@@ -167,6 +181,7 @@ class CDPConnection:
             await self._register_handlers()
         tx = Transaction(cdp_obj)
         tx.id = next(self._counter)
+        tx.session_id = session_id
         self._pending[tx.id] = tx
         try:
             await self._websocket.send(tx.message)

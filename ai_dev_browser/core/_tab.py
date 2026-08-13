@@ -64,6 +64,9 @@ class Tab:
         self._browser = browser
         self._download_behavior: list | None = None
         self._initialized = False
+        # Cache of {frame target id -> CDP flat-session id} for cross-origin
+        # iframe routing; populated lazily by frame_session().
+        self._frame_sessions: dict[str, str] = {}
 
     # =========================================================================
     # Properties
@@ -131,6 +134,7 @@ class Tab:
         *,
         timeout: float | None = None,
         retry_on_timeout: bool = False,
+        session_id: str | None = None,
     ) -> Any:
         """Send CDP command and await response.
 
@@ -154,7 +158,7 @@ class Tab:
         await self._ensure_connected()
         try:
             return await self._connection.send(
-                cdp_obj, _is_update=_is_update, timeout=timeout
+                cdp_obj, _is_update=_is_update, timeout=timeout, session_id=session_id
             )
         except Exception as e:
             if not retry_on_timeout:
@@ -232,6 +236,7 @@ class Tab:
         return_by_value=False,
         *,
         timeout: float | None = None,
+        session_id: str | None = None,
     ):
         """Evaluate JS expression and return a plain Python value.
 
@@ -273,6 +278,7 @@ class Tab:
                     serialization_options=ser,
                 ),
                 timeout=timeout,
+                session_id=session_id,
             )
         except CommandTimeout as e:
             # The transport names the CDP method ("Runtime.evaluate") because
@@ -287,6 +293,44 @@ class Tab:
             ) from None
 
         return unwrap(remote_object, errors, expression=expression)
+
+    # =========================================================================
+    # Cross-origin frame (OOPIF) routing
+    # =========================================================================
+
+    async def frame_session(self, frame: str) -> str:
+        """Resolve a cross-origin child frame to a CDP flat-session id.
+
+        Cross-origin iframes are separate CDP targets (OOPIFs) — the top page
+        session can't see inside them (`DOM.getDocument(pierce)` stops at the
+        boundary), so commands must carry the frame's `sessionId`. `frame`
+        matches an iframe target by URL substring or by exact target id; the
+        attach happens once and is cached.
+
+        Raises ValueError if no cross-origin iframe matches (same-origin frames
+        are reached without a session — they're not separate targets).
+        """
+        targets = await self.send(cdp_target.get_targets())
+        iframes = [t for t in targets if getattr(t, "type_", None) == "iframe"]
+        match = next(
+            (t for t in iframes if t.target_id == frame or frame in (t.url or "")),
+            None,
+        )
+        if match is None:
+            available = [t.url for t in iframes if t.url] or ["(none)"]
+            raise ValueError(
+                f"no cross-origin iframe target matching {frame!r}. "
+                f"cross-origin iframes on this page: {available} "
+                "(pass any substring; same-origin iframes don't need --frame)"
+            )
+        cached = self._frame_sessions.get(match.target_id)
+        if cached:
+            return cached
+        session_id = await self.send(
+            cdp_target.attach_to_target(match.target_id, flatten=True)
+        )
+        self._frame_sessions[match.target_id] = session_id
+        return session_id
 
     # =========================================================================
     # Element finding
