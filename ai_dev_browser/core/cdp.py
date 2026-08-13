@@ -42,7 +42,10 @@ async def cdp_send(
     Args:
         tab: Tab instance
         method: CDP method name (e.g., "Browser.getVersion", "DOM.getDocument")
-        params: JSON string of parameters
+        params: JSON string of parameters. Keys may be the CDP-native camelCase
+            copied straight from the protocol docs (`deviceScaleFactor`) or the
+            snake_case the Python bindings use (`device_scale_factor`) — both
+            are accepted.
 
     Returns:
         dict with result or error
@@ -51,6 +54,11 @@ async def cdp_send(
     parsed_params = {}
     if params:
         parsed_params = json.loads(params)
+
+    # The CDP docs (and everyone copying from them) use camelCase; the vendored
+    # bindings take snake_case kwargs. Normalize top-level keys so a verbatim
+    # `{"deviceScaleFactor": 1}` doesn't blow up as an unexpected-kwarg error.
+    parsed_params = {camel_to_snake(k): v for k, v in parsed_params.items()}
 
     # Create CDP command generator
     cdp_cmd = _get_cdp_command(method, parsed_params)

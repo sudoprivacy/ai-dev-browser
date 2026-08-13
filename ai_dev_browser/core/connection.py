@@ -24,7 +24,13 @@ from ai_dev_browser.cdp import (
 from ._tab import Tab
 from ._transport import CDPConnection
 
-from .config import DEFAULT_DEBUG_HOST, DEFAULT_DEBUG_PORT, TAB_URL_ENV
+from .config import (
+    DEFAULT_DEBUG_HOST,
+    DEFAULT_DEBUG_PORT,
+    DESKTOP_MIN_WIDTH,
+    TAB_URL_ENV,
+    resolve_viewport,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -409,6 +415,27 @@ async def get_active_tab(
     if browser is None:
         browser = await connect_browser()
 
+    async def _prepared(tab: Tab) -> Tab:
+        # Give every tab a desktop render viewport so responsive apps don't
+        # collapse to mobile layout. SSOT: the size lives in resolve_viewport();
+        # None means the consumer opted out (AI_DEV_BROWSER_VIEWPORT=native).
+        #
+        # Only *establish* it when the tab is currently mobile-width — an
+        # already-desktop viewport (our default from a prior command, or an
+        # explicit window_set) is left as-is. That keeps the default idempotent,
+        # lets desktop-width window_set overrides persist across independent CLI
+        # commands, and avoids re-laying-out a heavy page on every call.
+        viewport = resolve_viewport()
+        if viewport is None:
+            return tab
+        try:
+            current = await tab.evaluate("window.innerWidth", return_by_value=True)
+        except Exception:
+            current = 0
+        if not isinstance(current, (int, float)) or current < DESKTOP_MIN_WIDTH:
+            await tab.set_viewport(*viewport)
+        return tab
+
     page_targets = [
         t for t in browser.targets if getattr(t._target, "type_", "") == "page"
     ]
@@ -420,7 +447,7 @@ async def get_active_tab(
     if wanted:
         for tab in page_targets:
             if wanted in _url(tab):
-                return tab
+                return await _prepared(tab)
         raise ValueError(
             f"No tab whose URL contains {wanted!r}. Open page targets: "
             f"{[_url(t) for t in page_targets] or 'none'}"
@@ -429,13 +456,13 @@ async def get_active_tab(
     for tab in page_targets:
         url = _url(tab)
         if url and not url.startswith("about:"):
-            return tab
+            return await _prepared(tab)
 
     if page_targets:
-        return page_targets[0]
+        return await _prepared(page_targets[0])
 
     # No tabs, create one
-    return await browser.get("about:blank")
+    return await _prepared(await browser.get("about:blank"))
 
 
 async def graceful_close_browser(

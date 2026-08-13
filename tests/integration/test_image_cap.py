@@ -39,6 +39,7 @@ from ai_dev_browser.core import (
 )
 from ai_dev_browser.core._image_cap import apply_image_cap, read_metadata
 from ai_dev_browser.core.browser import browser_start, browser_stop
+from ai_dev_browser.core.config import VIEWPORT_ENV
 from ai_dev_browser.core.connection import connect_browser, get_active_tab
 
 SKIP_INTEGRATION = os.environ.get("SKIP_INTEGRATION", "").lower() in (
@@ -55,8 +56,14 @@ def _integration_guard():
 
 
 @pytest.fixture
-async def tab():
-    """Headless Chrome with the fixture page already loaded."""
+async def tab(monkeypatch):
+    """Headless Chrome with the fixture page already loaded.
+
+    Pins a fixed 800x600 viewport: these tests exercise the cap *mechanism*
+    (quality-step, dimension-halving, byte target), so the input-image size
+    must be deterministic and independent of the default desktop viewport.
+    """
+    monkeypatch.setenv(VIEWPORT_ENV, "800x600")
     result = browser_start(headless=True, temp=True, reuse="none")
     assert "error" not in result, f"browser_start failed: {result}"
     port = result["port"]

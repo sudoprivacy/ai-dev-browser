@@ -13,6 +13,7 @@ from ai_dev_browser.cdp import (
     browser as cdp_browser,
     dom,
     dom_storage,
+    emulation as cdp_emulation,
     input_ as cdp_input,
     page,
     runtime,
@@ -708,19 +709,26 @@ class Tab:
             cdp_browser.get_window_for_target(self._target.target_id)
         )
 
-    async def set_window_size(
-        self, left: int = 0, top: int = 0, width: int = 1280, height: int = 1024
-    ):
-        """Set window position and size."""
-        window_id, _ = await self.get_window()
-        bounds = cdp_browser.Bounds(
-            left=left,
-            top=top,
-            width=width,
-            height=height,
-            window_state=cdp_browser.WindowState("normal"),
+    async def set_viewport(self, width: int, height: int):
+        """Set the render (layout) viewport via a device-metrics override.
+
+        Overrides `window.innerWidth/innerHeight` AND `window.screen.width/height`
+        (plus the CSS `device-width` media queries) so responsive layouts pick
+        their desktop breakpoint. `deviceScaleFactor=1` keeps screenshots 1:1;
+        `mobile=False` keeps desktop behaviour (no touch, no viewport-meta).
+        Independent of the OS window and the underlying display size — this is
+        the only viewport lever that works headless and on a small display.
+        """
+        await self.send(
+            cdp_emulation.set_device_metrics_override(
+                width=width,
+                height=height,
+                device_scale_factor=1,
+                mobile=False,
+                screen_width=width,
+                screen_height=height,
+            )
         )
-        await self.send(cdp_browser.set_window_bounds(window_id, bounds))
 
     async def _set_window_state(self, state: str):
         window_id, _ = await self.get_window()
