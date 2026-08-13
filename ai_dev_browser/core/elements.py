@@ -675,10 +675,12 @@ async def page_wait_element(
     Waits for the element to be **visible**, not merely present: a control
     that's mounted collapsed (0-size / `display:none` / `visibility:hidden`
     until its panel opens — very common in SPAs/ERPs) is skipped until it
-    actually renders, and the returned `ref` is one that stayed put across two
-    polls (so it isn't a node caught mid-remount). Locate ARIA-less controls by
-    CSS `selector` (`input[datarole=x]`, `[placeholder*=智能]`, `.kd-foo`);
-    `text` matches visible text in the top frame.
+    actually renders. It must stay visible across two polls before its `ref` is
+    resolved, so a node caught mid-remount isn't handed back. When several
+    elements match, the first **visible** one wins (a 63-link menu where the
+    leading links are collapsed). Locate ARIA-less controls by CSS `selector`
+    (`input[datarole=x]`, `[placeholder*=智能]`, `.kd-foo`); `text` matches
+    visible text in the top frame.
 
     Args:
         tab: Tab instance
