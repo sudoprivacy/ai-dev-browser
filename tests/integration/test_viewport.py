@@ -75,6 +75,14 @@ def test_resolve_viewport_malformed_fails_loud(monkeypatch):
         resolve_viewport()
 
 
+async def test_window_set_no_args_raises():
+    """window_set with nothing to set fails loud (Rule 7: core raises, the
+    wrapper envelopes) instead of returning a hand-built error dict. The guard
+    runs before the tab is touched, so a sentinel stands in for it."""
+    with pytest.raises(ValueError, match="at least one"):
+        await window_set(object())
+
+
 # --------------------------------------------------------------------------- #
 # Browser-backed — the real wiring
 # --------------------------------------------------------------------------- #

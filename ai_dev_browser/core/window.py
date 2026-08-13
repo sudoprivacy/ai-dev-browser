@@ -13,7 +13,9 @@ async def window_set(
     state: str | None = None,
     focus: bool = False,
 ) -> dict:
-    """Set the render viewport size, the OS window state, and/or focus.
+    """Use when: you need the page to render at a specific width — to force a
+    desktop (or a narrow, mobile) responsive layout — or to set the OS window's
+    state / focus.
 
     `width`/`height` set the **render viewport** (`window.innerWidth`, what the
     page actually lays out against) — not the OS window frame. That is the size
@@ -37,6 +39,12 @@ async def window_set(
 
     Returns:
         dict with applied settings
+
+    Failure:
+        Pass at least one of `width` / `height` / `state` / `focus`. `state`
+        and `focus` drive the OS window and need headed Chrome (they no-op or
+        error headless); for layout use `width`/`height` (the render viewport),
+        which works headless.
 
     Example:
         window_set(width=1280, height=720)   # narrower viewport
@@ -68,18 +76,21 @@ async def window_set(
         await tab.bring_to_front()
         result["focused"] = True
 
-    return result or {"error": "No action specified"}
+    if not result:
+        raise ValueError(
+            "window_set needs at least one of width, height, state, or focus"
+        )
+    return result
 
 
 async def page_emulate_focus(
     tab: Tab,
     enabled: bool = True,
 ) -> dict:
-    """Enable or disable focus emulation.
-
-    When enabled, the browser behaves as if it has focus even when the
-    window is in the background. Critical for sites that require window
-    focus to render dialogs, menus, and modals.
+    """Use when: a site only renders dialogs / menus / modals while its window
+    has focus, but automation drives it in the background (headless, or behind
+    other windows) so they never appear. Enabling makes the browser behave as
+    if focused regardless of real window focus.
 
     Args:
         tab: Tab instance
@@ -89,4 +100,8 @@ async def page_emulate_focus(
         dict with enabled status
     """
     await tab.send(cdp_emulation.set_focus_emulation_enabled(enabled=enabled))
+    # Keep the generator's default result_key ("success") — deliberately NOT
+    # "enabled". `enabled=False` is a valid outcome, and a result_key of
+    # "enabled" would make the wrapper read `False` as failure and inject a
+    # failure hint. Do not add a TOOL_META override for this tool.
     return {"enabled": enabled}
