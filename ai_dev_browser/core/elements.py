@@ -698,9 +698,9 @@ async def page_wait_element(
         but still collapsed (its trigger action may not have opened its panel
         yet — re-do the click, or raise `timeout`); the locator may be wrong
         (check with `page_discover`, try a broader `selector` / partial
-        `text`); or it's in a cross-origin iframe (unreachable). A `text`
-        locator scans the top frame only — prefer a CSS `selector` for
-        iframe/ARIA-less targets.
+        `text`); or it's in a cross-origin iframe (probe it with
+        `js_evaluate(frame="<url-substr>")`). A `text` locator scans the top
+        frame only — prefer a CSS `selector` for iframe/ARIA-less targets.
     """
     loop = asyncio.get_running_loop()
     start = loop.time()
@@ -787,7 +787,7 @@ async def click_by_text(
         the page renders late. Or switch locator — `click_by_html_id` /
         `click_by_xpath` when a DOM-level locator is known, or `page_discover`
         for a survey of what is actually on the page. Cross-origin iframes are
-        not scanned.
+        not scanned — reach into one with `js_evaluate(frame="<url-substr>")`.
 
     Example:
         click_by_text("登录")
@@ -1083,7 +1083,8 @@ async def find_by_text(
         substring; or switch locator — `find_by_html_id` /
         `find_by_xpath` if a DOM-level locator is known. For a broad
         survey of what's on the page, run `page_discover` without a
-        text filter. Cross-origin iframes are not scanned.
+        text filter. Cross-origin iframes are not scanned — reach into one
+        with `js_evaluate(frame="<url-substr>")`.
     """
     hit = await _ax_by_text(tab, text, interactable_only=interactable_only)
     if hit is None:
@@ -1135,7 +1136,8 @@ async def type_by_text(
         iframe, within `timeout`. If the input has no accessible name at all
         (no label, no placeholder, no aria-label), locate it by html id or xpath
         instead: `find_by_html_id` / `find_by_xpath` → `type_by_ref`.
-        Cross-origin iframes are not scanned.
+        Cross-origin iframes are not scanned — type into one with
+        `js_evaluate(frame="<url-substr>", "el.value = ...")`.
 
     Example:
         type_by_text(name="用户名", text="myusername")

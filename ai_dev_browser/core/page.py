@@ -85,6 +85,10 @@ async def js_evaluate(tab: Tab, expression: str, frame: str | None = None) -> di
         expression: JavaScript code to execute. Result of last expression
             is returned. `console.log` / `warn` / `error` / `info` output
             during the eval is captured separately.
+        frame: Optional cross-origin iframe to run inside — a substring of
+            the frame's URL (e.g. `"chinatax.gov"`) or its CDP target id.
+            Omit for the top page. A no-match lists the page's real
+            cross-origin frames so you can retry with a correct substring.
 
     Returns:
         dict with:
