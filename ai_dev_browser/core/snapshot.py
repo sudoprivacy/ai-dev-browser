@@ -445,7 +445,8 @@ async def page_discover(
     """Use when: you DON'T know what's on the page yet — broad exploration
     of all interactable elements (including same-origin iframes; iframe
     elements get `FRAME_xxx:` prefix on their refs, so filter the
-    returned list by prefix to narrow to one frame).
+    returned list by prefix to narrow to one frame). Cross-origin iframe
+    content is NOT surveyed — reach into one with `js_evaluate(frame=...)`.
 
     Also surfaces **ARIA-less controls the accessibility tree can't see** —
     custom `datarole` inputs, `div[class*=row]` grid rows, `kd-*` widgets

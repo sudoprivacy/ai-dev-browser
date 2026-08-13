@@ -438,8 +438,9 @@ async def page_scroll(
         element matched `to_element` (check the text with `page_discover`),
         the page has no scrollable content, or the content lives in a
         cross-origin iframe JS scroll can't reach — for that case try
-        `direction='down'`, whose gesture scroll routes to whatever is
-        under the cursor. When `to_bottom`/`to_top` succeed, the `target`
+        `direction='down'` (gesture scroll routes to whatever is under the
+        cursor), or scroll it directly with `js_evaluate(frame=...)`. When
+        `to_bottom`/`to_top` succeed, the `target`
         field names the container that was scrolled; if it picked the
         wrong one, scroll that element by text via `to_element` instead.
     """
@@ -462,8 +463,9 @@ async def page_scroll(
             if info.get("crossOrigin"):
                 reason = (
                     "the scrollable content is inside a cross-origin iframe that "
-                    "JS scroll can't reach; try direction='down' (gesture scroll "
-                    "routes to whatever is under the cursor)"
+                    "this JS scroll can't reach; try direction='down' (gesture "
+                    "scroll routes to whatever is under the cursor), or scroll it "
+                    "directly with js_evaluate(frame=...)"
                 )
             else:
                 reason = (
@@ -1317,7 +1319,9 @@ async def select_text(tab: Tab, text: str, to_text: str | None = None) -> dict:
         substring *within a single text node* — if the run spans elements,
         select a shorter substring that lives in one node, or pass `to_text` for
         the span. Confirm the text is present with `find_by_text` / `page_html`.
-        Cross-origin iframes are not reachable.
+        Cross-origin iframe text isn't reachable by this tool — build the
+        selection inside the frame with `js_evaluate(frame="<url-substr>")`
+        (createRange + getSelection).
 
     Example:
         select_text("Term Sheet")
