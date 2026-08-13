@@ -26,7 +26,13 @@ import os
 
 import pytest
 
-from ai_dev_browser.core import find_by_text, page_goto, press_key, type_by_ref
+from ai_dev_browser.core import (
+    find_by_text,
+    page_goto,
+    press_key,
+    type_by_ref,
+    type_by_text,
+)
 from ai_dev_browser.core.browser import browser_start, browser_stop
 from ai_dev_browser.core.connection import connect_browser, get_active_tab
 
@@ -233,6 +239,34 @@ async def test_type_by_ref_keystrokes_fires_real_key_events(tab):
         "document.querySelector('#q').value", return_by_value=True
     )
     assert value == "xyz", f"keystrokes value wrong: {value!r}"
+
+
+async def test_type_by_text_enter_submits(tab):
+    """Converged capability: type_by_text also submits with enter (parity with
+    type_by_ref) — located by label, typed, Enter."""
+    result = await type_by_text(tab, "智能搜索", "hello", enter=True)
+    assert result["typed"] is True, result
+    assert result.get("entered") is True, result
+    assert await tab.evaluate("window.__submitted", return_by_value=True) is True
+
+
+async def test_type_by_text_keystrokes_fires_keyup(tab):
+    """Converged: type_by_text also has keystrokes — real key events fire keyup
+    for live filters (the default char-events path does not), value lands."""
+    await type_by_text(tab, "智能搜索", "xyz", clear=True, keystrokes=True)
+    ups = await tab.evaluate("window.__keyups", return_by_value=True)
+    assert ups >= 3, f"type_by_text keystrokes fired no keyup: {ups}"
+    val = await tab.evaluate("document.querySelector('#q').value", return_by_value=True)
+    assert val == "xyz", f"value wrong: {val!r}"
+
+
+async def test_type_by_ref_human_like_types_value(tab):
+    """Converged: type_by_ref also has human_like (humanized typing, parity with
+    type_by_text) — the value still lands."""
+    ref = await _box_ref(tab)
+    await type_by_ref(tab, ref, "hi", human_like=True, clear=True)
+    val = await tab.evaluate("document.querySelector('#q').value", return_by_value=True)
+    assert val == "hi", f"human_like value wrong: {val!r}"
 
 
 async def test_press_key_unknown_key_fails_loud(tab):

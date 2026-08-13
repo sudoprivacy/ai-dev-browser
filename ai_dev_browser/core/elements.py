@@ -10,7 +10,7 @@ from . import human
 from ._element import Element
 from ._ref import make_ref
 from ._tab import Tab
-from .ax import click_by_ref, get_element_by_ref
+from .ax import _type_keystrokes, click_by_ref, get_element_by_ref, press_key
 from .snapshot import _get_snapshot
 from .text_match import _best_match
 
@@ -1098,13 +1098,23 @@ async def type_by_text(
     clear: bool = False,
     timeout: float = 10,
     human_like: bool = None,
+    enter: bool = False,
+    keystrokes: bool = False,
 ) -> dict:
     """Use when: you know an input's visible label / placeholder / accessible
     name (e.g. "Email", "Search…"). Locates by AX name + types. Returns
-    `{typed, name}`.
+    `{typed, name}` (plus `entered` when `enter=True`).
 
     Prefer over `type_by_ref` when you can identify the input by its
-    human-visible label rather than needing a prior `page_discover` ref.
+    human-visible label rather than needing a prior `page_discover` ref. The
+    `clear` / `enter` / `keystrokes` / `human_like` options mirror `type_by_ref`
+    so the two are interchangeable once the input is located.
+
+    Set `enter=True` to press Enter after typing (submit a search). The typing
+    mechanism defaults to per-character `char` events; `keystrokes=True` sends
+    real key events for fields that ignore a bulk change (live filters /
+    autocomplete), and `human_like` adds human timing — `keystrokes` wins if
+    both are set.
 
     Args:
         tab: Tab instance
@@ -1112,10 +1122,13 @@ async def type_by_text(
         text: Text to type into the element
         clear: If True, clear existing content first
         timeout: Search timeout in seconds
-        human_like: Add delays between keystrokes (default: from config)
+        human_like: Add human timing between keystrokes (default: from config)
+        enter: If True, press Enter after typing (submits the field)
+        keystrokes: If True, send real per-character key events (for live
+            filters / autocomplete)
 
     Returns:
-        dict with typed status
+        dict with typed status; includes `entered` when `enter=True`
 
     Failure:
         No input with this accessible name, in the main frame or any same-origin
@@ -1126,18 +1139,20 @@ async def type_by_text(
 
     Example:
         type_by_text(name="用户名", text="myusername")
-        type_by_text(name="Search", text="query", clear=True)
+        type_by_text(name="Search", text="query", clear=True, enter=True)
+        type_by_text(name="快捷过滤", text="FIN", keystrokes=True)  # live filter
     """
     # Locator only — same accessible-name lookup as click_by_text / find_by_text.
     # Locating by AX name is what this tool has always *claimed* to do; it was
     # running a DOM text-node search, so a `<label for=email>Email</label>` match
     # landed on the label instead of the input it labels.
     #
-    # The typing actuator below is deliberately left alone. Unlike clicking —
-    # where the ref path could simply adopt the box-based actuator the text path
-    # already used — `type_by_ref` types with `Input.insertText` while this types
-    # per-character `char` events. Those produce different DOM event streams, so
-    # routing one through the other would silently change which pages work.
+    # The DEFAULT typing actuator is deliberately per-character `char` events
+    # (not `type_by_ref`'s `Input.insertText`) — the two produce different DOM
+    # event streams and routing one through the other silently changes which
+    # pages work. `keystrokes=True` is the explicit shared opt-in (real key
+    # events, same `_type_keystrokes` path as `type_by_ref`) for the fields that
+    # need it; it does not change the default.
     located = await _wait_ax_by_text(tab, name, timeout)
     if located is None:
         return {"typed": False, "error": f"Element with name '{name}' not found"}
@@ -1149,16 +1164,23 @@ async def type_by_text(
     if clear:
         await element.clear_input()
 
-    use_human = (
-        human_like if human_like is not None else human.get_config().type_humanize
-    )
-
-    if use_human:
-        await human.type_text(tab, text, element, humanize=True)
+    if keystrokes:
+        await element.focus()  # keys land on the focused element
+        await _type_keystrokes(tab, text)
     else:
-        await element.send_keys(text)
+        use_human = (
+            human_like if human_like is not None else human.get_config().type_humanize
+        )
+        if use_human:
+            await human.type_text(tab, text, element, humanize=True)
+        else:
+            await element.send_keys(text)
 
-    return {"typed": True, "name": name, "ref": located["ref"]}
+    result = {"typed": True, "name": name, "ref": located["ref"]}
+    if enter:
+        pressed = await press_key(tab, "Enter", ref=located["ref"])
+        result["entered"] = bool(pressed.get("pressed"))
+    return result
 
 
 # JS that selects a text range in the top document or the first same-origin
