@@ -306,3 +306,82 @@ async def test_checkbox_mode_on_row_without_checkbox_fails_loud(cb_tab):
     result = await click_row_by_text(cb_tab, "无复选框行", checkbox=True)
     assert result["clicked"] is False, result
     assert "no checkbox" in result["reason"].lower()
+
+
+# --- Scroll into view before clicking (long F7 lists) ---------------------------
+# A row scrolled out of a long list has off-screen coordinates; clicking them is
+# a no-op (the reporter's silent checked:false on a 78-row F7 popup). The target
+# is far down a 120px-tall scroll container, so it starts out of view.
+_SCROLL_FIXTURE = """<!DOCTYPE html><html><body style="margin:0">
+<div id="list" style="height:120px;overflow:auto;border:1px solid #ccc"></div>
+<script>
+  var list = document.getElementById('list');
+  for (var i = 0; i < 40; i++) {
+    var row = document.createElement('div');
+    row.className = 'kd-grid-row';
+    row.style.cssText = 'height:30px;line-height:30px';
+    var div = document.createElement('div');
+    div.setAttribute('data-role', 'checkbox');
+    div.className = 'kd-checkbox-div gridCheck';
+    div.style.cssText = 'width:44px;height:20px;position:relative;' +
+      'display:inline-block;cursor:pointer';
+    var input = document.createElement('input');
+    input.type = 'checkbox';
+    input.setAttribute('onclick', 'return false;');
+    input.style.cssText = 'position:absolute;left:2px;top:2px';
+    div.appendChild(input);
+    div.addEventListener('click', (function (inp) {
+      return function (e) { if (e.target !== inp) inp.checked = !inp.checked; };
+    })(input));
+    row.appendChild(div);
+    var span = document.createElement('span');
+    span.textContent = (i === 30) ? 'TARGET_ROW' : ('row' + i);
+    row.appendChild(span);
+    list.appendChild(row);
+  }
+</script>
+</body></html>"""
+
+
+@pytest.fixture
+async def scroll_tab():
+    result = browser_start(headless=True, temp=True, reuse="none")
+    assert "error" not in result, f"browser_start failed: {result}"
+    port = result["port"]
+    browser_client = None
+    try:
+        browser_client = await connect_browser(port=port)
+        the_tab = await get_active_tab(browser_client)
+        url = (
+            "data:text/html;base64,"
+            + base64.b64encode(_SCROLL_FIXTURE.encode()).decode()
+        )
+        await page_goto(the_tab, url)
+        yield the_tab
+    finally:
+        if browser_client is not None:
+            with contextlib.suppress(Exception):
+                await browser_client.close()
+        with contextlib.suppress(Exception):
+            browser_stop(port=port)
+
+
+async def test_click_row_scrolls_target_into_view_before_clicking(scroll_tab):
+    """The reporter's silent failure: a row scrolled out of a long F7 list had
+    off-screen coords, so --checkbox clicked nothing (checked:false). The fix
+    scrolls the target in first — so it both scrolls and toggles."""
+    before = await scroll_tab.evaluate(
+        "document.getElementById('list').scrollTop", return_by_value=True
+    )
+    assert float(before or 0) == 0, "list should start unscrolled"
+
+    result = await click_row_by_text(scroll_tab, "TARGET_ROW", checkbox=True)
+    assert result["clicked"] is True, result
+    assert result["checked"] is True, (
+        f"off-screen row not scrolled in before click (silent no-op): {result}"
+    )
+
+    after = await scroll_tab.evaluate(
+        "document.getElementById('list').scrollTop", return_by_value=True
+    )
+    assert float(after or 0) > 0, "list did not scroll to bring the target into view"

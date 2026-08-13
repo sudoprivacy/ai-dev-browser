@@ -543,6 +543,7 @@ async def type_by_ref(
     text: str,
     clear: bool = False,
     enter: bool = False,
+    keystrokes: bool = False,
 ) -> dict:
     """Use when: you have a `ref` from `page_discover()` and want to type
     into that specific input. Returns `{typed, ref, text}` (plus `entered`
@@ -556,12 +557,20 @@ async def type_by_ref(
     dropdown only appears on a real Enter. For other submit keys use
     `press_key` separately.
 
+    Set `keystrokes=True` when the field ignores a bulk value change — live
+    filters / autocomplete (ERP grid "快捷过滤" boxes) whose handlers fire on
+    `keydown`/`keyup`. It types via real per-character key events instead of one
+    IME-style commit. Slower; use only when the default doesn't trigger the
+    field's logic.
+
     Args:
         tab: Tab instance
         ref: Element ref from page_discover() (e.g., "5#214")
         text: Text to type into the element
         clear: If True, clear existing content first
         enter: If True, press Enter after typing (submits the field)
+        keystrokes: If True, send real per-character key events (for live
+            filters / autocomplete); default False uses a fast single commit
 
     Returns:
         dict with typed status; includes `entered` when `enter=True`
@@ -569,7 +578,8 @@ async def type_by_ref(
     Example:
         type_by_ref("5#214", "myusername")
         type_by_ref("5#214", "newvalue", clear=True)
-        type_by_ref("5#214", "widget", enter=True)   # type + submit
+        type_by_ref("5#214", "widget", enter=True)          # type + submit
+        type_by_ref("5#214", "FIN", keystrokes=True)        # trigger a live filter
     """
     # First focus the element
     focus_result = await focus_by_ref(tab, ref)
@@ -596,8 +606,15 @@ async def type_by_ref(
         bs_key, bs_code, bs_vkey, _ = _KEY_SPECS["backspace"]
         await _dispatch_key(tab, bs_key, bs_code, bs_vkey)
 
-    # Type text using insertText (most reliable for input fields)
-    await tab.send(cdp_input.insert_text(text=text))
+    if keystrokes:
+        # Real per-character key events (keydown/keypress/input/keyup) via the
+        # same dispatch path as press_key — for inputs whose handlers listen on
+        # keydown/keyup (live filters, autocomplete) and ignore a bulk commit.
+        for ch in text:
+            await _dispatch_key(tab, ch, "", 0, text=ch)
+    else:
+        # Default: one IME-style commit — fast and reliable for plain inputs.
+        await tab.send(cdp_input.insert_text(text=text))
 
     result = {"typed": True, "ref": ref, "text": text}
     if enter:

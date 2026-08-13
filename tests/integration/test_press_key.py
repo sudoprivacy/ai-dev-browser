@@ -53,6 +53,7 @@ _FIXTURE = """<!DOCTYPE html><html><body style="margin:0">
   window.__keys = [];
   window.__keypress = null;
   window.__submitted = false;
+  window.__keyups = 0;
   const q = document.getElementById('q');
   q.addEventListener('keydown', (e) => {
     window.__keys.push({key: e.key, keyCode: e.keyCode, which: e.which});
@@ -62,6 +63,7 @@ _FIXTURE = """<!DOCTYPE html><html><body style="margin:0">
     }
   });
   q.addEventListener('keypress', (e) => { window.__keypress = e.keyCode; });
+  q.addEventListener('keyup', () => { window.__keyups++; });   // live-filter gate
 </script>
 </body></html>"""
 
@@ -207,6 +209,30 @@ async def test_press_key_tab_delivers_keycode_9(tab):
     assert st["keys"], "no keydown captured"
     last = st["keys"][-1]
     assert last["key"] == "Tab" and last["keyCode"] == 9, f"bad Tab event: {last}"
+
+
+async def test_type_by_ref_keystrokes_fires_real_key_events(tab):
+    """A live filter / autocomplete listens on keyup — the default insertText
+    fires NONE, so it never triggers; keystrokes=True fires real per-char key
+    events (and still lands the value). The Kingdee '快捷过滤' case."""
+    ref = await _box_ref(tab)
+
+    # Default (insertText): value lands, but NO keyup → a keyup-gated filter
+    # would never fire.
+    await type_by_ref(tab, ref, "abc")
+    assert await tab.evaluate("window.__keyups", return_by_value=True) == 0, (
+        "insertText fired keyup events — contrast is invalid"
+    )
+
+    # keystrokes=True: real key events per char (plus one from the clear's
+    # Backspace), so the filter fires; value replaced.
+    await type_by_ref(tab, ref, "xyz", clear=True, keystrokes=True)
+    ups = await tab.evaluate("window.__keyups", return_by_value=True)
+    assert ups >= 3, f"keystrokes did not fire per-char keyup: {ups}"
+    value = await tab.evaluate(
+        "document.querySelector('#q').value", return_by_value=True
+    )
+    assert value == "xyz", f"keystrokes value wrong: {value!r}"
 
 
 async def test_press_key_unknown_key_fails_loud(tab):

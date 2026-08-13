@@ -839,8 +839,11 @@ _FIND_ROW_JS = r"""(function (needle, nth, mode) {
     .call(document.querySelectorAll('[class*=row],[role=row],tr'))
     .filter(function (el) { return (el.innerText || '').indexOf(needle) !== -1; })
     .filter(function (el) {
+      // Rendered (has size). Deliberately NOT limited to the current viewport:
+      // a row scrolled out of a long F7 list is a valid target — scrollTo below
+      // brings it in before we click.
       const r = el.getBoundingClientRect();
-      return r.width > 20 && r.height > 2 && r.bottom > 0 && r.top < innerHeight;
+      return r.width > 20 && r.height > 2;
     });
   const set = new Set(cand);
   // Keep only the outermost matching row (a grid row can nest sub-rows).
@@ -856,6 +859,15 @@ _FIND_ROW_JS = r"""(function (needle, nth, mode) {
     const r = el.getBoundingClientRect();
     return r.width > 2 && r.height > 2;
   };
+  const scrollTo = function (el) {
+    // Bring the target into the scroll viewport BEFORE measuring — a row (or
+    // its checkbox) scrolled out of a long F7 list has off-screen coords, so
+    // clicking them lands nowhere / on the wrong row (silent checked:false).
+    try {
+      if (el.scrollIntoViewIfNeeded) el.scrollIntoViewIfNeeded(true);
+      else el.scrollIntoView({ block: 'center', inline: 'nearest' });
+    } catch (e) {}
+  };
   const cb = row.querySelector('input[type=checkbox],input[type=radio]');
 
   if (mode === 'verify') {
@@ -869,6 +881,7 @@ _FIND_ROW_JS = r"""(function (needle, nth, mode) {
   };
 
   if (mode !== 'checkbox') {
+    scrollTo(row);
     const r = row.getBoundingClientRect();
     info.x = Math.round(r.left + r.width / 2);
     info.y = Math.round(r.top + r.height / 2);
@@ -904,6 +917,7 @@ _FIND_ROW_JS = r"""(function (needle, nth, mode) {
     info.checkedBefore = roleCb.getAttribute('aria-checked') === 'true';
   }
   if (!target) { info.nocheckbox = true; return info; }
+  scrollTo(target);
   const tr = target.getBoundingClientRect();
   info.x = Math.round(tr.left + tr.width / 2);
   info.y = Math.round(tr.top + tr.height / 2);
