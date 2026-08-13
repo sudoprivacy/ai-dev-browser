@@ -59,7 +59,6 @@ TOOL_META = {
     "upload_by_ref": {"result_key": "uploaded"},
     "drag_by_ref": {"result_key": "dragged"},
     "page_discover": {"result_key": "elements"},
-    "find": {"result_key": "elements"},
     "page_wait_element": {"result_key": "found"},
     "js_evaluate": {"result_key": "result"},
     "page_goto": {"result_key": "success"},
@@ -68,9 +67,7 @@ TOOL_META = {
     "page_reload": {"result_key": "success"},
     "page_pdf": {"result_key": "path"},
     "page_screenshot": {"result_key": "path"},
-    "screenshot": {"result_key": "path"},
     "page_scroll": {"result_key": "scrolled"},
-    "scroll": {"result_key": "scrolled"},
     "page_wait_ready": {"result_key": "ready"},
     "page_wait_url": {"result_key": "matched"},
     "dialog_respond": {"result_key": "handled"},
@@ -88,15 +85,8 @@ TOOL_META = {
     "cookies_extract": {"result_key": "cookies"},
     "storage_get": {"result_key": "value"},
     "storage_set": {"result_key": "set"},
-    "window_focus": {"result_key": "focused"},
-    "window_focus_emulation": {"result_key": "set"},
-    "window_resize": {"result_key": "resized"},
-    "window_state": {"result_key": "state"},
-    "download_file": {"result_key": "path"},
-    "download_path": {"result_key": "path"},
     "cdp_send": {"result_key": "result"},
     "login_interactive": {"result_key": "success"},
-    "reload": {"result_key": "success"},
 }
 
 TEMPLATE = '''"""AUTO-GENERATED from ai_dev_browser.core — {func_name}

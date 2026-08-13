@@ -37,7 +37,10 @@ async def cdp_send(
     method: str,
     params: str | None = None,
 ) -> dict:
-    """Send a CDP (Chrome DevTools Protocol) command.
+    """Use when: NO tool wraps the CDP call you need — the raw-protocol escape
+    hatch. Reach for a specific tool first (`page_goto`, `window_set`,
+    `page_screenshot`, ...); they steer correct usage and shape the return.
+    Returns `{result}` — whatever the CDP method returned, verbatim.
 
     Args:
         tab: Tab instance
@@ -49,6 +52,14 @@ async def cdp_send(
 
     Returns:
         dict with result or error
+
+    Failure:
+        The command errored. Common causes: an unknown `method` (must be
+        `Domain.command`, e.g. `Page.navigate` — check the domain and command
+        spelling); a parameter name that doesn't exist on that method (casing
+        is normalized, but the name must be real — check the CDP docs); or a
+        value of the wrong type. The error text names the offending method or
+        parameter — read it rather than guessing.
     """
     # Parse params if provided
     parsed_params = {}
