@@ -938,7 +938,8 @@ async def click_row_by_text(
     `div[class*=row]`: Kingdee K3Cloud F7 pick-lists, authorization tables).
     Locates the row that actually *contains* `text` and acts on its exact
     target, so it can't drift onto the neighbour an estimated
-    `mouse_click --x --y` would hit.
+    `mouse_click --x --y` would hit. The row is **scrolled into view first**,
+    so a row far down a long F7 list is reached without any manual scrolling.
 
     Returns `{clicked, text, matches, x, y}` — `text` is the row it actually
     hit (confirm it's the one you meant) and `matches` how many rows contained
