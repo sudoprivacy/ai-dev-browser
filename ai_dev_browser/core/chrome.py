@@ -18,7 +18,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .config import DEFAULT_DEBUG_PORT, DEFAULT_PROFILE_PREFIX
+from .config import DEFAULT_DEBUG_PORT, DEFAULT_PROFILE_PREFIX, resolve_viewport
 
 
 logger = logging.getLogger(__name__)
@@ -254,6 +254,20 @@ def launch_chrome(
         "--disable-blink-features=AutomationControlled",
         "--use-mock-keychain",
     ]
+
+    # Windowed mode: open a real desktop-sized OS window instead of Chrome's
+    # tiny ~800x600 default, so a headed user isn't staring at a cramped window
+    # AND innerWidth already matches the desktop viewport — get_active_tab's
+    # device-metrics override then skips (innerWidth >= DESKTOP_MIN_WIDTH), so
+    # the page renders 1:1 with no emulation down-scaling. SSOT: the size is the
+    # same knob as the render viewport (config.resolve_viewport); a caller can
+    # override via a later `--window-size` in extra_args, and
+    # `AI_DEV_BROWSER_VIEWPORT=native` drops it. Headless has no visible window
+    # to size — device-metrics is its viewport lever, left untouched here.
+    if not headless:
+        viewport = resolve_viewport()
+        if viewport is not None:
+            args.append(f"--window-size={viewport[0]},{viewport[1]}")
 
     # Workspace tag: identifies which working directory owns this Chrome.
     # Read back via CDP Browser.getBrowserCommandLine() in port.py.
