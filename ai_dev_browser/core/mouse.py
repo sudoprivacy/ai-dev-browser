@@ -48,6 +48,12 @@ async def mouse_move(
 
     Returns:
         True on success
+
+    Failure:
+        A mouse-move event timed out — a mousemove/hover handler blocked the
+        render thread (heavy SPA). A standalone move is rarely needed: for a
+        planned click `mouse_click` already moves as required, and for hover
+        prefer `hover_by_ref`.
     """
     x, y = _scale_coords(x, y, screenshot)
 
@@ -167,6 +173,12 @@ async def mouse_drag(
 
     Returns:
         True on success
+
+    Failure:
+        A mouse event timed out mid-drag — a mousedown/move/up handler blocked
+        the render thread (heavy SPA), or a JS dialog opened. For an element
+        reorder/drop prefer `drag_by_ref` (no coordinates); for text selection
+        use `select_text` (a synthetic drag can't drive text selection).
     """
     from_x, from_y = _scale_coords(from_x, from_y, screenshot)
     to_x, to_y = _scale_coords(to_x, to_y, screenshot)
