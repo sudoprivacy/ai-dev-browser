@@ -72,12 +72,20 @@ async def mouse_click(
     modifiers: int = 0,
     double: bool = False,
     human_like: bool = None,
+    move: bool = True,
 ) -> bool:
     """Use when: you need to click at raw screen coordinates — reading
     them off a `page_screenshot` (pass the same `screenshot` path here
     and coords auto-scale), or clicking on canvas / SVG / custom-rendered
     UI that has no DOM element to locate. For DOM elements, prefer the
     `click_by_*` tools — they're atomic and return navigation feedback.
+
+    On a heavy enterprise SPA whose mouse handlers block the render thread,
+    pass `move=False`: it skips the pre-click cursor move (and the extra mouse
+    events it dispatches, each of which the page must process), so the click is
+    just a press+release — the fewest events, the least to stall on. Every
+    mouse event is bounded by a short timeout, so a stuck handler fails loud
+    fast instead of hanging.
 
     Args:
         tab: Tab instance
@@ -89,9 +97,20 @@ async def mouse_click(
         modifiers: Modifier keys bitmask (1=Alt, 2=Ctrl, 4=Meta, 8=Shift)
         double: If True, double click
         human_like: Use human-like timing (default: from config)
+        move: If True (default), move the cursor to the target before
+            clicking. Set False to press+release in place — fewer dispatched
+            events, more robust on heavy SPAs.
 
     Returns:
         True on success
+
+    Failure:
+        A mouse event timed out — the page's mousedown/up (or hover) handler
+        blocked the render thread: a heavy SPA, a synchronous recalc, or a
+        modal/dialog the click opened. Retry with `move=False` to cut the
+        pre-click events; if the click raises a JS dialog, handle it with
+        `dialog_respond` first. `js element.click()` is NOT a fallback — sites
+        that gate on trusted events ignore synthetic clicks.
     """
     x, y = _scale_coords(x, y, screenshot)
 
@@ -104,11 +123,12 @@ async def mouse_click(
 
     if use_human:
         if double:
-            await human.mouse_double_click(tab, x, y, button=button)
+            await human.mouse_double_click(tab, x, y, button=button, move_first=move)
         else:
-            await human.mouse_click(tab, x, y, button=button)
+            await human.mouse_click(tab, x, y, button=button, move_first=move)
     else:
-        await tab.mouse_move(x, y, steps=1)
+        if move:
+            await tab.mouse_move(x, y, steps=1)
         await tab.mouse_click(x, y, button=button, modifiers=modifiers)
         if double:
             await tab.mouse_click(x, y, button=button, modifiers=modifiers)

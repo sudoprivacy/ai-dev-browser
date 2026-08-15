@@ -26,6 +26,15 @@ MAX_SIZE: int = 2**28
 PING_TIMEOUT: int = 900  # 15 minutes
 COMMAND_TIMEOUT: int = 30  # seconds per CDP command
 
+# Bounded timeout for input dispatches (Input.dispatchMouseEvent). Unlike most
+# CDP commands, an input dispatch's response waits on the page's own event
+# handler running on the render main thread — a handler that blocks (heavy
+# enterprise SPA, a modal, a synchronous recalc) stalls the response. At the
+# 30s COMMAND_TIMEOUT that reads as a hang, and a humanized move fires many
+# dispatches back-to-back, multiplying it. A short, dedicated cap makes a
+# stuck handler fail loud fast instead of hanging the whole call.
+MOUSE_EVENT_TIMEOUT: float = 5.0  # seconds per mouse dispatch
+
 
 class ProtocolException(Exception):
     """CDP protocol error."""

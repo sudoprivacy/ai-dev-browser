@@ -22,7 +22,12 @@ from ai_dev_browser.cdp import (
 
 from ._element import Element, create, filter_recurse
 from ._js import unwrap
-from ._transport import CDPConnection, CommandTimeout, ProtocolException
+from ._transport import (
+    CDPConnection,
+    CommandTimeout,
+    MOUSE_EVENT_TIMEOUT,
+    ProtocolException,
+)
 from .errors import js_snippet
 
 if typing.TYPE_CHECKING:
@@ -509,7 +514,10 @@ class Tab:
     async def mouse_move(self, x: float, y: float, steps: int = 10):
         """Move mouse to coordinates with intermediate steps."""
         if steps <= 1:
-            await self.send(cdp_input.dispatch_mouse_event("mouseMoved", x=x, y=y))
+            await self.send(
+                cdp_input.dispatch_mouse_event("mouseMoved", x=x, y=y),
+                timeout=MOUSE_EVENT_TIMEOUT,
+            )
             return
         # Get last known position (default 0,0)
         from_x, from_y = 0, 0
@@ -517,7 +525,10 @@ class Tab:
             t = (i + 1) / steps
             ix = from_x + (x - from_x) * t
             iy = from_y + (y - from_y) * t
-            await self.send(cdp_input.dispatch_mouse_event("mouseMoved", x=ix, y=iy))
+            await self.send(
+                cdp_input.dispatch_mouse_event("mouseMoved", x=ix, y=iy),
+                timeout=MOUSE_EVENT_TIMEOUT,
+            )
 
     async def mouse_click(
         self, x: float, y: float, button: str = "left", modifiers: int = 0
@@ -532,7 +543,8 @@ class Tab:
                 button=btn,
                 click_count=1,
                 modifiers=modifiers,
-            )
+            ),
+            timeout=MOUSE_EVENT_TIMEOUT,
         )
         await self.send(
             cdp_input.dispatch_mouse_event(
@@ -542,7 +554,8 @@ class Tab:
                 button=btn,
                 click_count=1,
                 modifiers=modifiers,
-            )
+            ),
+            timeout=MOUSE_EVENT_TIMEOUT,
         )
 
     async def mouse_drag(self, source, dest, steps: int = 10):
@@ -560,17 +573,22 @@ class Tab:
         await self.send(
             cdp_input.dispatch_mouse_event(
                 "mousePressed", x=sx, y=sy, button=btn, click_count=1
-            )
+            ),
+            timeout=MOUSE_EVENT_TIMEOUT,
         )
         for i in range(steps):
             t = (i + 1) / steps
             ix = sx + (dx - sx) * t
             iy = sy + (dy - sy) * t
-            await self.send(cdp_input.dispatch_mouse_event("mouseMoved", x=ix, y=iy))
+            await self.send(
+                cdp_input.dispatch_mouse_event("mouseMoved", x=ix, y=iy),
+                timeout=MOUSE_EVENT_TIMEOUT,
+            )
         await self.send(
             cdp_input.dispatch_mouse_event(
                 "mouseReleased", x=dx, y=dy, button=btn, click_count=1
-            )
+            ),
+            timeout=MOUSE_EVENT_TIMEOUT,
         )
 
     # =========================================================================

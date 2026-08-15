@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from ai_dev_browser import cdp
 from ._element import Element
 from ._tab import Tab
+from ._transport import MOUSE_EVENT_TIMEOUT
 
 
 # Optional: use oxymouse if available
@@ -356,7 +357,8 @@ async def mouse_move(
         delay_per_point = duration / len(path) if path else 0
         for point in path:
             await tab.send(
-                cdp.input_.dispatch_mouse_event("mouseMoved", x=point[0], y=point[1])
+                cdp.input_.dispatch_mouse_event("mouseMoved", x=point[0], y=point[1]),
+                timeout=MOUSE_EVENT_TIMEOUT,
             )
             if delay_per_point > 0:
                 await asyncio.sleep(delay_per_point)
@@ -397,7 +399,8 @@ async def mouse_click(
     await tab.send(
         cdp.input_.dispatch_mouse_event(
             "mousePressed", x=x, y=y, button=btn, click_count=1
-        )
+        ),
+        timeout=MOUSE_EVENT_TIMEOUT,
     )
 
     # Optional: random hold time (if enabled)
@@ -409,7 +412,8 @@ async def mouse_click(
     await tab.send(
         cdp.input_.dispatch_mouse_event(
             "mouseReleased", x=x, y=y, button=btn, click_count=1
-        )
+        ),
+        timeout=MOUSE_EVENT_TIMEOUT,
     )
 
 
@@ -442,7 +446,8 @@ async def mouse_double_click(
     await tab.send(
         cdp.input_.dispatch_mouse_event(
             "mousePressed", x=x, y=y, button=btn, click_count=1
-        )
+        ),
+        timeout=MOUSE_EVENT_TIMEOUT,
     )
     if _config.click_hold_enabled:
         hold_ms = random.uniform(_config.click_hold_min_ms, _config.click_hold_max_ms)
@@ -450,7 +455,8 @@ async def mouse_double_click(
     await tab.send(
         cdp.input_.dispatch_mouse_event(
             "mouseReleased", x=x, y=y, button=btn, click_count=1
-        )
+        ),
+        timeout=MOUSE_EVENT_TIMEOUT,
     )
 
     # Interval between clicks (random if humanized, else minimal)
@@ -465,7 +471,8 @@ async def mouse_double_click(
     await tab.send(
         cdp.input_.dispatch_mouse_event(
             "mousePressed", x=x, y=y, button=btn, click_count=2
-        )
+        ),
+        timeout=MOUSE_EVENT_TIMEOUT,
     )
     if _config.click_hold_enabled:
         hold_ms = random.uniform(_config.click_hold_min_ms, _config.click_hold_max_ms)
@@ -473,7 +480,8 @@ async def mouse_double_click(
     await tab.send(
         cdp.input_.dispatch_mouse_event(
             "mouseReleased", x=x, y=y, button=btn, click_count=2
-        )
+        ),
+        timeout=MOUSE_EVENT_TIMEOUT,
     )
 
 
