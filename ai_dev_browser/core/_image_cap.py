@@ -276,10 +276,18 @@ def write_metadata(path: str, metadata: dict[str, Any]) -> None:
         if suffix == ".png":
             img.save(src, format="PNG", pnginfo=_build_png_info(metadata))
         elif suffix in (".jpg", ".jpeg"):
-            # quality="keep" preserves the JPEG quantization tables from
-            # the last encode so this rewrite adds no generation loss.
+            # quality="keep" preserves the JPEG quantization tables from the
+            # last encode so this rewrite adds no generation loss. optimize=True
+            # is REQUIRED for size parity with apply_image_cap's quality search
+            # (which also optimizes): without it the Huffman tables aren't
+            # optimized and the rewrite balloons ~4-5%, so a file the search
+            # measured as under max_bytes lands over it — capped=True then lies.
             img.save(
-                src, format="JPEG", exif=_build_exif_bytes(metadata), quality="keep"
+                src,
+                format="JPEG",
+                exif=_build_exif_bytes(metadata),
+                quality="keep",
+                optimize=True,
             )
         # Other formats: silently no-op (no place to embed). Callers
         # only ever produce PNG/JPEG today.

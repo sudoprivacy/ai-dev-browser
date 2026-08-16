@@ -508,3 +508,40 @@ def test_read_screenshot_metadata_dispatches_by_extension(png_fixture):
     jpg = png_fixture.with_suffix(".jpg")
     write_metadata(str(jpg), {"scale_factor": 2.0, "image_width": 600})
     assert read_screenshot_metadata(str(jpg))["image_width"] == 600
+
+
+def test_write_metadata_keeps_capped_jpeg_under_max_bytes(tmp_path):
+    """Regression (deterministic, no browser): apply_image_cap measures JPEG
+    sizes with optimize=True, so write_metadata MUST also re-encode with
+    optimize=True — otherwise the metadata rewrite balloons the Huffman coding
+    ~4-5% and a file the cap search measured as under max_bytes lands over it
+    (capped=True then lies). This was a real CI flake on a near-boundary image.
+    """
+    from PIL import Image
+
+    from ai_dev_browser.core._image_cap import apply_image_cap, write_metadata
+
+    src = tmp_path / "shot.png"
+    img = Image.new("RGB", (400, 1600))
+    px = img.load()
+    for y in range(1600):
+        for x in range(400):
+            px[x, y] = (
+                (x * 7 + y * 13) % 256,
+                (x * 13 + y) % 256,
+                (x * 19 + y * 3) % 256,
+            )
+    img.save(src, format="PNG")
+
+    cap = {"max_bytes": 120_000}
+    res = apply_image_cap(str(src), cap, reserve_bytes_for_metadata=True)
+    assert res["capped"] is True, f"noisy image should cap under 120k: {res}"
+
+    write_metadata(
+        res["final_path"],
+        {"scale_factor": 1.0, "viewport_width": 400, "viewport_height": 1600},
+    )
+    final = Path(res["final_path"]).stat().st_size
+    assert final <= cap["max_bytes"], (
+        f"capped JPEG ballooned past the cap after metadata: {final} > {cap['max_bytes']}"
+    )
