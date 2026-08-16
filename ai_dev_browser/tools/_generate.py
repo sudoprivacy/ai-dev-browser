@@ -87,6 +87,7 @@ TOOL_META = {
     "storage_set": {"result_key": "set"},
     "cdp_send": {"result_key": "result"},
     "login_interactive": {"result_key": "success"},
+    "download_link": {"result_key": "downloaded"},
 }
 
 TEMPLATE = '''"""AUTO-GENERATED from ai_dev_browser.core — {func_name}

@@ -1592,6 +1592,21 @@ _LOCATE_FOR_CLICK_JS = """
 """
 
 
+def _xpath_finder_js(xpath: str) -> str:
+    """A finder for `_trusted_click` / `download_link` that assigns `el` to the
+    first node matching `xpath`, recursing same-origin frames."""
+    return (
+        "const XP=%s;"
+        "function search(doc){try{const r=doc.evaluate(XP,doc,null,"
+        "XPathResult.FIRST_ORDERED_NODE_TYPE,null);"
+        "if(r&&r.singleNodeValue)return r.singleNodeValue;}catch(e){}return null;}"
+        "function recurse(win){try{const h=search(win.document);if(h)return h;}catch(e){}"
+        "for(let i=0;i<win.frames.length;i++){try{const h=recurse(win.frames[i]);"
+        "if(h)return h;}catch(e){}}return null;}"
+        "const el=recurse(window);" % json.dumps(xpath)
+    )
+
+
 async def _trusted_click(
     tab: Tab, finder_js: str, locator_key: str, locator_val: str
 ) -> dict:
@@ -1757,14 +1772,4 @@ async def click_by_xpath(tab: Tab, xpath: str) -> dict:
         without clicking), or switch locator — `click_by_text` /
         `click_by_html_id`, or `page_discover` → `click_by_ref`.
     """
-    finder = (
-        "const XP=%s;"
-        "function search(doc){try{const r=doc.evaluate(XP,doc,null,"
-        "XPathResult.FIRST_ORDERED_NODE_TYPE,null);"
-        "if(r&&r.singleNodeValue)return r.singleNodeValue;}catch(e){}return null;}"
-        "function recurse(win){try{const h=search(win.document);if(h)return h;}catch(e){}"
-        "for(let i=0;i<win.frames.length;i++){try{const h=recurse(win.frames[i]);"
-        "if(h)return h;}catch(e){}}return null;}"
-        "const el=recurse(window);" % json.dumps(xpath)
-    )
-    return await _trusted_click(tab, finder, "xpath", xpath)
+    return await _trusted_click(tab, _xpath_finder_js(xpath), "xpath", xpath)

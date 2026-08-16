@@ -65,7 +65,7 @@ from .cookies_import import cookies_extract, cookies_import
 from .dialog import dialog_respond
 
 # Download
-from .download import download
+from .download import download, download_link
 
 # Login (human-in-the-loop)
 from .login import login_interactive
@@ -223,6 +223,7 @@ __all__ = [
     "storage_set",
     # Download
     "download",
+    "download_link",
     # Dialog
     "dialog_respond",
     # Login
