@@ -462,8 +462,21 @@ async def get_active_tab(
     def _url(tab: Tab) -> str:
         return getattr(tab._target, "url", "") or ""
 
+    def _path_part(u: str) -> str:
+        # scheme + host + path, without ?query / #fragment
+        return u.split("#", 1)[0].split("?", 1)[0]
+
     wanted = url_contains or os.environ.get(TAB_URL_ENV) or ""
     if wanted:
+        # Prefer a match in the URL's scheme+host+path over one that only hits
+        # the query string. Otherwise a substring buried in an OAuth
+        # `redirect_uri=` (or any `?...=<target-url>` param) silently hijacks
+        # the selection to the login/redirect tab instead of the real page.
+        for tab in page_targets:
+            if wanted in _path_part(_url(tab)):
+                return await _prepared(tab)
+        # Fall back to a full-URL substring match so an intentional
+        # query-param selector still works when nothing matches the path.
         for tab in page_targets:
             if wanted in _url(tab):
                 return await _prepared(tab)
