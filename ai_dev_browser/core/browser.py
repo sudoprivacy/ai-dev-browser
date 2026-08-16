@@ -90,7 +90,18 @@ def browser_start(
     override_default_args: dict[str, str | None] | None = None,
     silent_stderr: bool = False,
 ) -> dict:
-    """Start or reuse a browser instance.
+    """Start a browser instance — ISOLATED by default.
+
+    With no `profile`, each call is a throwaway isolated session: its own port,
+    a temporary profile, and no reuse. That's the safe default — automation
+    never lands on tabs another session or agent left open in a shared Chrome
+    (the failure mode of reusing a persistent Chrome + guessing the active tab).
+
+    Name a `profile` to opt into persistence: a stable per-profile data dir
+    (login/cookies survive across runs) that same-profile calls reuse. Different
+    profiles never share a Chrome, so profile is also the parallel-worker
+    isolation boundary. `cookies_save` / `cookies_load` carry login into an
+    otherwise ephemeral session without a named profile.
 
     Args:
         port: Debug port (auto-assigned if None)
@@ -103,9 +114,15 @@ def browser_start(
             `1`/`true` → True, `new`/`old` → that literal mode, anything
             else → False.
         url: Initial URL to open (default: about:blank)
-        profile: Profile name (default: "default")
-        temp: Use temporary profile instead
-        reuse: "none" (always new) or "any" (reuse idle Chrome, default)
+        profile: Named profile for a PERSISTENT session (login survives,
+            reusable, per-profile isolated). Omit for the isolated ephemeral
+            default.
+        temp: Force a temporary profile. Implied when no `profile` is named,
+            so the default is already isolated; pass it explicitly only to
+            override a configured profile.
+        reuse: "none" (always new) or "any" (reuse an idle same-profile
+            Chrome, default). Only consulted for a named profile — an
+            ephemeral session never reuses.
         startup_timeout: Seconds to wait for Chrome to bind its debug port
             after spawn. Default 30s covers cold-start on slow Windows
             machines (fresh profile init + Defender scan + I/O contention
@@ -130,6 +147,13 @@ def browser_start(
     Returns:
         dict with port, pid, headless, url, profile, reused, message
     """
+    # Isolation by default: an unnamed session has nothing to persist and must
+    # not reuse a shared Chrome (where it could act on another session's tabs),
+    # so run it as a throwaway temp session. A named profile is the explicit
+    # opt-in to persistence + reuse.
+    if profile is None and not temp:
+        temp = True
+
     # Try to reuse an existing Chrome. Profile-aware: if the caller asked
     # for a specific profile we must not hand back a Chrome running a
     # different profile (that would break parallel workers using distinct

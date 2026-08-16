@@ -124,6 +124,34 @@ def test_temp_never_reuses():
         browser_stop(port=first["port"])
 
 
+def test_default_is_isolated_and_never_reused():
+    """Safe default: browser_start() with NO profile is a throwaway isolated
+    session (temp profile, own port, never reused), so automation can't land on
+    tabs another session/agent left in a shared persistent Chrome. Two default
+    calls must be two distinct Chromes, not one reused instance."""
+    first = browser_start(headless=True)
+    try:
+        assert "error" not in first, first
+        assert first["profile"] == "(temp)", (
+            f"an unnamed session must be a temp isolated profile: {first}"
+        )
+        assert first["reused"] is False, first
+
+        second = browser_start(headless=True)
+        try:
+            assert second["reused"] is False, (
+                f"a second default call must NOT reuse the first: {second}"
+            )
+            assert second["port"] != first["port"], (
+                f"two default sessions must be distinct Chromes: "
+                f"{first['port']} vs {second['port']}"
+            )
+        finally:
+            browser_stop(port=second["port"])
+    finally:
+        browser_stop(port=first["port"])
+
+
 # -----------------------------------------------------------------------------
 # Bug B: no orphan coroutine when _graceful_stop runs inside an event loop
 # -----------------------------------------------------------------------------
