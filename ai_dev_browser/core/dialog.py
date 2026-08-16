@@ -116,9 +116,14 @@ async def dialog_respond(
     auto_handle: bool = False,
     wait_timeout: float = 0,
 ) -> dict:
-    """Use when: a page fired (or is about to fire) `alert()` / `confirm()`
-    / `prompt()` / `beforeunload`, and you need to respond. Returns
-    `{success, action: "accepted"|"dismissed", ...}` or
+    """Use when: you need EXPLICIT control over a `alert()` / `confirm()` /
+    `prompt()` / `beforeunload` dialog — a specific accept/dismiss, or prompt
+    text. By default dialogs are already auto-handled (dismissed) the moment
+    they open, so a click/eval never hangs on one; you only need this tool to
+    override that — to *accept* a specific dialog, type into a `prompt()`, or
+    after setting `AI_DEV_BROWSER_DIALOG=off` to take full manual control
+    (globally, `AI_DEV_BROWSER_DIALOG=accept` flips the auto-default to accept).
+    Returns `{success, action: "accepted"|"dismissed", ...}` or
     `{success: False, error: "no_dialog"|"timeout"|"setup_failed", message}`
     so you can branch on whether the dialog actually appeared.
 

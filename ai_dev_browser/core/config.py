@@ -105,6 +105,34 @@ def resolve_viewport() -> tuple[int, int] | None:
     return int(match.group(1)), int(match.group(2))
 
 
+# How JS dialogs (alert / confirm / prompt / beforeunload) are auto-handled.
+# An open dialog blocks the render main thread, so ANY renderer command
+# (js_evaluate, page_screenshot, a click whose handler fired the dialog) hangs
+# until it's answered. Like Playwright/Puppeteer, ai-dev-browser answers dialogs
+# automatically so automation never wedges on one. Set process-wide:
+#   "dismiss" (default) — Cancel/No; fail-safe, never confirms a destructive act
+#   "accept"            — OK/Yes; use for flows that must proceed through a
+#                         confirm (e.g. a download prompt)
+#   "off" / "manual"    — disable auto-handling and drive dialogs yourself with
+#                         `dialog_respond`
+DIALOG_ENV = "AI_DEV_BROWSER_DIALOG"
+
+
+def resolve_dialog_policy() -> str | None:
+    """Auto-dialog policy: `"dismiss"` (default), `"accept"`, or None (off).
+
+    Reads `AI_DEV_BROWSER_DIALOG`. Unknown values fall back to the fail-safe
+    `"dismiss"` rather than raising — a typo must not turn into a silent
+    `"accept"` that confirms something destructive.
+    """
+    raw = os.environ.get(DIALOG_ENV, "").strip().lower()
+    if raw in ("off", "manual", "none", "0", "false"):
+        return None
+    if raw == "accept":
+        return "accept"
+    return "dismiss"
+
+
 # Debug port range for scanning and allocation
 DEFAULT_DEBUG_HOST = "127.0.0.1"
 DEFAULT_DEBUG_PORT = 9350

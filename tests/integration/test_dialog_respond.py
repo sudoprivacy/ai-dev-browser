@@ -39,7 +39,13 @@ def _integration_guard():
 
 
 @pytest.fixture
-async def tab():
+async def tab(monkeypatch):
+    # These tests drive dialogs EXPLICITLY via dialog_respond, so turn off the
+    # default auto-handler (which would otherwise dismiss them before this tool
+    # ever sees them). This is exactly the AI_DEV_BROWSER_DIALOG=off use case.
+    from ai_dev_browser.core.config import DIALOG_ENV
+
+    monkeypatch.setenv(DIALOG_ENV, "off")
     result = browser_start(headless=True, temp=True)
     assert "error" not in result
     port = result["port"]

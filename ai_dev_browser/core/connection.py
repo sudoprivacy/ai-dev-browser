@@ -29,6 +29,7 @@ from .config import (
     DEFAULT_DEBUG_PORT,
     DESKTOP_MIN_WIDTH,
     TAB_URL_ENV,
+    resolve_dialog_policy,
     resolve_viewport,
 )
 
@@ -416,6 +417,24 @@ async def get_active_tab(
         browser = await connect_browser()
 
     async def _prepared(tab: Tab) -> Tab:
+        # Auto-handle JS dialogs FIRST: an open alert/confirm/prompt blocks the
+        # render thread, so it would hang the viewport probe below (and every
+        # later renderer command). Register the handler for dialogs that open
+        # during this session, then clear any that's already showing — the
+        # handle command works even while the renderer is blocked. SSOT: the
+        # policy lives in resolve_dialog_policy(); None = the consumer opted out
+        # (AI_DEV_BROWSER_DIALOG=off) to drive dialogs via dialog_respond.
+        from .dialog import _handle_dialog, _setup_auto_dialog_handler
+
+        dialog_policy = resolve_dialog_policy()
+        if dialog_policy is not None:
+            accept = dialog_policy == "accept"
+            try:
+                await _setup_auto_dialog_handler(tab, accept=accept)
+                await _handle_dialog(tab, accept=accept)
+            except Exception:
+                pass  # best-effort; never block tab acquisition on dialog setup
+
         # Give every tab a desktop render viewport so responsive apps don't
         # collapse to mobile layout. SSOT: the size lives in resolve_viewport();
         # None means the consumer opted out (AI_DEV_BROWSER_VIEWPORT=native).
