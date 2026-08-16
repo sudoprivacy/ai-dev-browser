@@ -1558,9 +1558,89 @@ async def find_by_html_id(tab: Tab, html_id: str) -> dict:
     return await tab.evaluate(expr)
 
 
+# Locate an element (via a caller-supplied finder that assigns `el`, recursing
+# same-origin frames), scroll it into view, and return its click point in
+# TOP-level viewport coordinates — walking frame offsets so a CDP mouse event
+# lands right even for an element inside a same-origin iframe. `wasVisible`
+# reports whether it was already on-screen before the scroll. null if not found.
+_LOCATE_FOR_CLICK_JS = """
+(function() {
+  __FINDER__
+  if (!el) return null;
+  const ownerWin = el.ownerDocument.defaultView;
+  const r0 = el.getBoundingClientRect();
+  const wasVisible = r0.width > 0 && r0.height > 0 &&
+    r0.top >= 0 && r0.left >= 0 &&
+    r0.bottom <= (ownerWin.innerHeight || 1e9) &&
+    r0.right <= (ownerWin.innerWidth || 1e9);
+  try {
+    if (el.scrollIntoViewIfNeeded) el.scrollIntoViewIfNeeded(true);
+    else el.scrollIntoView({block: 'center', inline: 'center'});
+  } catch (e) {}
+  const r = el.getBoundingClientRect();
+  let x = r.left + r.width / 2, y = r.top + r.height / 2;
+  let win = ownerWin;
+  try {
+    while (win && win !== window.top && win.frameElement) {
+      const fr = win.frameElement.getBoundingClientRect();
+      x += fr.left; y += fr.top;
+      win = win.parent;
+    }
+  } catch (e) {}
+  return {x: x, y: y, w: r.width, h: r.height, wasVisible: wasVisible};
+})()
+"""
+
+
+async def _trusted_click(
+    tab: Tab, finder_js: str, locator_key: str, locator_val: str
+) -> dict:
+    """Locate (via `finder_js`, which must assign `el`) → scroll into view →
+    dispatch a TRUSTED CDP mouse click at the element's top-level centre.
+
+    Real mouse events (mousedown/up), not `el.click()`, so sites that gate on
+    trusted events (banks, government / enterprise SPAs) actually fire; and it's
+    scroll-aware, so a target scrolled out of view is brought on-screen first
+    instead of clicking stale coordinates. Shared by click_by_xpath /
+    click_by_html_id so both behave identically.
+    """
+    url_before = (await _capture_page_state(tab)).get("url", "")
+    hit = await tab.evaluate(_LOCATE_FOR_CLICK_JS.replace("__FINDER__", finder_js))
+    action = {"clicked": False, locator_key: locator_val, "url_before": url_before}
+    if not hit:
+        action.update(
+            {
+                "error": "not found",
+                "navigated": False,
+                "url_after": url_before,
+                "title_after": "",
+            }
+        )
+        return action
+    if not hit.get("w") or not hit.get("h"):
+        action.update(
+            {
+                "error": "element found but has zero size (not clickable)",
+                "navigated": False,
+                "url_after": url_before,
+                "title_after": "",
+            }
+        )
+        return action
+    await tab.mouse_click(hit["x"], hit["y"])
+    action["clicked"] = True
+    if not hit.get("wasVisible"):
+        # Signal the caller that the target wasn't on-screen — a hint that
+        # follow-up coordinates (e.g. a prior screenshot's) are now stale.
+        action["scrolled_into_view"] = True
+    return await _with_nav_feedback(tab, action)
+
+
 async def click_by_html_id(tab: Tab, html_id: str) -> dict:
     """Use when: you know the html `id` of the element you want clicked.
-    Atomic locate+click in one call, cross-frame (same-origin).
+    Atomic locate+click in one call, cross-frame (same-origin). Scrolls the
+    target into view and fires a **trusted** CDP mouse click (not
+    `el.click()`), so trusted-event-gated controls actually respond.
 
     Returns `{clicked, url_before, url_after, title_after, navigated}` —
     **don't** screenshot after the click just to see if it worked,
@@ -1586,46 +1666,14 @@ async def click_by_html_id(tab: Tab, html_id: str) -> dict:
         `find_by_text` → `click_by_ref` for iframe targets) or
         `click_by_xpath` for attribute / positional predicates.
     """
-    url_before_state = await _capture_page_state(tab)
-    url_before = url_before_state.get("url", "")
-
-    expr = """
-    (function(id) {
-      function search(win) {
-        try {
-          const el = win.document.getElementById(id);
-          if (el) return el;
-        } catch(e) {}
-        for (let i = 0; i < win.frames.length; i++) {
-          try {
-            const result = search(win.frames[i]);
-            if (result) return result;
-          } catch(e) {}
-        }
-        return null;
-      }
-      const el = search(window);
-      if (!el) return {clicked: false, error: 'not found'};
-      try {
-        el.click();
-        return {clicked: true};
-      } catch(e) {
-        return {clicked: false, error: String(e)};
-      }
-    })(%s)
-    """ % json.dumps(html_id)
-    click = await tab.evaluate(expr)
-    action = {
-        "clicked": bool(click.get("clicked")),
-        "html_id": html_id,
-        "url_before": url_before,
-    }
-    if click.get("error"):
-        action["error"] = click["error"]
-    if not action["clicked"]:
-        action.update({"navigated": False, "url_after": url_before, "title_after": ""})
-        return action
-    return await _with_nav_feedback(tab, action)
+    finder = (
+        "function search(win){"
+        "try{const el=win.document.getElementById(%s);if(el)return el;}catch(e){}"
+        "for(let i=0;i<win.frames.length;i++){"
+        "try{const r=search(win.frames[i]);if(r)return r;}catch(e){}}return null;}"
+        "const el=search(window);" % json.dumps(html_id)
+    )
+    return await _trusted_click(tab, finder, "html_id", html_id)
 
 
 async def find_by_xpath(tab: Tab, xpath: str) -> dict:
@@ -1684,9 +1732,12 @@ async def find_by_xpath(tab: Tab, xpath: str) -> dict:
 
 async def click_by_xpath(tab: Tab, xpath: str) -> dict:
     """Use when: the element is best expressed as an XPath (attribute
-    predicate, positional, or anything text/ref can't disambiguate).
-    Atomic locate+click, cross-frame (same-origin). Prefer over
-    `js_evaluate` for locate+click.
+    predicate, positional, or anything text/ref can't disambiguate) — the
+    go-to for controls with no accessible name (common in Chinese gov /
+    enterprise SPAs). Atomic locate+click, cross-frame (same-origin). Scrolls
+    the target into view and fires a **trusted** CDP mouse click (not
+    `el.click()`), so trusted-event-gated controls actually respond. Prefer
+    over `js_evaluate` for locate+click.
 
     Returns `{clicked, url_before, url_after, title_after, navigated}` —
     **don't** screenshot after the click just to see if it worked,
@@ -1706,51 +1757,14 @@ async def click_by_xpath(tab: Tab, xpath: str) -> dict:
         without clicking), or switch locator — `click_by_text` /
         `click_by_html_id`, or `page_discover` → `click_by_ref`.
     """
-    url_before_state = await _capture_page_state(tab)
-    url_before = url_before_state.get("url", "")
-
-    expr = """
-    (function(xpath) {
-      function search(doc) {
-        try {
-          const result = doc.evaluate(xpath, doc, null,
-                                      XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-          if (result && result.singleNodeValue) return result.singleNodeValue;
-        } catch(e) {}
-        return null;
-      }
-      function recurse(win) {
-        try {
-          const hit = search(win.document);
-          if (hit) return hit;
-        } catch(e) {}
-        for (let i = 0; i < win.frames.length; i++) {
-          try {
-            const hit = recurse(win.frames[i]);
-            if (hit) return hit;
-          } catch(e) {}
-        }
-        return null;
-      }
-      const el = recurse(window);
-      if (!el) return {clicked: false, error: 'not found'};
-      try {
-        el.click();
-        return {clicked: true};
-      } catch(e) {
-        return {clicked: false, error: String(e)};
-      }
-    })(%s)
-    """ % json.dumps(xpath)
-    click = await tab.evaluate(expr)
-    action = {
-        "clicked": bool(click.get("clicked")),
-        "xpath": xpath,
-        "url_before": url_before,
-    }
-    if click.get("error"):
-        action["error"] = click["error"]
-    if not action["clicked"]:
-        action.update({"navigated": False, "url_after": url_before, "title_after": ""})
-        return action
-    return await _with_nav_feedback(tab, action)
+    finder = (
+        "const XP=%s;"
+        "function search(doc){try{const r=doc.evaluate(XP,doc,null,"
+        "XPathResult.FIRST_ORDERED_NODE_TYPE,null);"
+        "if(r&&r.singleNodeValue)return r.singleNodeValue;}catch(e){}return null;}"
+        "function recurse(win){try{const h=search(win.document);if(h)return h;}catch(e){}"
+        "for(let i=0;i<win.frames.length;i++){try{const h=recurse(win.frames[i]);"
+        "if(h)return h;}catch(e){}}return null;}"
+        "const el=recurse(window);" % json.dumps(xpath)
+    )
+    return await _trusted_click(tab, finder, "xpath", xpath)
