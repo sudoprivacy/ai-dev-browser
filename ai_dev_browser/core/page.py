@@ -218,10 +218,17 @@ async def page_screenshot(
     image_cap: dict | None = None,
 ) -> dict:
     """Use when: you need pixels for visual reasoning, coordinate-based
-    clicking (feed the path back to `mouse_click --screenshot` for
-    auto-scaling), or evidence of current state. Returns
-    `{path, size, width, height}` — the path is the saved PNG you can
-    read with vision.
+    clicking, or evidence of current state. Returns `{path, size, width,
+    height, scale_factor, device_pixel_ratio}` — the path is the saved PNG
+    you can read with vision.
+
+    This is the escape hatch for **opaque / canvas UIs** with no readable DOM
+    (e.g. an HTML5-canvas ERP console where `find_by_text` / xpath find
+    nothing): screenshot → locate the target's IMAGE-pixel position yourself
+    (your own vision / OCR) → `mouse_click(ix, iy, screenshot=path)`, which
+    applies `scale_factor` and fires a trusted click. `scale_factor` is also in
+    the return if you'd rather convert coordinates by hand
+    (CSS = image-pixel * scale_factor).
 
     For verifying a click caused navigation, the click_* tools already
     return `navigated` / `url_after` — screenshot is only needed when
@@ -262,9 +269,12 @@ async def page_screenshot(
                    every tool invocation. Precedence: per-call arg > env > None.
 
     Returns:
-        dict with path, size, width, height. When `image_cap` is provided,
-        also includes `format` ('PNG'|'JPEG') and `capped` (bool — False
-        means best-effort, smallest produced still missed `max_bytes`).
+        dict with path, size, width, height, `scale_factor`,
+        `device_pixel_ratio`. `scale_factor` maps image pixels → CSS/click
+        coords (CSS = image-pixel * scale_factor); `mouse_click(screenshot=)`
+        applies it for you. When `image_cap` is provided, also includes
+        `format` ('PNG'|'JPEG') and `capped` (bool — False means best-effort,
+        smallest produced still missed `max_bytes`).
 
     Note:
         Pass the screenshot path to mouse_click(--screenshot) for automatic
@@ -397,6 +407,12 @@ async def page_screenshot(
         "size": file_size,
         "width": width,
         "height": height,
+        # Surface the coordinate mapping so a caller doing its OWN localization
+        # (e.g. an LLM/OCR reading text off the image) can convert: a point at
+        # image-pixel (ix, iy) is CSS (ix * scale_factor, iy * scale_factor) —
+        # which is what mouse_click(screenshot=...) applies automatically.
+        "scale_factor": round(scale_factor, 6),
+        "device_pixel_ratio": dpr,
     }
     if cap_result is not None:
         result["format"] = cap_result["format"]
