@@ -14,17 +14,25 @@ async def download(
     url: str,
     path: str | Path | None = None,
 ) -> dict:
-    """Download a file from URL.
-
-    Sets the download directory (if path provided) and triggers the download.
+    """Use when: you already have the file's direct URL (a static href or an
+    API endpoint you can GET). Fetches it into the download directory and
+    returns the saved path. If the file has NO fetchable URL — the download is
+    POST/session-bound, or fires only from a click (common in gov / enterprise
+    SPAs) — use `download_link` instead, which drives the real control.
 
     Args:
         tab: Tab instance
-        url: URL to download
-        path: Download directory or file path (default: ./downloads/)
+        url: Direct URL of the file to download.
+        path: Download directory or file path (default: ./downloads/).
 
     Returns:
-        dict with path and success status
+        dict: `{path, success}`.
+
+    Failure:
+        `success: False` / `path: None` — the fetch produced no file. The URL
+        likely needs the page's session/headers (the injected fetch doesn't
+        carry them), redirects to HTML, or is gated behind a click — locate the
+        control and use `download_link` with its XPath instead.
     """
     if path:
         download_dir = Path(path).expanduser().resolve()
