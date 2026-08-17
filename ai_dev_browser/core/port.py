@@ -453,13 +453,24 @@ def _cleanup_temp_profile(
     port: int,
     profile_prefix: str = DEFAULT_PROFILE_PREFIX,
 ) -> bool:
-    """Clean up temp profile directory for a port if it exists."""
-    temp_dir = Path(tempfile.gettempdir()) / f"{profile_prefix}{port}"
-    if temp_dir.exists():
+    """Clean up temp profile directories for a port if any exist.
+
+    Matches the unique per-launch dirs (`{prefix}{port}_<rand>`) plus the legacy
+    exact `{prefix}{port}` — but NOT a longer port like 93500 for port 9350.
+    Best-effort: a dir still locked by a not-yet-dead Chrome is skipped and
+    swept on a later stop.
+    """
+    tmp = Path(tempfile.gettempdir())
+    candidates = list(tmp.glob(f"{profile_prefix}{port}_*"))
+    legacy = tmp / f"{profile_prefix}{port}"
+    if legacy.exists():
+        candidates.append(legacy)
+    cleaned = False
+    for temp_dir in candidates:
         try:
             shutil.rmtree(temp_dir)
             logger.debug(f"Cleaned up temp profile: {temp_dir}")
-            return True
+            cleaned = True
         except Exception as e:
             logger.warning(f"Failed to clean up temp profile {temp_dir}: {e}")
-    return False
+    return cleaned

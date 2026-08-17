@@ -219,12 +219,14 @@ def launch_chrome(
             "Chrome executable not found. Please install Google Chrome or set the path manually."
         )
 
-    # Create isolated user data directory if not provided
-    # Use port number in name so browser_stop can find and clean it up
+    # Create isolated user data directory if not provided. Unique PER LAUNCH
+    # (mkdtemp), not just per port: on Windows a temp Chrome holds its profile
+    # dir's lockfile for a moment after exit, so if the next launch reused the
+    # same port-named dir it would fail to init the profile and never bind the
+    # port ("port not listening after 30s"). The `{prefix}{port}_` prefix keeps
+    # the port in the name so browser_stop's glob still finds it to clean up.
     if user_data_dir is None:
-        temp_dir = Path(tempfile.gettempdir()) / f"{profile_prefix}{port}"
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        user_data_dir = str(temp_dir)
+        user_data_dir = tempfile.mkdtemp(prefix=f"{profile_prefix}{port}_")
 
     # Disable session restore by setting Preferences
     # This prevents Chrome from restoring previous tabs on startup

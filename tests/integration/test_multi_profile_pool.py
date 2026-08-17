@@ -189,3 +189,34 @@ async def test_graceful_stop_inside_event_loop_emits_no_runtime_warning():
         f"{[str(w.message) for w in orphans]}"
     )
     assert stop_result["method"] in ("graceful", "force")
+
+
+def test_temp_profiles_are_unique_per_launch():
+    """Regression (deterministic): each temp browser gets a UNIQUE user-data-dir
+    (mkdtemp), not one reused per port. Reusing a port-named dir is the Windows
+    CI flake — a launch reusing a port whose previous temp Chrome still holds
+    the profile lockfile fails 'port not listening after 30s'."""
+    from ai_dev_browser.core.port import _query_chrome_cmdline
+
+    def _udd(port: int) -> str | None:
+        for a in _query_chrome_cmdline(port) or []:
+            if a.startswith("--user-data-dir="):
+                return a.split("=", 1)[1]
+        return None
+
+    first = browser_start(headless=True, temp=True)
+    assert "error" not in first, first
+    try:
+        udd1 = _udd(first["port"])
+        second = browser_start(headless=True, temp=True)
+        assert "error" not in second, second
+        try:
+            udd2 = _udd(second["port"])
+            assert udd1 and udd2, f"could not read --user-data-dir: {udd1}, {udd2}"
+            assert udd1 != udd2, (
+                f"temp profiles must be unique per launch, got {udd1} == {udd2}"
+            )
+        finally:
+            browser_stop(port=second["port"])
+    finally:
+        browser_stop(port=first["port"])
