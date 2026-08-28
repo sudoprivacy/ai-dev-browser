@@ -501,7 +501,7 @@ def _platform_keys(
 ) -> tuple[bytes | None, bytes | None, str | None]:
     """Fetch the platform decryption material: (mac_key, win_key, linux_password).
 
-    Split out and called lazily (see `cookies_extract`) so a domain whose
+    Split out and called lazily (see `cookies_extract_offline`) so a domain whose
     cookies are all plaintext never triggers a Keychain prompt, a DPAPI call, or
     a libsecret lookup — and never fails on a missing/corrupt `Local State`.
     """
@@ -568,18 +568,21 @@ def _decrypt_cookie_value(
     return None
 
 
-def cookies_extract(
+def cookies_extract_offline(
     domain: str,
     browser: str = "chrome",
     user_data_dir: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Use when: you need to inspect what cookies a domain has in the
-    user's real browser — without an automation browser. Returns a list
-    of cookie dicts. Pair with `cookies_import` to inject into an
-    automation session.
+    """Use when: you need a domain's cookies from another browser's
+    **on-disk** profile without launching it — e.g. reusing the user's
+    daily-driver Chrome login. Returns full cookie dicts (identical shape
+    to `cookies_extract_live`). Cannot read in-memory session cookies or
+    Chrome 127+ App-Bound (v20) cookies — use `cookies_extract_live` for
+    those.
 
     Reads the browser's local SQLite cookie database and decrypts values
-    using platform-native crypto APIs. No external dependencies required.
+    using platform-native crypto APIs (DPAPI / Keychain / libsecret). No
+    external dependencies required.
 
     A system dialog may appear on macOS asking to authorize Keychain access.
     This serves as implicit user consent for cookie extraction. The prompt
@@ -600,9 +603,20 @@ def cookies_extract(
         List of cookie dicts with keys: name, value, domain, path,
         secure, httpOnly, expires.
 
+    Failure:
+        A v20/App-Bound error (every matching cookie is Chrome 127+
+        App-Bound encrypted), or an empty result where you expected a
+        logged-in session, means disk decryption cannot reach these
+        cookies — they are either App-Bound (v20) or in-memory session
+        cookies never written to disk. Read them from the running browser
+        instead: start Chrome with `--remote-debugging-port` (or use
+        `browser_start`), then `cookies_extract_live --port <port>
+        --domain <domain>`.
+
     Raises:
         FileNotFoundError: If the cookie database cannot be located.
-        RuntimeError: If decryption key cannot be obtained.
+        RuntimeError: If decryption key cannot be obtained, or if every
+            matching cookie is v20 (App-Bound) and none could be decrypted.
     """
     db_path = _find_cookie_db(browser, user_data_dir)
 
@@ -734,16 +748,31 @@ def cookies_extract(
                     }
                 )
 
+            # Fail loud only when App-Bound is the *sole* reason the caller
+            # got nothing: every matching cookie was v20 and undecryptable,
+            # so a bare `[]` would silently hide "wrong Chrome version",
+            # not "domain has no cookies". The wrapper turns this into
+            # {error, hint} and routes the Failure: docstring (→ switch to
+            # cookies_extract_live) to the caller at the moment it fails.
+            # A partial read (some plaintext/v10 cookies came back) still
+            # returns — better a useful subset than an exception.
+            if v20_skipped and not cookies:
+                raise RuntimeError(
+                    f"All {v20_skipped} cookie(s) for domain {domain!r} are v20 "
+                    "(Chrome 127+ App-Bound Encryption) and could not be "
+                    "decrypted from disk (ai-dev-browser's offline path supports "
+                    "only v10/v11)."
+                )
             if v20_skipped:
                 logger.warning(
                     "%d cookie(s) for domain %r are v20 (Chrome 127+ "
-                    "App-Bound Encryption) and could not be decrypted. "
-                    "These are silently dropped from the result. If you "
-                    "depend on a specific cookie that is missing, check "
-                    "whether your Chrome version uses App-Bound — current "
-                    "ai-dev-browser supports only v10/v11.",
+                    "App-Bound Encryption) and were dropped from the result "
+                    "(the other %d were returned). If a specific cookie you "
+                    "need is missing, read it from the running browser with "
+                    "cookies_extract_live instead.",
                     v20_skipped,
                     domain,
+                    len(cookies),
                 )
             return cookies
         finally:
@@ -763,8 +792,8 @@ async def cookies_import(
     Returns `{imported, domain, browser, cookies}`.
 
     Extracts cookies for the specified domain from the user's real browser
-    (reading its local SQLite database) and injects them into the current
-    automation session via CDP.
+    (reading its **on-disk** SQLite database, the `cookies_extract_offline`
+    path) and injects them into the current automation session via CDP.
 
     On macOS, the system Keychain dialog will prompt the user to authorize
     access — this serves as implicit user consent.
@@ -775,14 +804,21 @@ async def cookies_import(
         browser: Source browser. One of: "chrome", "chromium", "brave",
                  "edge". Default: "chrome".
         user_data_dir: Explicit Chrome user-data directory to read from.
-                 Forwarded to `cookies_extract`; defaults to auto-detecting
-                 the platform install location.
+                 Forwarded to `cookies_extract_offline`; defaults to
+                 auto-detecting the platform install location.
 
     Returns:
         dict with keys: imported (int), domain, browser, cookies (list
         of name/domain pairs for confirmation).
+
+    Failure:
+        Reads the on-disk profile, so it cannot see in-memory session
+        cookies or Chrome 127+ App-Bound (v20) cookies (all-v20 raises).
+        To copy a live login into this session, read the source browser
+        with `cookies_extract_live` (or `cookies_save` on the source
+        `--port` then `cookies_load` here).
     """
-    cookies = cookies_extract(domain, browser, user_data_dir=user_data_dir)
+    cookies = cookies_extract_offline(domain, browser, user_data_dir=user_data_dir)
 
     if not cookies:
         return {

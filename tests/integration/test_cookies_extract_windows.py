@@ -1,7 +1,7 @@
-"""End-to-end: cookies_extract Windows path, against a fabricated Chrome profile.
+"""End-to-end: cookies_extract_offline Windows path, against a fabricated profile.
 
 Rather than monkeypatching individual helpers, we fabricate the EXACT
-file layout that cookies_extract reads in production:
+file layout that cookies_extract_offline reads in production:
 
   <profile_root>/
     Local State              JSON with DPAPI-encrypted AES-256 key
@@ -20,7 +20,7 @@ Fabrication path (all real Windows APIs, no mocks):
      and INSERT it into a Chrome-schema SQLite DB.
 
 Then we point _BROWSER_PATHS["win32"]["chrome"] at our fake profile
-root and call the REAL `cookies_extract()` — no internal
+root and call the REAL `cookies_extract_offline()` — no internal
 monkeypatching. Every byte the production code reads, including
 the DPAPI ciphertext that triggered Bug C and the modern
 `Network/` subdir that triggered Bug E, comes from our fabrication.
@@ -334,7 +334,7 @@ def test_cookies_extract_end_to_end_against_fabricated_profile(
         [str(profile_root)],
     )
 
-    result = cookies_mod.cookies_extract(domain=domain, browser="chrome")
+    result = cookies_mod.cookies_extract_offline(domain=domain, browser="chrome")
 
     # Two cookies match `%example.com%`; the "other.test" cookie must not.
     assert len(result) == 2, (
@@ -412,7 +412,7 @@ def test_locked_cookies_db_raises_clear_runtime_error(tmp_path):
         cookies_mod._find_cookie_db = fake_finder
         try:
             with pytest.raises(RuntimeError, match="while it is running"):
-                cookies_mod.cookies_extract("anydomain")
+                cookies_mod.cookies_extract_offline("anydomain")
         finally:
             cookies_mod._find_cookie_db = original
     finally:

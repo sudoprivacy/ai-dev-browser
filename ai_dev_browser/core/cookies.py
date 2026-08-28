@@ -65,39 +65,75 @@ async def cookies_save(
     }
 
 
-async def cookies_list(
+async def cookies_extract_live(
     tab: Tab,
-    domain: str | None = None,
-) -> dict:
-    """List browser cookies.
+    domain: str,
+) -> list[dict]:
+    """Use when: you need a domain's cookies from a **running** browser —
+    the live, already-decrypted store — including in-memory session
+    cookies and Chrome 127+ App-Bound (v20) cookies that the on-disk path
+    (`cookies_extract_offline`) cannot read. Returns full cookie dicts
+    (identical shape to `cookies_extract_offline`), so the two are
+    interchangeable once `--port` points at the right browser.
+
+    Reads over CDP (`Storage.getCookies`) from whatever Chrome `--port` is
+    attached to — the automation instance, or a user Chrome launched with
+    `--remote-debugging-port`. Because the browser already holds every
+    cookie decrypted in memory, this side-steps both disk failure modes at
+    once: no SQLite, no DPAPI/Keychain, no App-Bound key, and session
+    cookies that were never written to disk are visible too. Unlike
+    `document.cookie` via `js_evaluate`, httpOnly cookies — the
+    auth/session ones you actually want — are included.
+
+    To copy a login *out of* the user's browser *into* a separate
+    automation session, run `cookies_save` on the source `--port` then
+    `cookies_load` on the destination `--port`; this tool is for reading
+    the values back (a one-time code, a token) or confirming what is set.
 
     Args:
-        tab: Tab instance
-        domain: Filter by domain (optional)
+        tab: Tab instance. Selects which browser to read from; the read is
+            browser-wide, not scoped to this tab.
+        domain: Substring matched against each cookie's domain, e.g.
+            "google.com" or ".proton.me". "" returns every cookie — same
+            semantics as `cookies_extract_offline`.
 
     Returns:
-        dict with cookies list and count
+        List of cookie dicts with keys: name, value, domain, path, secure,
+        httpOnly, expires (Unix seconds, or None for a session cookie).
+
+    Failure:
+        Empty result means the attached browser has no cookie whose domain
+        contains that substring — you may be on the wrong Chrome (set
+        `--port`/`--tab-url` to the browser that is logged in) or the
+        session is not established yet (log in first). To read a user's
+        already-open login they must have started Chrome with
+        `--remote-debugging-port` so you can attach to it.
     """
     browser = tab.browser
     cookies = await browser.cookies.get_all()
 
-    # Filter by domain if specified
-    if domain:
-        cookies = [c for c in cookies if domain in (getattr(c, "domain", "") or "")]
-
-    # Simplify output
-    simple_cookies = []
+    result = []
     for c in cookies:
-        value = getattr(c, "value", "") or ""
-        simple_cookies.append(
+        cookie_domain = getattr(c, "domain", "") or ""
+        if domain and domain not in cookie_domain:
+            continue
+
+        # Session cookies (and any with no future expiry) report as None —
+        # mirrors the on-disk path so both extractors return one shape.
+        session = getattr(c, "session", False)
+        expires = getattr(c, "expires", None)
+        expires_out = None if session or not expires or expires < 0 else expires
+
+        result.append(
             {
                 "name": getattr(c, "name", ""),
-                "domain": getattr(c, "domain", ""),
+                "value": getattr(c, "value", "") or "",
+                "domain": cookie_domain,
                 "path": getattr(c, "path", "/"),
-                "secure": getattr(c, "secure", False),
-                "httpOnly": getattr(c, "http_only", False),
-                "value": value[:50] + "..." if len(value) > 50 else value,
+                "secure": bool(getattr(c, "secure", False)),
+                "httpOnly": bool(getattr(c, "http_only", False)),
+                "expires": expires_out,
             }
         )
 
-    return {"cookies": simple_cookies, "count": len(simple_cookies)}
+    return result

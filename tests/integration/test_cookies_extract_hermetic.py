@@ -1,11 +1,11 @@
-"""`cookies_extract` pipeline, tested against a synthetic Chrome profile.
+"""`cookies_extract_offline` pipeline, tested against a synthetic Chrome profile.
 
 These tests build their own Chrome user-data directory — a Cookies SQLite with
-known rows — and point `cookies_extract(user_data_dir=...)` at it. Nothing here
-reads, locks, or depends on the developer's real browser.
+known rows — and point `cookies_extract_offline(user_data_dir=...)` at it.
+Nothing here reads, locks, or depends on the developer's real browser.
 
 That is the whole point. The suite this replaces read the developer's live
-Chrome (`cookies_extract(".google.com")` and asserted on whatever was there),
+Chrome (`cookies_extract_offline(".google.com")` and asserted on whatever was there),
 so it failed two ways that have nothing to do with the code: on Windows the
 running browser holds the Cookies file with an exclusive lock, and everywhere it
 assumed the machine happened to have the right cookies. A test that passes or
@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from ai_dev_browser.core.cookies_import import _find_cookie_db, cookies_extract
+from ai_dev_browser.core.cookies_import import _find_cookie_db, cookies_extract_offline
 
 # Chrome stores expiry as microseconds since 1601-01-01. This is 2030-01-01,
 # well inside the range the extractor sanity-checks after converting to Unix.
@@ -37,8 +37,8 @@ _UNIX_EXPIRES_2030 = 1_893_456_000
 def _make_profile(tmp_path: Path, rows: list[dict], profile: str = "Default") -> str:
     """Write a synthetic Chrome user-data dir with a plaintext Cookies DB.
 
-    Returns the user-data-dir path to hand to `cookies_extract`. Values go in
-    the plaintext `value` column, so the read never needs a decryption key.
+    Returns the user-data-dir path to hand to `cookies_extract_offline`. Values
+    go in the plaintext `value` column, so the read never needs a decryption key.
     """
     cookies_dir = tmp_path / profile / "Network"
     cookies_dir.mkdir(parents=True, exist_ok=True)
@@ -89,7 +89,7 @@ def test_returns_matching_cookies_with_full_shape(tmp_path):
             }
         ],
     )
-    cookies = cookies_extract(".example.com", user_data_dir=udd)
+    cookies = cookies_extract_offline(".example.com", user_data_dir=udd)
 
     assert len(cookies) == 1
     c = cookies[0]
@@ -111,7 +111,9 @@ def test_domain_filter_is_a_substring_match(tmp_path):
             {"host": "sub.example.com", "name": "keep_sub", "value": "3"},
         ],
     )
-    names = {c["name"] for c in cookies_extract("example.com", user_data_dir=udd)}
+    names = {
+        c["name"] for c in cookies_extract_offline("example.com", user_data_dir=udd)
+    }
     assert names == {"keep", "keep_sub"}
 
 
@@ -123,12 +125,12 @@ def test_empty_domain_returns_everything(tmp_path):
             {"host": ".b.com", "name": "y", "value": "2"},
         ],
     )
-    assert len(cookies_extract("", user_data_dir=udd)) == 2
+    assert len(cookies_extract_offline("", user_data_dir=udd)) == 2
 
 
 def test_no_match_returns_empty_list_without_raising(tmp_path):
     udd = _make_profile(tmp_path, [{"host": ".a.com", "name": "x", "value": "1"}])
-    result = cookies_extract(".nonexistent.invalid", user_data_dir=udd)
+    result = cookies_extract_offline(".nonexistent.invalid", user_data_dir=udd)
     assert result == []
 
 
@@ -137,7 +139,7 @@ def test_session_cookie_has_null_expiry(tmp_path):
         tmp_path,
         [{"host": ".a.com", "name": "s", "value": "1", "expires": 0}],
     )
-    assert cookies_extract(".a.com", user_data_dir=udd)[0]["expires"] is None
+    assert cookies_extract_offline(".a.com", user_data_dir=udd)[0]["expires"] is None
 
 
 def test_legacy_profile_root_layout_is_found(tmp_path):
@@ -156,7 +158,7 @@ def test_legacy_profile_root_layout_is_found(tmp_path):
     finally:
         conn.close()
 
-    cookies = cookies_extract(".a.com", user_data_dir=str(tmp_path))
+    cookies = cookies_extract_offline(".a.com", user_data_dir=str(tmp_path))
     assert cookies[0]["name"] == "legacy"
 
 
@@ -179,12 +181,12 @@ def test_all_plaintext_read_never_fetches_a_key(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "_platform_keys", _boom)
 
     udd = _make_profile(tmp_path, [{"host": ".a.com", "name": "p", "value": "plain"}])
-    assert cookies_extract(".a.com", user_data_dir=udd)[0]["value"] == "plain"
+    assert cookies_extract_offline(".a.com", user_data_dir=udd)[0]["value"] == "plain"
 
 
 def test_missing_user_data_dir_raises_file_not_found(tmp_path):
     with pytest.raises(FileNotFoundError):
-        cookies_extract(".a.com", user_data_dir=str(tmp_path / "nope"))
+        cookies_extract_offline(".a.com", user_data_dir=str(tmp_path / "nope"))
 
 
 def test_unknown_browser_name_raises_not_silently_returns(tmp_path):
@@ -192,3 +194,52 @@ def test_unknown_browser_name_raises_not_silently_returns(tmp_path):
     that matches no platform install can never resolve, no real Chrome needed."""
     with pytest.raises((FileNotFoundError, ValueError)):
         _find_cookie_db("netscape-navigator-4")
+
+
+def test_all_v20_empty_result_raises_pointing_at_live(tmp_path, monkeypatch):
+    """Fail loud, not silent: when every matching cookie is v20 (Chrome 127+
+    App-Bound) and none can be decrypted from disk, the caller must get a
+    raised error (which the CLI wrapper turns into {error, hint} steering to
+    cookies_extract_live), NOT a bare [] that reads as 'domain has no cookies'.
+
+    Hermetic across platforms: a `v20`-prefixed encrypted_value with no
+    plaintext is dropped on every OS (only v10/v11 are decryptable), so no
+    real crypto is exercised. We stub _platform_keys so no keystore is
+    touched during the drop."""
+    import sys
+
+    mod = sys.modules["ai_dev_browser.core.cookies_import"]
+    monkeypatch.setattr(mod, "_platform_keys", lambda *a, **k: (None, None, None))
+
+    udd = _make_profile(
+        tmp_path,
+        [
+            {
+                "host": ".appbound.example",
+                "name": "SID",
+                "encrypted": b"v20\x00\x01garbage",
+            }
+        ],
+    )
+    with pytest.raises(RuntimeError, match="v20"):
+        cookies_extract_offline(".appbound.example", user_data_dir=udd)
+
+
+def test_partial_v20_still_returns_the_decryptable_subset(tmp_path, monkeypatch):
+    """A domain with a mix of plaintext and undecryptable v20 cookies must
+    return the readable ones rather than raising — a useful subset beats an
+    exception when *some* data came through."""
+    import sys
+
+    mod = sys.modules["ai_dev_browser.core.cookies_import"]
+    monkeypatch.setattr(mod, "_platform_keys", lambda *a, **k: (None, None, None))
+
+    udd = _make_profile(
+        tmp_path,
+        [
+            {"host": ".mixed.example", "name": "plain", "value": "readable"},
+            {"host": ".mixed.example", "name": "bound", "encrypted": b"v20\x00\x01x"},
+        ],
+    )
+    cookies = cookies_extract_offline(".mixed.example", user_data_dir=udd)
+    assert {c["name"] for c in cookies} == {"plain"}

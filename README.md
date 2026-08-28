@@ -81,7 +81,7 @@ sort together in `ls tools/` and tab completion:
 | `browser_*` | `browser_start`, `browser_stop`, `browser_list`     |
 | `page_*`    | `page_goto`, `page_reload`, `page_screenshot`, `page_discover`, `page_scroll`, `page_wait_ready`, `page_wait_url`, `page_wait_element`, `page_info`, `page_html`, `page_emulate_focus` |
 | `tab_*`     | `tab_new`, `tab_close`, `tab_list`, `tab_switch`    |
-| `cookies_*` | `cookies_save`, `cookies_load`, `cookies_list`      |
+| `cookies_*` | `cookies_extract_live`, `cookies_extract_offline`, `cookies_import`, `cookies_save`, `cookies_load` |
 | `storage_*` | `storage_get`, `storage_set`                        |
 | `mouse_*`   | `mouse_click`, `mouse_move`, `mouse_drag`           |
 | `dialog_*`  | `dialog_respond`                                    |
