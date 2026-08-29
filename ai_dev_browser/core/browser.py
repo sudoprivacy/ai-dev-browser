@@ -385,6 +385,7 @@ async def browser_connect(
             return {
                 "transport": "extension",
                 "connected": False,
+                "retryable": False,  # daemon won't start — an environment issue
                 "extension_dir": str(extension_dir()),
                 "error": (
                     "Could not start the extension bridge daemon on port "
@@ -402,10 +403,12 @@ async def browser_connect(
                 "account": status.get("account"),
                 "bridge_port": EXTENSION_BRIDGE_PORT,
             }
-        # Daemon is up, but no extension has dialed in yet.
+        # Daemon is up, but no extension has dialed in yet — loading/enabling it
+        # (or waiting out a just-reload) and retrying is the fix.
         return {
             "transport": "extension",
             "connected": False,
+            "retryable": True,
             "bridge_running": True,
             "extension_dir": str(extension_dir()),
             "setup_instructions": extension_load_instructions(),
@@ -415,7 +418,14 @@ async def browser_connect(
     try:
         browser = await connect_browser(port=port)
     except Exception as e:
-        return {"transport": "cdp", "connected": False, "error": str(e)}
+        # Not retryable as-is: no Chrome on that port — launch one (browser_start)
+        # or fix the port. The Failure: hint says so.
+        return {
+            "transport": "cdp",
+            "connected": False,
+            "retryable": False,
+            "error": str(e),
+        }
     tabs = [getattr(t._target, "url", "") or "" for t in browser.tabs]
     return {
         "transport": "cdp",
