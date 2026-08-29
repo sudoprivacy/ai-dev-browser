@@ -497,6 +497,52 @@ async def get_active_tab(
     return await _prepared(await browser.get("about:blank"))
 
 
+async def connect_extension(url_contains: str | None = None) -> Tab:
+    """Attach to the user's REAL browser via the bridge extension.
+
+    Ensures the local bridge daemon is running, then returns a single Tab bound
+    to the browser's active tab (the extension attaches `chrome.debugger` to it).
+    Unlike CDP mode this drives the user's live profile — no viewport override,
+    no new tab.
+
+    Raises:
+        ConnectionError: the bridge won't start, or the extension isn't loaded /
+            connected — the message carries the exact "Load unpacked" steps.
+    """
+    from ai_dev_browser.cdp import target as cdp_target
+
+    from .ext_bridge import EXTENSION_BRIDGE_PORT, ensure_bridge_running
+    from .extension import extension_load_instructions
+
+    if not ensure_bridge_running():
+        raise ConnectionError(
+            f"Could not start the extension bridge on port {EXTENSION_BRIDGE_PORT}."
+        )
+
+    ws_url = f"ws://127.0.0.1:{EXTENSION_BRIDGE_PORT}"
+    tinfo = cdp_target.TargetInfo(
+        target_id=cdp_target.TargetID("ext-active"),
+        type_="page",
+        title="",
+        url="",
+        attached=True,
+        can_access_opener=False,
+    )
+    # browser=None: single-tab, no multi-target discovery. Browser-level ops
+    # (the cookie store, tab management) need extension-side shims — not yet.
+    tab = Tab(ws_url, target=tinfo, browser=None)  # type: ignore[arg-type]
+    try:
+        await tab._ensure_connected()
+        current = await tab.evaluate("location.href", timeout=5)
+        tinfo.url = current or ""
+    except Exception as e:
+        raise ConnectionError(
+            "Extension transport isn't ready (the bridge extension isn't "
+            f"connected): {e}\n\n{extension_load_instructions()}"
+        ) from e
+    return tab
+
+
 async def graceful_close_browser(
     host: str = DEFAULT_DEBUG_HOST,
     port: int = DEFAULT_DEBUG_PORT,

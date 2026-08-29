@@ -226,6 +226,18 @@ def _generate_parser(
                 "via AI_DEV_BROWSER_TAB_URL."
             ),
         )
+        parser.add_argument(
+            "--transport",
+            choices=["cdp", "extension"],
+            default=None,
+            help=(
+                "Which browser to drive: 'cdp' (a launched/attached CDP Chrome, "
+                "the default) or 'extension' (your REAL browser via the bridge "
+                "extension — real profile, logins, device-trust; opt-in, needs "
+                "the extension loaded). Settable process-wide via "
+                "AI_DEV_BROWSER_TRANSPORT. See `browser_connect`."
+            ),
+        )
 
     # Add arguments from function signature (skip the injected handle)
     for name, param in sig.parameters.items():
@@ -367,18 +379,32 @@ def as_cli(requires_tab: bool = True):
                 # lives in connect_browser itself now — CLI and Python API share
                 # the same resolution path, no duplication here.
                 from ai_dev_browser.core import connect_browser, get_active_tab
+                from ai_dev_browser.core.config import resolve_transport
 
                 async def run():
                     try:
-                        browser = await connect_browser(port=args.port)
-                        tab = await get_active_tab(browser, url_contains=args.tab_url)
+                        # Transport is a connection-scope choice (like --port):
+                        # cdp attaches to a Chrome; extension drives the user's
+                        # real browser via the bridge extension.
+                        if (
+                            resolve_transport(getattr(args, "transport", None))
+                            == "extension"
+                        ):
+                            from ai_dev_browser.core.connection import connect_extension
+
+                            tab = await connect_extension(url_contains=args.tab_url)
+                        else:
+                            browser = await connect_browser(port=args.port)
+                            tab = await get_active_tab(
+                                browser, url_contains=args.tab_url
+                            )
 
                         # Connection-scope args select the target, they are not
                         # arguments to the core function — strip before calling.
                         kwargs = {
                             k.replace("-", "_"): v
                             for k, v in vars(args).items()
-                            if k not in ("port", "tab_url")
+                            if k not in ("port", "tab_url", "transport")
                         }
 
                         result = await func(tab, **kwargs)

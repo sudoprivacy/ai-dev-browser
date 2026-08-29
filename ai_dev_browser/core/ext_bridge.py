@@ -78,27 +78,69 @@ class _Bridge:
                 self.extension = None
                 self.attached = None
 
-    async def _driver(self, ws, first):
-        if self.extension is None:
-            # Echo the command id so the driver's CDPConnection resolves it as a
-            # clean protocol error instead of hanging to timeout.
-            try:
-                fid = json.loads(first).get("id")
-            except Exception:
-                fid = None
-            await ws.send(
-                json.dumps({"id": fid, "error": {"message": "extension not connected"}})
-            )
+    async def _relay_from_driver(self, ws, raw):
+        if self.extension is not None:
+            await self.extension.send(raw)
             return
+        # No extension: reply with a clean per-command error (echo the id so the
+        # driver's CDPConnection resolves it, not hangs) WITHOUT closing the
+        # connection — closing would cancel every pending transaction and spew
+        # "listener stopped" warnings.
+        try:
+            fid = json.loads(raw).get("id")
+        except Exception:
+            fid = None
+        await ws.send(
+            json.dumps({"id": fid, "error": {"message": "extension not connected"}})
+        )
+
+    async def _driver(self, ws, first):
         self.driver = ws
         try:
-            await self.extension.send(first)  # relay the first command
+            await self._relay_from_driver(ws, first)
             async for raw in ws:
-                if self.extension is not None:
-                    await self.extension.send(raw)
+                await self._relay_from_driver(ws, raw)
         finally:
             if self.driver is ws:
                 self.driver = None
+
+
+def bridge_is_up(port: int = EXTENSION_BRIDGE_PORT) -> bool:
+    """True if something is listening on the bridge port."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.3)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def ensure_bridge_running(
+    port: int = EXTENSION_BRIDGE_PORT, timeout: float = 5.0
+) -> bool:
+    """Spawn the bridge daemon (detached, survives this CLI process) if it isn't
+    already listening. Returns True once the port is up."""
+    import platform
+    import subprocess
+    import sys
+    import time
+
+    if bridge_is_up(port):
+        return True
+
+    kwargs: dict = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    if platform.system() == "Windows":
+        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP — outlive the CLI call.
+        kwargs["creationflags"] = 0x00000008 | subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    subprocess.Popen([sys.executable, "-m", "ai_dev_browser.core.ext_bridge"], **kwargs)
+
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if bridge_is_up(port):
+            return True
+        time.sleep(0.1)
+    return False
 
 
 async def run_bridge(port: int = EXTENSION_BRIDGE_PORT):

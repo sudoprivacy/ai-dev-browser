@@ -31,6 +31,26 @@ DEFAULT_OUTPUT_DIR = Path("output")
 # have to learn host-specific scratch/persistent conventions.
 OUTPUT_DIR_ENV = "AI_DEV_BROWSER_OUTPUT_DIR"
 
+# Which transport tools drive through: "cdp" (a launched/attached CDP Chrome,
+# the default) or "extension" (your real browser via the bridge extension).
+# Process-wide, so a consumer flips it once instead of passing --transport to
+# every call. See core.connection.connect_extension / core.ext_bridge.
+TRANSPORT_ENV = "AI_DEV_BROWSER_TRANSPORT"
+
+
+def resolve_transport(explicit: str | None = None) -> str:
+    """Transport to drive through: `explicit` arg → `AI_DEV_BROWSER_TRANSPORT`
+    env → "cdp". Only "extension" opts into the extension bridge; anything
+    else (incl. typos) stays on the safe CDP default."""
+    if explicit in ("cdp", "extension"):
+        return explicit
+    return (
+        "extension"
+        if os.environ.get(TRANSPORT_ENV, "").strip().lower() == "extension"
+        else "cdp"
+    )
+
+
 # Env var pinning which page target every tool acts on, as a URL substring.
 # For a browser with one tab this is unnecessary; for one with several page
 # targets (Electron windows, a many-tab Chrome) it replaces a guess — see

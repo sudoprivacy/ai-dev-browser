@@ -13,12 +13,19 @@ const BRIDGE = "ws://127.0.0.1:9522";
 const PROTOCOL = "1.3";
 
 let ws = null;
-let tabId = null;
+let tabId = null; // the DEDICATED automation tab (never the user's tabs)
 let connecting = false;
 
-async function activeTab() {
-  const [t] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  return t || null;
+async function ensureDedicatedTab() {
+  // Reuse our own tab across reconnects; recreate if the user closed it. We
+  // NEVER attach to the user's existing tabs — automation gets its own tab so a
+  // hijacked/injected page can't act on whatever the user had open.
+  if (tabId != null) {
+    try { await chrome.tabs.get(tabId); return tabId; } catch { tabId = null; }
+  }
+  const t = await chrome.tabs.create({ url: "about:blank", active: false });
+  tabId = t.id;
+  return tabId;
 }
 
 async function connect() {
@@ -35,18 +42,13 @@ async function connect() {
   ws.onopen = async () => {
     connecting = false;
     try {
-      const t = await activeTab();
-      tabId = t && t.id;
-      if (tabId == null) {
-        ws.send(JSON.stringify({ _event: "attach_error", error: "no active tab" }));
-        return;
-      }
+      const id = await ensureDedicatedTab();
       try {
-        await chrome.debugger.attach({ tabId }, PROTOCOL);
+        await chrome.debugger.attach({ tabId: id }, PROTOCOL);
       } catch (e) {
         if (!/already|Another debugger/i.test(String(e))) throw e;
       }
-      ws.send(JSON.stringify({ _event: "attached", tabId, url: t.url }));
+      ws.send(JSON.stringify({ _event: "attached", tabId: id }));
     } catch (e) {
       ws.send(JSON.stringify({ _event: "attach_error", error: String(e) }));
     }
