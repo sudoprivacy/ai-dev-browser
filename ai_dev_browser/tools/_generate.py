@@ -39,6 +39,7 @@ TOOL_META = {
     "browser_stop": {"result_key": "stopped"},
     "browser_list": {"result_key": "count"},
     "browser_connect": {"result_key": "connected"},
+    "browser_disconnect": {"result_key": "stopped"},
     "click_by_ref": {"result_key": "clicked"},
     "click_by_text": {"result_key": "clicked"},
     "click_row_by_text": {"result_key": "clicked"},

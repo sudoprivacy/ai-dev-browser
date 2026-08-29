@@ -30,7 +30,13 @@ from .ax import (
 )
 
 # Browser lifecycle
-from .browser import browser_connect, browser_list, browser_start, browser_stop
+from .browser import (
+    browser_connect,
+    browser_disconnect,
+    browser_list,
+    browser_start,
+    browser_stop,
+)
 from .cdp import cdp_send
 
 # Orphan profile cleanup (optional psutil dep)
@@ -148,6 +154,7 @@ __all__ = [
     "browser_stop",
     "browser_list",
     "browser_connect",
+    "browser_disconnect",
     "browser_cleanup",
     # Config
     "DEFAULT_BASE_DIR",

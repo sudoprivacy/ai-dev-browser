@@ -80,8 +80,35 @@ class _Bridge:
                 self.extension = None
                 self.attached = None
 
+    # Security-meaningful actions to surface in the action log (driving your
+    # REAL browser). Low-level plumbing (Page.enable, DOM.getDocument, …) is
+    # skipped as noise.
+    _LOGGED = (
+        "Page.navigate",
+        "Input.dispatch",
+        "Runtime.evaluate",
+        "Runtime.callFunctionOn",
+    )
+
+    def _log_action(self, raw):
+        try:
+            m = json.loads(raw)
+        except Exception:
+            return
+        method = m.get("method", "")
+        if not any(method.startswith(p) for p in self._LOGGED):
+            return
+        params = m.get("params", {}) or {}
+        detail = ""
+        if method == "Page.navigate":
+            detail = " -> " + str(params.get("url", ""))[:120]
+        elif method == "Runtime.evaluate":
+            detail = " " + str(params.get("expression", ""))[:80].replace("\n", " ")
+        logger.info("action: %s%s", method, detail)
+
     async def _relay_from_driver(self, ws, raw):
         if self.extension is not None:
+            self._log_action(raw)
             await self.extension.send(raw)
             return
         # No extension: reply with a clean per-command error (echo the id so the

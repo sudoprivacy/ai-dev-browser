@@ -402,6 +402,28 @@ async def browser_connect(
     }
 
 
+def browser_disconnect() -> dict:
+    """Use when: you're done driving your real browser, or want to cut
+    automation's access to it NOW. Emergency stop for the **extension**
+    transport — drops the local bridge so ai-dev-browser can no longer reach
+    your live browser. Returns `{stopped, was_running}`.
+
+    The extension detaches once the bridge is gone. For a HARD kill (revoke the
+    debugger permission entirely), also toggle off or 移除 the "AI Dev Browser —
+    bridge" extension in chrome://extensions — that's the one-click hardware
+    switch. CDP mode has nothing to disconnect (connections are per-call); use
+    `browser_stop` to stop a launched Chrome.
+    """
+    from .ext_bridge import EXTENSION_BRIDGE_PORT, bridge_is_up
+
+    was_running = bridge_is_up(EXTENSION_BRIDGE_PORT)
+    if was_running:
+        pid = get_pid_on_port(EXTENSION_BRIDGE_PORT)
+        if pid:
+            _kill_process_tree(pid)
+    return {"stopped": True, "was_running": was_running}
+
+
 def _graceful_stop(port: int, pid: int, timeout: float = 5.0) -> dict:
     """Gracefully stop a Chrome instance via CDP Browser.close().
 
