@@ -28,6 +28,31 @@ async function ensureDedicatedTab() {
   return tabId;
 }
 
+function toCdpCookie(c) {
+  const same = { no_restriction: "None", lax: "Lax", strict: "Strict" }[c.sameSite];
+  const out = {
+    name: c.name, value: c.value, domain: c.domain, path: c.path,
+    expires: c.session ? -1 : (c.expirationDate || -1),
+    size: (c.name.length + (c.value ? c.value.length : 0)),
+    httpOnly: !!c.httpOnly, secure: !!c.secure, session: !!c.session,
+    priority: "Medium", sourceScheme: c.secure ? "Secure" : "NonSecure",
+    sourcePort: c.secure ? 443 : 80,
+  };
+  if (same) out.sameSite = same;
+  return out;
+}
+
+// Browser-level CDP that a per-tab chrome.debugger can't answer — served via
+// the sanctioned extension APIs. Returns undefined for anything not shimmed, so
+// the caller falls through to chrome.debugger.
+async function browserLevelShim(method, params) {
+  if (method === "Storage.getCookies" || method === "Network.getAllCookies") {
+    const cookies = await chrome.cookies.getAll({});
+    return { cookies: cookies.map(toCdpCookie) };
+  }
+  return undefined;
+}
+
 async function connect() {
   if (connecting || (ws && ws.readyState <= 1)) return;
   connecting = true;
@@ -54,13 +79,17 @@ async function connect() {
     }
   };
 
-  // adb -> extension: { id, method, params } -> chrome.debugger.sendCommand
+  // adb -> extension: { id, method, params } -> chrome.debugger.sendCommand,
+  // with browser-level shims for what a per-tab debugger can't do.
   ws.onmessage = async (ev) => {
     let m;
     try { m = JSON.parse(ev.data); } catch { return; }
     if (m.id == null || !m.method) return;
     try {
-      const result = await chrome.debugger.sendCommand({ tabId }, m.method, m.params || {});
+      const shimmed = await browserLevelShim(m.method, m.params || {});
+      const result = shimmed !== undefined
+        ? shimmed
+        : await chrome.debugger.sendCommand({ tabId }, m.method, m.params || {});
       ws.send(JSON.stringify({ id: m.id, result: result ?? {} }));
     } catch (e) {
       ws.send(JSON.stringify({ id: m.id, error: { message: String(e) } }));

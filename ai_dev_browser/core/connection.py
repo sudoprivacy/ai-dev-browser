@@ -497,6 +497,33 @@ async def get_active_tab(
     return await _prepared(await browser.get("about:blank"))
 
 
+class _ExtensionBrowser:
+    """Minimal BrowserClient stand-in for the extension transport.
+
+    Exposes the bridge connection + a CookieJar so browser-level cookie ops
+    (`cookies_extract_live` / `save` / `load`) work — the extension shims
+    `Storage.getCookies` via `chrome.cookies`. Single-tab: no target discovery.
+    """
+
+    def __init__(self, connection: CDPConnection):
+        self.connection = connection
+        self.targets: list = []
+        self._cookies: CookieJar | None = None
+
+    @property
+    def cookies(self) -> CookieJar:
+        if self._cookies is None:
+            self._cookies = CookieJar(self)  # type: ignore[arg-type]
+        return self._cookies
+
+    @property
+    def tabs(self) -> list:
+        return self.targets
+
+    async def update_targets(self):
+        return
+
+
 async def connect_extension(url_contains: str | None = None) -> Tab:
     """Attach to the user's REAL browser via the bridge extension.
 
@@ -531,6 +558,11 @@ async def connect_extension(url_contains: str | None = None) -> Tab:
     # browser=None: single-tab, no multi-target discovery. Browser-level ops
     # (the cookie store, tab management) need extension-side shims — not yet.
     tab = Tab(ws_url, target=tinfo, browser=None)  # type: ignore[arg-type]
+    # A minimal browser so tab.browser.cookies (Storage.getCookies) works over
+    # the bridge — the extension shims it via chrome.cookies.
+    browser = _ExtensionBrowser(tab._connection)
+    browser.targets = [tab]
+    tab._browser = browser  # type: ignore[assignment]
     try:
         await tab._ensure_connected()
         current = await tab.evaluate("location.href", timeout=5)

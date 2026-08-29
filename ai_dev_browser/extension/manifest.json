@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Lets ai-dev-browser drive THIS Chrome (your real profile) via chrome.debugger over a local bridge. Opt-in; only active while ai-dev-browser is connected.",
   "minimum_chrome_version": "116",
-  "permissions": ["debugger", "tabs", "alarms"],
+  "permissions": ["debugger", "tabs", "alarms", "cookies"],
   "host_permissions": ["<all_urls>"],
   "icons": { "16": "icon16.png", "48": "icon48.png", "128": "icon128.png" },
   "action": {
