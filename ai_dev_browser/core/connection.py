@@ -538,12 +538,26 @@ async def connect_extension(url_contains: str | None = None) -> Tab:
     """
     from ai_dev_browser.cdp import target as cdp_target
 
-    from .ext_bridge import EXTENSION_BRIDGE_PORT, ensure_bridge_running
+    from .ext_bridge import (
+        EXTENSION_BRIDGE_PORT,
+        ensure_bridge_running,
+        wait_for_extension,
+    )
     from .extension import extension_load_instructions
 
     if not ensure_bridge_running():
         raise ConnectionError(
             f"Could not start the extension bridge on port {EXTENSION_BRIDGE_PORT}."
+        )
+    # Wait for the extension to dial in (auto-started daemon; a just-reloaded
+    # extension reconnects within a few seconds). Fail with honest guidance —
+    # "no extension connected" — rather than a cryptic first-command error.
+    if not await wait_for_extension(timeout=6.0):
+        raise ConnectionError(
+            "Extension transport isn't ready — no extension has connected to the "
+            "bridge. Load/enable the ai-dev-browser extension in a running Chrome "
+            "(if you just reloaded it, wait a moment and retry).\n\n"
+            + extension_load_instructions()
         )
 
     ws_url = f"ws://127.0.0.1:{EXTENSION_BRIDGE_PORT}"

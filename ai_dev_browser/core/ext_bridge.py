@@ -107,6 +107,27 @@ class _Bridge:
         logger.info("action: %s%s", method, detail)
 
     async def _relay_from_driver(self, ws, raw):
+        # Daemon-local status query — answered from the daemon's own state, NOT
+        # relayed to the extension. Lets browser_connect tell the three failure
+        # states apart (daemon down / no extension session / connected).
+        try:
+            probe = json.loads(raw)
+        except Exception:
+            probe = {}
+        if probe.get("method") == "_bridge.status":
+            await ws.send(
+                json.dumps(
+                    {
+                        "id": probe.get("id"),
+                        "result": {
+                            "extension_connected": self.extension is not None,
+                            "account": (self.attached or {}).get("account"),
+                        },
+                    }
+                )
+            )
+            return
+
         if self.extension is not None:
             self._log_action(raw)
             await self.extension.send(raw)
@@ -172,6 +193,37 @@ def ensure_bridge_running(
             return True
         time.sleep(0.1)
     return False
+
+
+async def bridge_status(
+    port: int = EXTENSION_BRIDGE_PORT, timeout: float = 3.0
+) -> dict | None:
+    """Query the daemon's own state (`{extension_connected, account}`) — a status
+    frame it answers without relaying to the extension. None if unreachable."""
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            await ws.send(json.dumps({"id": 1, "method": "_bridge.status"}))
+            resp = json.loads(await asyncio.wait_for(ws.recv(), timeout))
+            return resp.get("result")
+    except Exception:
+        return None
+
+
+async def wait_for_extension(
+    port: int = EXTENSION_BRIDGE_PORT, timeout: float = 5.0
+) -> dict | None:
+    """Poll until an extension has dialed into the daemon (returns its status),
+    or timeout (None). A just-(re)loaded extension reconnects within ~a few
+    seconds while its worker is alive; up to ~30s cold (alarm-driven)."""
+    import time
+
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout:
+        st = await bridge_status(port)
+        if st and st.get("extension_connected"):
+            return st
+        await asyncio.sleep(0.3)
+    return None
 
 
 async def run_bridge(port: int = EXTENSION_BRIDGE_PORT):

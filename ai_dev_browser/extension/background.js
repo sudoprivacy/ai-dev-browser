@@ -16,6 +16,20 @@ let ws = null;
 let tabId = null; // the DEDICATED automation tab (never the user's tabs)
 let connecting = false;
 
+async function profileAccount() {
+  // Which profile/account is this? So browser_connect can tell you WHICH Chrome
+  // it's driving (the extension runs in the profile it was loaded into).
+  try {
+    const info = await chrome.identity.getProfileUserInfo({ accountStatus: "ANY" });
+    return (info && info.email) || null;
+  } catch {
+    try {
+      return await new Promise((res) =>
+        chrome.identity.getProfileUserInfo((i) => res((i && i.email) || null)));
+    } catch { return null; }
+  }
+}
+
 async function ensureDedicatedTab() {
   // Reuse our own tab across reconnects; recreate if the user closed it. We
   // NEVER attach to the user's existing tabs — automation gets its own tab so a
@@ -73,7 +87,8 @@ async function connect() {
       } catch (e) {
         if (!/already|Another debugger/i.test(String(e))) throw e;
       }
-      ws.send(JSON.stringify({ _event: "attached", tabId: id }));
+      const account = await profileAccount();
+      ws.send(JSON.stringify({ _event: "attached", tabId: id, account }));
     } catch (e) {
       ws.send(JSON.stringify({ _event: "attach_error", error: String(e) }));
     }

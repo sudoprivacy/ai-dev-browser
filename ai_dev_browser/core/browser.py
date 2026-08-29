@@ -323,15 +323,6 @@ def browser_start(
     }
 
 
-def _extension_bridge_up() -> bool:
-    """True if adb's local extension bridge is listening (extension transport)."""
-    import socket
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.3)
-        return s.connect_ex(("127.0.0.1", EXTENSION_BRIDGE_PORT)) == 0
-
-
 async def browser_connect(
     transport: Literal["cdp", "extension"] = "cdp",
     port: int | None = None,
@@ -361,30 +352,63 @@ async def browser_connect(
             process-wide via `AI_DEV_BROWSER_TRANSPORT`.
         port: CDP debug port to attach to (cdp only; auto-detects if omitted).
 
+    Which profile (extension mode): the extension drives the Chrome **profile it
+    was loaded into**. On success this returns `account` (the profile's signed-in
+    email) so you know WHICH browser/account you're driving — if it's the wrong
+    one, load & enable the extension in the target profile instead. There's no
+    remote profile-switch: the extension is per-profile.
+
+    Args-note: extension mode auto-starts its local bridge daemon (no manual
+    step); you only ever load the extension once, by hand.
+
     Returns:
-        dict with `transport`, `connected`, and — when connected — session info
-        (`port`, `tab_count`, `tabs`); when not, `setup_instructions` /
-        `extension_dir` (extension) or the connect error (cdp).
+        dict with `transport`, `connected`. cdp+connected: `port, tab_count,
+        tabs`. extension+connected: `account`. Not connected: `setup_instructions`
+        + `extension_dir` (and `bridge_running` once the daemon is up), or the
+        cdp connect error.
 
     Failure:
         cdp + not connected → no Chrome on that port; `browser_start` to launch
-        one, or check the port. extension + not connected → the bridge isn't
-        running yet: install/enable the ai-dev-browser extension (follow
-        `setup_instructions`, load the folder at `extension_dir`) and keep
-        Chrome running, then retry with `--transport extension`.
+        one. extension: the bridge daemon is auto-started, so `connected: false`
+        with `bridge_running: true` means NO extension has dialed in — either the
+        ai-dev-browser extension isn't loaded/enabled in a running Chrome (follow
+        `setup_instructions`, load `extension_dir`), or you just (re)loaded it —
+        wait a few seconds, it auto-reconnects, and retry. `bridge_running` absent
+        means the daemon itself couldn't start (see `error`).
     """
     if transport == "extension":
-        if not _extension_bridge_up():
+        from .ext_bridge import ensure_bridge_running, wait_for_extension
+
+        # Auto-start the bridge daemon — no manual ensure_bridge_running() dance;
+        # extension mode should be as out-of-box as CDP mode's auto-connect.
+        if not ensure_bridge_running():
             return {
                 "transport": "extension",
                 "connected": False,
                 "extension_dir": str(extension_dir()),
-                "setup_instructions": extension_load_instructions(),
+                "error": (
+                    "Could not start the extension bridge daemon on port "
+                    f"{EXTENSION_BRIDGE_PORT}."
+                ),
             }
+        # Give a just-(re)loaded extension a few seconds to dial back in.
+        status = await wait_for_extension(timeout=4.0)
+        if status and status.get("extension_connected"):
+            # Report WHICH profile/account we're driving — the extension runs in
+            # the profile it was loaded into.
+            return {
+                "transport": "extension",
+                "connected": True,
+                "account": status.get("account"),
+                "bridge_port": EXTENSION_BRIDGE_PORT,
+            }
+        # Daemon is up, but no extension has dialed in yet.
         return {
             "transport": "extension",
-            "connected": True,
-            "bridge_port": EXTENSION_BRIDGE_PORT,
+            "connected": False,
+            "bridge_running": True,
+            "extension_dir": str(extension_dir()),
+            "setup_instructions": extension_load_instructions(),
         }
 
     # cdp
