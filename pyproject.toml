@@ -52,6 +52,13 @@ Repository = "https://github.com/sudoprivacy/ai-dev-browser"
 where = ["."]
 include = ["ai_dev_browser*"]
 
+# Ship the unpacked bridge extension (non-Python data) inside the wheel so
+# `pip install` puts it on disk for a one-time "Load unpacked" (Chrome blocks
+# --load-extension, so it can't be auto-activated). Path is resolved at runtime
+# by core/extension.py::extension_dir().
+[tool.setuptools.package-data]
+ai_dev_browser = ["extension/*"]
+
 [tool.ruff]
 # Both copies of the vendored CDP protocol module: the generated one inside the
 # package, and the submodule it is generated from. Without `vendor`, the

@@ -38,6 +38,7 @@ TOOL_META = {
     "browser_start": {"result_key": "port"},
     "browser_stop": {"result_key": "stopped"},
     "browser_list": {"result_key": "count"},
+    "browser_connect": {"result_key": "connected"},
     "click_by_ref": {"result_key": "clicked"},
     "click_by_text": {"result_key": "clicked"},
     "click_row_by_text": {"result_key": "clicked"},

@@ -5,6 +5,8 @@ import os
 import time
 from pathlib import Path
 
+from typing import Literal
+
 from . import registry
 from .chrome import launch_chrome
 from .config import (
@@ -13,7 +15,12 @@ from .config import (
     ReuseStrategy,
     get_workspace_profile_dir,
 )
-from .connection import graceful_close_browser
+from .connection import connect_browser, graceful_close_browser
+from .extension import (
+    EXTENSION_BRIDGE_PORT,
+    extension_dir,
+    extension_load_instructions,
+)
 from .port import (
     _cleanup_temp_profile,
     _query_chrome_guid,
@@ -108,6 +115,13 @@ def browser_start(
     profiles never share a Chrome, so profile is also the parallel-worker
     isolation boundary. `cookies_save` / `cookies_load` carry login into an
     otherwise ephemeral session without a named profile.
+
+    This **launches** a new browser. To drive an ALREADY-RUNNING one instead,
+    use `browser_connect` — an existing CDP Chrome by port, or your **real,
+    logged-in** browser via `browser_connect --transport extension` (real
+    profile, logins, device-trust; for Google SSO / sites that block fresh
+    profiles). Reusing your real login is `browser_connect --transport
+    extension`, not a fresh `browser_start`.
 
     Args:
         port: Debug port (auto-assigned if None)
@@ -306,6 +320,85 @@ def browser_start(
         "profile": profile_name,
         "reused": False,
         "message": f"Browser started on port {port}",
+    }
+
+
+def _extension_bridge_up() -> bool:
+    """True if adb's local extension bridge is listening (extension transport)."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.3)
+        return s.connect_ex(("127.0.0.1", EXTENSION_BRIDGE_PORT)) == 0
+
+
+async def browser_connect(
+    transport: Literal["cdp", "extension"] = "cdp",
+    port: int | None = None,
+) -> dict:
+    """Use when: you want to drive an ALREADY-RUNNING browser — a CDP Chrome
+    (`transport=cdp`, the default) or your REAL logged-in browser via the
+    extension (`transport=extension`). Returns `{transport, connected, ...}` so
+    you can act immediately (or, if not connected, exact setup steps).
+
+    Two transports, deliberately different tools than `browser_start`:
+    - **cdp** (default): attaches to a CDP Chrome by `--port` (or auto-detects
+      the workspace one). Autonomous, headless-capable, parallel — the 90% case.
+    - **extension**: drives your **real** Chrome (your profile, logins,
+      device-trust) through the ai-dev-browser bridge extension — the way to
+      look human on hardened sites (Google SSO). **Not autonomous**: it needs
+      the extension installed + enabled and Chrome running, and can't run
+      headless or parallel. If it isn't set up, this returns the exact
+      `setup_instructions` to hand the user (Chrome blocks command-line
+      loading, so a person loads it once).
+
+    For a FRESH, isolated, disposable browser instead of attaching to an
+    existing one, use `browser_start` (it launches one; this only attaches).
+
+    Args:
+        transport: "cdp" (attach to a CDP Chrome, default) or "extension"
+            (drive your real browser via the bridge extension). Settable
+            process-wide via `AI_DEV_BROWSER_TRANSPORT`.
+        port: CDP debug port to attach to (cdp only; auto-detects if omitted).
+
+    Returns:
+        dict with `transport`, `connected`, and — when connected — session info
+        (`port`, `tab_count`, `tabs`); when not, `setup_instructions` /
+        `extension_dir` (extension) or the connect error (cdp).
+
+    Failure:
+        cdp + not connected → no Chrome on that port; `browser_start` to launch
+        one, or check the port. extension + not connected → the bridge isn't
+        running yet: install/enable the ai-dev-browser extension (follow
+        `setup_instructions`, load the folder at `extension_dir`) and keep
+        Chrome running, then retry with `--transport extension`.
+    """
+    if transport == "extension":
+        if not _extension_bridge_up():
+            return {
+                "transport": "extension",
+                "connected": False,
+                "extension_dir": str(extension_dir()),
+                "setup_instructions": extension_load_instructions(),
+            }
+        return {
+            "transport": "extension",
+            "connected": True,
+            "bridge_port": EXTENSION_BRIDGE_PORT,
+        }
+
+    # cdp
+    try:
+        browser = await connect_browser(port=port)
+    except Exception as e:
+        return {"transport": "cdp", "connected": False, "error": str(e)}
+    tabs = [getattr(t._target, "url", "") or "" for t in browser.tabs]
+    return {
+        "transport": "cdp",
+        "connected": True,
+        "port": browser.port,
+        "tab_count": len(tabs),
+        "tabs": tabs,
     }
 
 
