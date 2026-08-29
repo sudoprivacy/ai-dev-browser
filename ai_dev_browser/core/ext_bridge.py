@@ -73,6 +73,8 @@ class _Bridge:
                         await self.driver.send(raw)
                     except Exception:
                         pass
+        except websockets.exceptions.ConnectionClosed:
+            pass  # extension disconnected — normal
         finally:
             if self.extension is ws:
                 self.extension = None
@@ -100,6 +102,8 @@ class _Bridge:
             await self._relay_from_driver(ws, first)
             async for raw in ws:
                 await self._relay_from_driver(ws, raw)
+        except websockets.exceptions.ConnectionClosed:
+            pass  # the adb CLI process exited — normal per-call lifecycle
         finally:
             if self.driver is ws:
                 self.driver = None
