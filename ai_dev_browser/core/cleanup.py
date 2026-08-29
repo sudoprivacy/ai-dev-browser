@@ -21,7 +21,7 @@ from .config import (
     DEFAULT_PROFILE_PREFIX,
     get_workspace_profile_dir,
 )
-from .port import _query_chrome_cmdline, find_debug_chromes
+from .port import _query_chrome_user_data_dir, find_debug_chromes
 from .process import _kill_process_tree
 
 
@@ -91,15 +91,15 @@ def browser_cleanup(profile: str | None = None) -> dict:
     # 1. Snapshot user_data_dirs of currently live debug-ready Chromes.
     #    These are NOT orphans — their lifecycle is owned by whoever
     #    launched them, and killing them would surprise the caller.
+    #    The user-data-dir comes from the instance registry (with a CDP
+    #    cmdline fallback) — NOT Browser.getBrowserCommandLine directly,
+    #    which returns nothing under stealth and would leave alive_dirs
+    #    empty, making this treat every live managed Chrome as an orphan.
     alive_dirs: set[str] = set()
     for port, _pid, _ws in find_debug_chromes():
-        cmdline = _query_chrome_cmdline(port)
-        if not cmdline:
-            continue
-        for arg in cmdline:
-            if arg.startswith("--user-data-dir="):
-                alive_dirs.add(_normalize_path(arg.split("=", 1)[1]))
-                break
+        alive_udd = _query_chrome_user_data_dir(port)
+        if alive_udd:
+            alive_dirs.add(_normalize_path(alive_udd))
 
     # 2. Optional single-profile filter.
     profile_filter: str | None = None

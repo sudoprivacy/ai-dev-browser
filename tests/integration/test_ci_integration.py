@@ -98,7 +98,10 @@ def test_headless_mode_selection_round_trips_through_cmdline(mode):
     successfully and the actual cmdline must reflect the requested
     mode — pre-fix, only `--headless=new` was emitted regardless of
     caller intent, blocking CI setups that need the legacy mode."""
-    result = browser_start(headless=mode, temp=True, reuse="none")
+    # stealth=False: reading the cmdline back over CDP
+    # (Browser.getBrowserCommandLine) requires --enable-automation, which stealth
+    # (the default) omits. The headless flag emission is identical either way.
+    result = browser_start(headless=mode, temp=True, reuse="none", stealth=False)
     assert "error" not in result, (
         f"browser_start(headless={mode!r}) should succeed: {result}"
     )
@@ -133,7 +136,8 @@ def test_headless_false_is_not_headless():
     if sys.platform.startswith("linux") and not os.environ.get("DISPLAY"):
         pytest.skip("non-headless Chrome needs DISPLAY; none on this Linux CI host")
 
-    result = browser_start(headless=False, temp=True, reuse="none")
+    # stealth=False so the cmdline is readable back over CDP (see note above).
+    result = browser_start(headless=False, temp=True, reuse="none", stealth=False)
     assert "error" not in result, f"non-headless launch should succeed: {result}"
     port = result["port"]
     try:

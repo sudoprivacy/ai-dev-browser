@@ -153,6 +153,7 @@ def launch_chrome(
     disable_session_restore: bool = True,
     disable_session_crashed_bubble: bool = True,
     hide_crash_restore_bubble: bool = True,
+    stealth: bool = True,
 ) -> subprocess.Popen:
     """
     Launch Chrome with remote debugging enabled.
@@ -200,6 +201,14 @@ def launch_chrome(
                                 Sets restore_on_startup=5 in Preferences file.
         disable_session_crashed_bubble: Chrome flag --disable-session-crashed-bubble (default: True)
         hide_crash_restore_bubble: Chrome flag --hide-crash-restore-bubble (default: True)
+        stealth: Launch without automation markers (default: True). Omits
+            `--enable-automation` (navigator.webdriver=true + the "controlled by
+            automated software" infobar) and `--disable-blink-features=Automation
+            Controlled` (its "unsupported flag" warning bar), so the browser
+            looks like a real one — navigator.webdriver=false, no bars — which is
+            what bot detection (Google/Cloudflare) checks. `False` restores both
+            flags (legacy behavior). Workspace discovery does not depend on these
+            (see core/registry.py), so leaving stealth on has no downside.
 
     Returns:
         Popen process handle for the Chrome instance.
@@ -239,7 +248,6 @@ def launch_chrome(
         f"--remote-debugging-port={port}",
         f"--user-data-dir={user_data_dir}",
         "--remote-allow-origins=*",  # Allow CDP connections for in-use detection
-        "--enable-automation",  # Required for CDP Browser.getBrowserCommandLine()
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-background-networking",
@@ -253,9 +261,24 @@ def launch_chrome(
         "--disable-translate",
         "--metrics-recording-only",
         "--safebrowsing-disable-auto-update",
-        "--disable-blink-features=AutomationControlled",
         "--use-mock-keychain",
     ]
+
+    # Automation markers — OFF by default (stealth). ai-dev-browser is always
+    # LLM-as-user with no human watching, so it must not advertise automation to
+    # bot detection (Google/Cloudflare/etc.). Two coupled flags:
+    #   --enable-automation                     → navigator.webdriver=true, the
+    #       "controlled by automated software" infobar, and it is what makes
+    #       CDP Browser.getBrowserCommandLine return the command line.
+    #   --disable-blink-features=AutomationControlled → only exists to undo the
+    #       webdriver flag, and adds its own "unsupported flag" warning bar.
+    # Dropping BOTH yields navigator.webdriver=false with no bars — a real
+    # browser fingerprint. Workspace/profile discovery no longer depends on the
+    # CDP cmdline readback (see core/registry.py), so nothing here needs them.
+    # `stealth=False` restores the legacy pair for callers that want the markers.
+    if not stealth:
+        args.append("--enable-automation")
+        args.append("--disable-blink-features=AutomationControlled")
 
     # Windowed mode: open a real desktop-sized OS window instead of Chrome's
     # tiny ~800x600 default, so a headed user isn't staring at a cramped window

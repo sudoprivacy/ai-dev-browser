@@ -204,11 +204,14 @@ def test_temp_profiles_are_unique_per_launch():
                 return a.split("=", 1)[1]
         return None
 
-    first = browser_start(headless=True, temp=True)
+    # stealth=False so _udd can read --user-data-dir back over CDP
+    # (Browser.getBrowserCommandLine needs --enable-automation). The unique-dir
+    # property this asserts is independent of stealth.
+    first = browser_start(headless=True, temp=True, stealth=False)
     assert "error" not in first, first
     try:
         udd1 = _udd(first["port"])
-        second = browser_start(headless=True, temp=True)
+        second = browser_start(headless=True, temp=True, stealth=False)
         assert "error" not in second, second
         try:
             udd2 = _udd(second["port"])

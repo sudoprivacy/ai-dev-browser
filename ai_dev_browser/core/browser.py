@@ -5,8 +5,10 @@ import os
 import time
 from pathlib import Path
 
+from . import registry
 from .chrome import launch_chrome
 from .config import (
+    DEFAULT_PROFILE_PREFIX,
     DEFAULT_REUSE_STRATEGY,
     ReuseStrategy,
     get_workspace_profile_dir,
@@ -14,7 +16,8 @@ from .config import (
 from .connection import graceful_close_browser
 from .port import (
     _cleanup_temp_profile,
-    _query_chrome_cmdline,
+    _query_chrome_guid,
+    _query_chrome_user_data_dir,
     find_debug_chromes,
     find_workspace_chromes,
     get_available_port,
@@ -25,18 +28,20 @@ from .process import _kill_process_tree
 
 
 def _find_chrome_using_profile(profile_dir: Path) -> tuple[int, int | None] | None:
-    """Find a debugging Chrome using the specified profile via CDP.
+    """Find a debugging Chrome running under the given profile's user-data-dir.
 
-    Scans debug port range and queries each Chrome's command line
-    to check if --user-data-dir matches the given profile directory.
+    Scans the debug port range and matches each Chrome's --user-data-dir
+    (resolved from the instance registry, falling back to the CDP cmdline)
+    against the profile directory. Registry-backed so it works under stealth,
+    where Browser.getBrowserCommandLine returns nothing.
 
     Returns:
         (port, pid) tuple if found, None otherwise.
     """
-    profile_str = str(profile_dir)
+    target = os.path.normcase(os.path.normpath(str(profile_dir)))
     for port, pid, _ws in find_debug_chromes():
-        cmdline = _query_chrome_cmdline(port)
-        if cmdline and any(profile_str in arg for arg in cmdline):
+        udd = _query_chrome_user_data_dir(port)
+        if udd and os.path.normcase(os.path.normpath(udd)) == target:
             return (port, pid)
     return None
 
@@ -89,8 +94,9 @@ def browser_start(
     extra_args: list[str] | None = None,
     override_default_args: dict[str, str | None] | None = None,
     silent_stderr: bool = False,
+    stealth: bool = True,
 ) -> dict:
-    """Start a browser instance — ISOLATED by default.
+    """Start a browser instance — ISOLATED and STEALTH by default.
 
     With no `profile`, each call is a throwaway isolated session: its own port,
     a temporary profile, and no reuse. That's the safe default — automation
@@ -143,6 +149,14 @@ def browser_start(
             the pipe buffer. Trade-off: loses Chrome's exit-time stderr
             in the error path (falls back to generic "Chrome exited
             silently"). See `launch_chrome` docstring for details.
+        stealth: Launch without automation markers (default: True). Drops
+            `--enable-automation` and `--disable-blink-features=Automation
+            Controlled`, so navigator.webdriver=false and no info/warning
+            bars — a real-browser fingerprint that bot detection
+            (Google/Cloudflare) is far less likely to flag. `False`
+            restores both flags (legacy behavior). Workspace/profile
+            discovery is registry-backed and does not rely on these, so
+            stealth stays on with no loss of function.
 
     Returns:
         dict with port, pid, headless, url, profile, reused, message
@@ -189,7 +203,17 @@ def browser_start(
 
     # Determine user data directory
     if temp:
-        user_data_dir = None
+        # Create the throwaway profile dir HERE (not inside launch_chrome) so we
+        # know its path and can record it in the instance registry — orphan
+        # cleanup relies on knowing every live Chrome's user-data-dir, and under
+        # stealth it can't read it back from the CDP command line. Unique per
+        # launch (mkdtemp), same `{prefix}{port}_` naming _cleanup_temp_profile
+        # globs on stop.
+        import tempfile
+
+        user_data_dir = Path(
+            tempfile.mkdtemp(prefix=f"{DEFAULT_PROFILE_PREFIX}{port}_")
+        )
         profile_name = "(temp)"
     else:
         profile_name = profile or "default"
@@ -216,10 +240,11 @@ def browser_start(
         port=port,
         headless=headless_resolved,
         start_url=start_url,
-        user_data_dir=str(user_data_dir) if user_data_dir else None,
+        user_data_dir=str(user_data_dir),
         extra_args=extra_args,
         override_default_args=override_default_args,
         silent_stderr=silent_stderr,
+        stealth=stealth,
     )
 
     # Wait for Chrome to bind its debug port.
@@ -259,6 +284,19 @@ def browser_start(
             ),
             "pid": orphan_pid,
         }
+
+    # Record this instance so workspace/profile discovery can find it WITHOUT
+    # reading Chrome's command line over CDP (which needs --enable-automation,
+    # off under stealth). Keyed later by the browser GUID from /json/version so
+    # a reused port can't alias a stale record. Best-effort — a failed write
+    # only degrades to the cmdline fallback.
+    registry.register_instance(
+        port=port,
+        guid=_query_chrome_guid(port),
+        workspace=os.getcwd(),
+        pid=process.pid,
+        user_data_dir=str(user_data_dir),
+    )
 
     return {
         "port": port,
@@ -314,6 +352,7 @@ def _graceful_stop(port: int, pid: int, timeout: float = 5.0) -> dict:
         while elapsed < timeout:
             if not is_port_in_use(port=port):
                 _cleanup_temp_profile(port)
+                registry.unregister_instance(port)
                 return {"port": port, "pid": pid, "method": "graceful"}
             time.sleep(poll_interval)
             elapsed += poll_interval
@@ -321,6 +360,7 @@ def _graceful_stop(port: int, pid: int, timeout: float = 5.0) -> dict:
     # Graceful failed or timed out — force kill
     _kill_process_tree(pid)
     _cleanup_temp_profile(port)
+    registry.unregister_instance(port)
     return {"port": port, "pid": pid, "method": "force"}
 
 

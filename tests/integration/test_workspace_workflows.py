@@ -107,7 +107,10 @@ def test_workspace_tag_in_chrome_cmdline(cleanup_test_chromes):
       2. _query_chrome_cmdline via CDP
     """
     # Step 1: Execute operation
-    result = browser_start(headless=True, profile="test-ws-tag")
+    # stealth=False: Browser.getBrowserCommandLine (used in Step 2) returns the
+    # cmdline only with --enable-automation, which stealth (the default) omits.
+    # The registry-backed path is covered by test_workspace_chrome_filtering.
+    result = browser_start(headless=True, profile="test-ws-tag", stealth=False)
     assert "error" not in result
     assert result["reused"] is False
     port = result["port"]

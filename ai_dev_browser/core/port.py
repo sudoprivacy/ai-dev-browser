@@ -91,6 +91,93 @@ def _extract_workspace(cmdline: list[str]) -> str | None:
     return None
 
 
+def _extract_user_data_dir(cmdline: list[str]) -> str | None:
+    """Extract --user-data-dir= value from command line args."""
+    for arg in cmdline:
+        if arg.startswith("--user-data-dir="):
+            return arg.split("=", 1)[1].strip().strip('"').strip("'")
+    return None
+
+
+# webSocketDebuggerUrl is ws://host:port/devtools/browser/<GUID>; the GUID is
+# unique per browser process, so it distinguishes a reused port from its prior
+# occupant. Available from /json/version WITHOUT --enable-automation — unlike
+# Browser.getBrowserCommandLine.
+_BROWSER_GUID_RE = re.compile(r"/devtools/browser/([0-9a-fA-F-]+)")
+
+
+def _query_chrome_version(
+    port: int,
+    host: str = DEFAULT_DEBUG_HOST,
+    timeout: float = 2.0,
+) -> dict | None:
+    """GET /json/version — confirm a Chrome debug port, return its JSON (or None)."""
+    try:
+        resp = urllib.request.urlopen(
+            f"http://{host}:{port}/json/version", timeout=timeout
+        )
+        return json.loads(resp.read())
+    except Exception:
+        return None
+
+
+def _guid_from_version(info: dict) -> str | None:
+    m = _BROWSER_GUID_RE.search(info.get("webSocketDebuggerUrl", "") or "")
+    return m.group(1) if m else None
+
+
+def _query_chrome_guid(
+    port: int,
+    host: str = DEFAULT_DEBUG_HOST,
+    timeout: float = 2.0,
+) -> str | None:
+    """The browser GUID for a debug port, used to key the instance registry."""
+    info = _query_chrome_version(port, host, timeout)
+    return _guid_from_version(info) if info else None
+
+
+def _resolve_instance(
+    port: int,
+    host: str = DEFAULT_DEBUG_HOST,
+    timeout: float = 2.0,
+) -> tuple[str | None, str | None] | None:
+    """(workspace, user_data_dir) for a Chrome debug port, or None if the port
+    is not a Chrome.
+
+    Registry first (GUID-matched, needs no automation flag — the default stealth
+    path). Falls back to Browser.getBrowserCommandLine for a Chrome absent from
+    the registry: one launched with `stealth=False` (has `--enable-automation`,
+    so the CDP cmdline is populated) or by an older build.
+    """
+    info = _query_chrome_version(port, host, timeout)
+    if info is None:
+        return None
+    guid = _guid_from_version(info)
+
+    from . import registry
+
+    entry = registry.lookup(port, guid) if guid else None
+    if entry is not None:
+        return entry.get("workspace"), entry.get("user_data_dir")
+
+    cmdline = _query_chrome_cmdline(port, host, timeout)
+    if cmdline:
+        return _extract_workspace(cmdline), _extract_user_data_dir(cmdline)
+    return None, None
+
+
+def _query_chrome_user_data_dir(
+    port: int,
+    host: str = DEFAULT_DEBUG_HOST,
+    timeout: float = 2.0,
+) -> str | None:
+    """The --user-data-dir a debug Chrome runs under (registry first, cmdline
+    fallback). Used by profile-reuse detection and orphan cleanup, both of which
+    must work under stealth where getBrowserCommandLine returns nothing."""
+    res = _resolve_instance(port, host, timeout)
+    return res[1] if res else None
+
+
 # =============================================================================
 # Port Detection
 # =============================================================================
@@ -342,8 +429,9 @@ def _scan_ports_for_chrome(
     Two stages:
       1. Parallel _fast_listening_check() — filter down to listening ports
          (bind-first + tight-timeout IPv4 connect, no IPv6)
-      2. Parallel _query_chrome_cmdline() — verify each is Chrome and
-         extract workspace tag
+      2. Parallel _resolve_instance() — verify each is Chrome (via
+         /json/version) and read its workspace from the instance registry
+         (GUID-matched), falling back to Browser.getBrowserCommandLine
 
     Wide worker counts and short timeouts keep scans of the full OS
     ephemeral range (~14-16k ports) under 2s.
@@ -360,15 +448,15 @@ def _scan_ports_for_chrome(
     if not listening:
         return []
 
-    def _probe(p: int) -> tuple[int, list[str] | None]:
-        return p, _query_chrome_cmdline(p, timeout=cdp_timeout)
+    def _probe(p: int) -> tuple[int, tuple[str | None, str | None] | None]:
+        return p, _resolve_instance(p, timeout=cdp_timeout)
 
     chromes = []
     with ThreadPoolExecutor(max_workers=cdp_workers) as pool:
-        for p, cmdline in pool.map(_probe, listening):
-            if cmdline is None:
-                continue
-            workspace = _extract_workspace(cmdline)
+        for p, resolved in pool.map(_probe, listening):
+            if resolved is None:
+                continue  # not a Chrome debug port
+            workspace, _udd = resolved
             pid = get_pid_on_port(p)
             chromes.append((p, pid, workspace))
 
