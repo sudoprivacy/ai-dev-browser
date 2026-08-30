@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "AI Dev Browser — bridge",
-  "version": "0.2.0",
+  "version": "0.3.3",
   "description": "Lets ai-dev-browser drive THIS Chrome (your real profile) via chrome.debugger over a local bridge. Opt-in; only active while ai-dev-browser is connected.",
   "minimum_chrome_version": "116",
-  "permissions": ["debugger", "tabs", "alarms", "cookies", "identity", "identity.email"],
+  "permissions": ["debugger", "tabs", "alarms", "cookies", "identity", "identity.email", "storage", "webNavigation"],
   "host_permissions": ["<all_urls>"],
   "icons": { "16": "icon16.png", "48": "icon48.png", "128": "icon128.png" },
   "action": {

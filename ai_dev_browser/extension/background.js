@@ -14,8 +14,10 @@
 //
 // Multi-tab: we drive a DEDICATED automation tab and FOLLOW tabs our automation
 // opens (an OAuth "Continue with Google" popup, a magic-link new tab) — but we
-// NEVER attach to a tab the user opened. The rule is opener-based: a new tab is
-// followed only if its opener is a tab we already drive.
+// NEVER attach to a tab the user opened. A new tab is followed only if the tab
+// whose content opened it is one we already drive — keyed on webNavigation's
+// sourceTabId (reliable for a backgrounded caller), with tabs.onCreated's
+// openerTabId as a fallback.
 //
 // Wire protocol with the bridge:
 //   bridge -> ext : { _gid, tab, method, params }   (tab = targetId or null)
@@ -62,17 +64,74 @@ function markTab(tabId) {
   } catch { /* action API unavailable — cosmetic only */ }
 }
 
+// --- MV3 lifetime -----------------------------------------------------------
+// chrome.debugger sessions drop when the service worker is suspended (~30s
+// idle), and a human OAuth-consent step easily exceeds that. Two defenses:
+//  (1) keepalive: while we hold any automation tab, ping a trivial async API
+//      every 20s to reset the idle timer so the debugger isn't severed mid-flow;
+//  (2) persistence: mirror {mainTabId, autoTabs} into chrome.storage.session
+//      (survives a worker restart within the browser session) so a woken worker
+//      re-adopts the SAME tabs instead of orphaning them / spawning duplicates.
+let keepalive = null;
+
+function syncKeepalive() {
+  if (autoTabs.size > 0 && keepalive == null) {
+    keepalive = setInterval(() => {
+      try { chrome.runtime.getPlatformInfo(() => void chrome.runtime.lastError); } catch { /* noop */ }
+    }, 20000);
+  } else if (autoTabs.size === 0 && keepalive != null) {
+    clearInterval(keepalive);
+    keepalive = null;
+  }
+}
+
+function persist() {
+  try {
+    chrome.storage.session.set({ adbMainTabId: mainTabId, adbAutoTabs: [...autoTabs] });
+  } catch { /* storage unavailable — keepalive still holds in-memory state */ }
+}
+
+async function restore() {
+  try {
+    const s = await chrome.storage.session.get(["adbMainTabId", "adbAutoTabs"]);
+    if (s.adbMainTabId != null) mainTabId = s.adbMainTabId;
+    if (Array.isArray(s.adbAutoTabs)) {
+      for (const id of s.adbAutoTabs) autoTabs.add(id);
+    }
+  } catch { /* first run / no storage */ }
+}
+
 async function attachTab(tabId) {
   // Attach chrome.debugger to a tab WE own. Idempotent.
-  if (attached.has(tabId)) { autoTabs.add(tabId); return; }
-  try {
-    await chrome.debugger.attach(dbg(tabId), PROTOCOL);
-  } catch (e) {
-    if (!/already|Another debugger/i.test(String(e))) throw e;
+  if (!attached.has(tabId)) {
+    try {
+      await chrome.debugger.attach(dbg(tabId), PROTOCOL);
+    } catch (e) {
+      if (!/already|Another debugger/i.test(String(e))) throw e;
+    }
+    attached.add(tabId);
+    markTab(tabId);
   }
   autoTabs.add(tabId);
-  attached.add(tabId);
-  markTab(tabId);
+  syncKeepalive();
+  persist();
+}
+
+// Follow a tab OUR automation opened, retrying briefly — a just-created popup
+// can reject the first attach while it's still committing its first navigation.
+async function followTab(tabId) {
+  for (let i = 0; i < 6; i++) {
+    try { await attachTab(tabId); return; }
+    catch { await new Promise((r) => setTimeout(r, 250)); }
+  }
+}
+
+function forget(tabId) {
+  autoTabs.delete(tabId);
+  attached.delete(tabId);
+  if (tabId === mainTabId) mainTabId = null;
+  syncKeepalive();
+  persist();
 }
 
 async function ensureDedicatedTab() {
@@ -112,7 +171,7 @@ async function targetInfos() {
   for (const tabId of [...autoTabs]) {
     let t;
     try { t = await chrome.tabs.get(tabId); }
-    catch { autoTabs.delete(tabId); attached.delete(tabId); continue; }
+    catch { forget(tabId); continue; }
     const info = {
       targetId: String(tabId), type: "page",
       title: t.title || "", url: t.url || t.pendingUrl || "",
@@ -159,9 +218,13 @@ async function browserLevel(method, params, tab) {
     case "Target.closeTarget": {
       const id = Number((params && params.targetId) || tab);
       try { await chrome.tabs.remove(id); } catch { /* already gone */ }
-      autoTabs.delete(id); attached.delete(id);
+      forget(id);
       return { success: true };
     }
+    case "AiDevBrowser.debugState":
+      // Introspection for field support (not a real CDP method): which tabs
+      // does the extension think it owns / has attached right now?
+      return { mainTabId, autoTabs: [...autoTabs], attached: [...attached] };
     case "Storage.getCookies":
     case "Network.getAllCookies": {
       const cookies = await chrome.cookies.getAll({});
@@ -233,27 +296,40 @@ async function connect() {
 // OAuth account-chooser popup / a magic-link tab). A user's own new tab has an
 // opener outside autoTabs (or none) and is left untouched. This is what makes
 // OAuth login drivable in extension mode without ever reaching the user's tabs.
+// Follow regardless of the bridge socket state — tracking OUR tab must not
+// depend on adb being mid-command (the child may open between calls). Restore
+// first so a just-woken worker still knows which tabs are ours.
+// Primary follow signal: sourceTabId is the tab whose content initiated the new
+// target (window.open / target=_blank), independent of foreground/background —
+// unlike tabs.onCreated.openerTabId, which Chrome attributes to the window's
+// FOREGROUND tab when the caller is a background tab (our automation tab is
+// backgrounded, so openerTabId alone misses it).
+if (chrome.webNavigation && chrome.webNavigation.onCreatedNavigationTarget) {
+  chrome.webNavigation.onCreatedNavigationTarget.addListener(async (d) => {
+    if (d.tabId == null || d.sourceTabId == null) return;
+    if (autoTabs.size === 0) await restore();
+    if (!autoTabs.has(d.sourceTabId)) return;
+    followTab(d.tabId);
+  });
+}
+
+// Fallback follow signal via openerTabId (covers cases webNavigation misses,
+// e.g. a foreground opener). Same invariant: only tabs OUR tabs opened.
 chrome.tabs.onCreated.addListener(async (tab) => {
-  if (!ws || ws.readyState !== 1) return;
   if (tab.id == null || tab.openerTabId == null) return;
+  if (autoTabs.size === 0) await restore();
   if (!autoTabs.has(tab.openerTabId)) return;
-  try { await attachTab(tab.id); } catch { /* couldn't attach — leave it */ }
+  followTab(tab.id);
 });
 
 // A followed tab closed (e.g. OAuth popup after consent) → forget it. adb's next
 // Target.getTargets no longer lists it; get_active_tab falls back to the opener.
-chrome.tabs.onRemoved.addListener((tabId) => {
-  autoTabs.delete(tabId); attached.delete(tabId);
-  if (tabId === mainTabId) mainTabId = null;
-});
+chrome.tabs.onRemoved.addListener((tabId) => forget(tabId));
 
 // Debugger detached out from under us (devtools opened on that tab, tab crash,
 // user cancelled the debugging banner) → forget it.
 chrome.debugger.onDetach.addListener((src) => {
-  if (src.tabId == null) return;
-  attached.delete(src.tabId);
-  autoTabs.delete(src.tabId);
-  if (src.tabId === mainTabId) mainTabId = null;
+  if (src.tabId != null) forget(src.tabId);
 });
 
 // extension -> adb: relay CDP events, tagged with the tab they came from. The
@@ -272,7 +348,15 @@ if (chrome.alarms) {
   chrome.alarms.create("reconnect", { periodInMinutes: 0.5 });
   chrome.alarms.onAlarm.addListener((a) => { if (a.name === "reconnect") connect(); });
 }
+// Every worker (re)start re-runs this file top-to-bottom: restore which tabs we
+// own from storage.session, resume the keepalive, then connect — so a worker
+// woken mid-session re-adopts its tabs instead of orphaning them.
+async function boot() {
+  await restore();
+  syncKeepalive();
+  connect();
+}
 if (chrome.action && chrome.action.onClicked) chrome.action.onClicked.addListener(connect);
-chrome.runtime.onStartup.addListener(connect);
-chrome.runtime.onInstalled.addListener(connect);
-connect();
+chrome.runtime.onStartup.addListener(boot);
+chrome.runtime.onInstalled.addListener(boot);
+boot();
