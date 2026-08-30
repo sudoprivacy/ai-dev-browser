@@ -269,6 +269,7 @@ def get_available_port(
     end: int = None,
     exclude: set[int] | None = None,
     reuse: bool = True,
+    randomize: bool = False,
 ) -> int:
     """Find an available port for Chrome.
 
@@ -282,6 +283,11 @@ def get_available_port(
         end: End of port range
         exclude: Ports to skip
         reuse: If True, prefer reusing existing Chrome instances in the current workspace.
+        randomize: If True, scan the range in shuffled order instead of low-to-high.
+            Spreads consecutive fresh launches across the band so they don't all
+            reuse the low port — on Windows a just-released port can transiently
+            reject the next bind, and deterministic reuse turns that into a
+            repeatable flake. Off for reuse/discovery (deterministic scan).
 
     Returns:
         An available port number.
@@ -299,8 +305,13 @@ def get_available_port(
             if chrome_port not in exclude:
                 return chrome_port
 
-    # Find unused port in preferred range
-    for p in range(port_range[0], port_range[1]):
+    # Find an unused port in the preferred range.
+    candidates = list(range(port_range[0], port_range[1]))
+    if randomize:
+        import random
+
+        random.shuffle(candidates)
+    for p in candidates:
         if exclude and p in exclude:
             continue
         if _is_port_bindable(DEFAULT_DEBUG_HOST, p):

@@ -208,8 +208,11 @@ def browser_start(
     # ask get_available_port for a fresh port only — otherwise it would
     # silently hand back the same workspace Chrome we just declined to
     # reuse.
-    if port is None:
-        port = get_available_port(reuse=False)
+    auto_port = port is None
+    if auto_port:
+        # randomize: spread fresh launches across the band so a just-released
+        # port isn't immediately reused (Windows can transiently reject re-bind).
+        port = get_available_port(reuse=False, randomize=True)
     else:
         # User specified a port - check if it's available
         if is_port_in_use(port=port):
@@ -251,57 +254,85 @@ def browser_start(
                 "message": f"Profile '{profile_name}' already in use. Reusing Chrome on port {existing_port}.",
             }
 
-    # Launch Chrome — resolve env-var fallback if caller didn't pass headless.
+    # Launch Chrome, retrying ONCE on a cold-start miss with a fresh port. On a
+    # loaded host (esp. Windows: a just-released port transiently rejecting the
+    # next bind, a dropped spawn) Chrome can fail to bind its debug port even
+    # though nothing is wrong with the request — a relaunch on a different port
+    # clears it. Only an auto-assigned port retries (a caller-pinned port must
+    # stay put); a temp session gets a fresh dir, a named profile keeps its own.
     start_url = url or "about:blank"
     headless_resolved = _env_headless_default() if headless is None else headless
-    process = launch_chrome(
-        port=port,
-        headless=headless_resolved,
-        start_url=start_url,
-        user_data_dir=str(user_data_dir),
-        extra_args=extra_args,
-        override_default_args=override_default_args,
-        silent_stderr=silent_stderr,
-        stealth=stealth,
-    )
-
-    # Wait for Chrome to bind its debug port.
     poll_interval = 0.2
-    elapsed = 0.0
-    while elapsed < startup_timeout:
-        if is_port_in_use(port=port):
+    max_attempts = 2 if auto_port else 1
+    last_error: dict = {}
+    process = None
+
+    for attempt in range(max_attempts):
+        process = launch_chrome(
+            port=port,
+            headless=headless_resolved,
+            start_url=start_url,
+            user_data_dir=str(user_data_dir),
+            extra_args=extra_args,
+            override_default_args=override_default_args,
+            silent_stderr=silent_stderr,
+            stealth=stealth,
+        )
+
+        # Wait for Chrome to bind its debug port.
+        bound = False
+        elapsed = 0.0
+        while elapsed < startup_timeout:
+            if is_port_in_use(port=port):
+                bound = True
+                break
+            if process.poll() is not None:
+                stderr = process.stderr.read() if process.stderr else ""
+                if not stderr:
+                    stderr = (
+                        "Chrome exited silently. Possible causes:\n"
+                        "  - Another Chrome is using this profile\n"
+                        "  - Profile directory is corrupted\n"
+                        "  - Insufficient permissions"
+                    )
+                last_error = {"error": f"Chrome process exited unexpectedly: {stderr}"}
+                break
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+        else:
+            # Timed out. Chrome may still be starting, but leaving it alive holds
+            # the profile lockfile and blocks the next start — kill the tree so
+            # the profile is released, then retry (fresh port) if attempts remain.
+            orphan_pid = process.pid
+            _kill_process_tree(orphan_pid)
+            last_error = {
+                "error": (
+                    f"Chrome started (PID {orphan_pid}) but port {port} not "
+                    f"listening after {startup_timeout}s — process killed to "
+                    f"release profile lockfile. Retry with startup_timeout=<larger> "
+                    f"if your environment is slow (Windows + main Chrome running, "
+                    f"first-time profile init, AV scanning, etc.)."
+                ),
+                "pid": orphan_pid,
+            }
+
+        if bound:
             break
-        if process.poll() is not None:
-            stderr = process.stderr.read() if process.stderr else ""
-            # Provide more helpful error message
-            if not stderr:
-                stderr = (
-                    "Chrome exited silently. Possible causes:\n"
-                    "  - Another Chrome is using this profile\n"
-                    "  - Profile directory is corrupted\n"
-                    "  - Insufficient permissions"
+
+        # Failed this attempt. Make sure the process is dead, then retry on a
+        # FRESH port (a lingering/stuck port won't repeat) if attempts remain.
+        if process.poll() is None:
+            _kill_process_tree(process.pid)
+        if attempt < max_attempts - 1:
+            port = get_available_port(reuse=False, exclude={port}, randomize=True)
+            if temp:
+                import tempfile
+
+                user_data_dir = Path(
+                    tempfile.mkdtemp(prefix=f"{DEFAULT_PROFILE_PREFIX}{port}_")
                 )
-            return {"error": f"Chrome process exited unexpectedly: {stderr}"}
-        time.sleep(poll_interval)
-        elapsed += poll_interval
-    else:
-        # Timed out. Chrome may still be starting (slow cold-start scenarios)
-        # — but if we leave it alive it holds the profile's lockfile, and the
-        # next browser_start with the same profile fails on lock contention.
-        # Kill the whole process tree so the profile is released; caller can
-        # retry with a higher startup_timeout.
-        orphan_pid = process.pid
-        _kill_process_tree(orphan_pid)
-        return {
-            "error": (
-                f"Chrome started (PID {orphan_pid}) but port {port} not "
-                f"listening after {startup_timeout}s — process killed to "
-                f"release profile lockfile. Retry with startup_timeout=<larger> "
-                f"if your environment is slow (Windows + main Chrome running, "
-                f"first-time profile init, AV scanning, etc.)."
-            ),
-            "pid": orphan_pid,
-        }
+            continue
+        return last_error
 
     # Record this instance so workspace/profile discovery can find it WITHOUT
     # reading Chrome's command line over CDP (which needs --enable-automation,
