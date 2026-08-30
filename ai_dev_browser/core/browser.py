@@ -575,7 +575,9 @@ def browser_stop(
 
     Args:
         port: Port of browser to stop
-        stop_all: Stop all debugging Chrome instances
+        stop_all: Stop all debugging Chrome instances adb launched. Registry-
+            scoped — it only stops Chromes in adb's launch registry, so it can
+            NEVER reap a debug Chrome adb didn't start (a user's own).
 
     Returns:
         dict with stopped status, count, browsers list
@@ -586,8 +588,12 @@ def browser_stop(
     stopped = []
 
     if stop_all:
+        # Registry-scoped: only Chromes adb launched. A debug Chrome adb didn't
+        # start (rare — a user running --remote-debugging-port) has no registry
+        # record and is left alone, so a blanket stop can't surprise-kill it.
+        mine = registry.registered_ports()
         for p, pid, _ws in find_debug_chromes():
-            if pid is None:
+            if pid is None or p not in mine:
                 continue
             try:
                 result = _graceful_stop(p, pid)
@@ -608,38 +614,64 @@ def browser_stop(
 
 
 def browser_list(all_workspaces: bool = False) -> dict:
-    """List debugging Chrome instances.
+    """Use when: you need to know WHICH Chromes are running and which are adb's
+    vs the user's REAL browser — before connecting, or before any cleanup.
+    Returns `{browsers, count, by_origin}`; each browser carries `origin`
+    (`adb` = a live debug Chrome adb launched / `adb-orphan` = an adb-managed
+    leftover with no live debug owner / `external` = the user's OWN Chrome),
+    plus `pid`, `port` (debug port, null if none), `user_data_dir`, `profile`,
+    `workspace`. `external` is never a cleanup target — reap only adb's leftovers
+    with `browser_cleanup`.
 
-    By default, shows only Chromes belonging to the current workspace.
-    Use all_workspaces=True to see all debugging Chromes.
+    With the `cleanup` extra (psutil) this sees EVERY Chrome — including the
+    user's real, non-debug browser — and classifies each **deterministically**
+    (managed user-data-dir + live debug port), not by guessing from window
+    titles. Without psutil it degrades to adb's debug Chromes only and says how
+    to unlock the full view.
 
     Args:
-        all_workspaces: Show Chromes from all workspaces (default: current only)
+        all_workspaces: Also include adb Chromes from OTHER workspaces (default:
+            current workspace only). The user's `external` Chromes are always
+            shown — they aren't workspace-scoped.
 
     Returns:
-        dict with browsers list and count
+        dict with `browsers` (list), `count`, and — full view — `by_origin`
+        counts + `psutil: true`. Without psutil: `psutil: false` + a `hint` to
+        install the extra (and no `external` visibility).
     """
-    browsers = []
+    try:
+        from .cleanup import list_chromes
 
-    if all_workspaces:
-        for p, pid, workspace in find_debug_chromes():
-            info: dict = {
-                "port": p,
-                "pid": pid,
-            }
-            if workspace:
-                info["workspace"] = workspace
-            browsers.append(info)
-    else:
-        for p, pid in find_workspace_chromes():
-            browsers.append(
-                {
-                    "port": p,
-                    "pid": pid,
-                }
-            )
+        browsers = list_chromes(all_workspaces=all_workspaces)
+    except ImportError:
+        # No psutil → can't see the user's real (non-debug) Chrome or classify
+        # origin; fall back to adb's debug Chromes only.
+        fallback: list[dict] = []
+        if all_workspaces:
+            for p, pid, workspace in find_debug_chromes():
+                info: dict = {"port": p, "pid": pid, "origin": "adb"}
+                if workspace:
+                    info["workspace"] = workspace
+                fallback.append(info)
+        else:
+            for p, pid in find_workspace_chromes():
+                fallback.append({"port": p, "pid": pid, "origin": "adb"})
+        return {
+            "browsers": fallback,
+            "count": len(fallback),
+            "psutil": False,
+            "hint": (
+                "Install ai-dev-browser[cleanup] (psutil) to also see the user's "
+                "real Chrome and classify adb vs external deterministically."
+            ),
+        }
 
+    by_origin: dict[str, int] = {}
+    for b in browsers:
+        by_origin[b["origin"]] = by_origin.get(b["origin"], 0) + 1
     return {
         "browsers": browsers,
         "count": len(browsers),
+        "by_origin": by_origin,
+        "psutil": True,
     }

@@ -85,3 +85,21 @@ def unregister_instance(port: int) -> None:
         _entry_path(port).unlink()
     except OSError:
         pass
+
+
+def registered_ports() -> set[int]:
+    """Ports adb has launched a Chrome on (one record file each).
+
+    The deterministic "these are mine" set: a blanket stop scopes to this so it
+    can never reap a debug Chrome adb didn't launch. Best-effort — a missing dir
+    just yields an empty set."""
+    ports: set[int] = set()
+    try:
+        for entry in _REGISTRY_DIR.glob("*.json"):
+            try:
+                ports.add(int(entry.stem))
+            except ValueError:
+                continue
+    except OSError:
+        pass
+    return ports

@@ -79,6 +79,7 @@ jobs:
             tests/integration/test_ci_integration.py \
             tests/integration/test_config_resolvers.py \
             tests/integration/test_browser_start_retry.py \
+            tests/integration/test_browser_inventory.py \
             tests/integration/test_stealth_defaults.py \
             tests/integration/test_ext_bridge.py \
             tests/integration/test_cookies_extract_hermetic.py \

@@ -28,8 +28,6 @@ INTERNAL = {
     "graceful_close_browser",
     "connect_browser",
     "get_active_tab",
-    # destructive — Python-only API; not exposed to LLM tool discovery
-    "browser_cleanup",
 }
 
 # Per-tool metadata overrides. Key = function name, value = dict of overrides.
@@ -38,6 +36,7 @@ TOOL_META = {
     "browser_start": {"result_key": "port"},
     "browser_stop": {"result_key": "stopped"},
     "browser_list": {"result_key": "count"},
+    "browser_cleanup": {"result_key": "count"},
     "browser_connect": {"result_key": "connected"},
     "browser_disconnect": {"result_key": "stopped"},
     "click_by_ref": {"result_key": "clicked"},
