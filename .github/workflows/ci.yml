@@ -75,6 +75,7 @@ jobs:
         shell: bash
         run: |
           uv run python -m pytest -v \
+            tests/unit/ \
             tests/integration/test_ci_integration.py \
             tests/integration/test_config_resolvers.py \
             tests/integration/test_browser_start_retry.py \

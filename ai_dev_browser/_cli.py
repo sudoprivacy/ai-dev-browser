@@ -25,6 +25,7 @@ import functools
 import inspect
 import json
 import os
+import re
 import sys
 from collections.abc import Callable
 from typing import Any, Literal, get_args, get_origin, get_type_hints
@@ -76,10 +77,15 @@ def _parse_docstring_args(docstring: str) -> dict[str, str]:
     if not docstring:
         return {}
 
-    args_section = {}
+    args_section: dict[str, str] = {}
     in_args = False
     current_arg = None
-    current_desc = []
+    current_desc: list[str] = []
+    # A new arg is `name: description` at the START of the (stripped) line — an
+    # identifier then ': '. This must NOT match a continuation line that merely
+    # contains ': ' somewhere ("(new headless: full Chrome)"), or every arg after
+    # a wrapped one is lost.
+    arg_re = re.compile(r"^([A-Za-z_]\w*): (.*)$")
 
     for line in docstring.split("\n"):
         stripped = line.strip()
@@ -87,26 +93,22 @@ def _parse_docstring_args(docstring: str) -> dict[str, str]:
         if stripped == "Args:":
             in_args = True
             continue
-        elif (
-            in_args
-            and stripped
-            and not stripped[0].isspace()
-            and stripped.endswith(":")
-        ):
-            # New section like "Returns:" or "Raises:"
+        # A Google-style section header (Returns:/Raises:/Failure:) is a SINGLE
+        # word ending in ':'. A wrapped arg line that merely ends in ':' ("…
+        # env var:") is not a header and must not end the block.
+        elif in_args and stripped.endswith(":") and len(stripped.split()) == 1:
             if current_arg:
                 args_section[current_arg] = " ".join(current_desc).strip()
             break
         elif in_args:
-            # Check if this is a new arg definition (name: description)
-            if ": " in stripped:
+            m = arg_re.match(stripped)
+            if m:
                 if current_arg:
                     args_section[current_arg] = " ".join(current_desc).strip()
-                parts = stripped.split(": ", 1)
-                current_arg = parts[0].strip()
-                current_desc = [parts[1].strip()] if len(parts) > 1 else []
+                current_arg = m.group(1)
+                current_desc = [m.group(2).strip()]
             elif current_arg and stripped:
-                # Continuation of previous arg description
+                # Continuation of the current arg description.
                 current_desc.append(stripped)
 
     if current_arg:
