@@ -337,9 +337,13 @@ async def browser_connect(
       the workspace one). Autonomous, headless-capable, parallel — the 90% case.
     - **extension**: drives your **real** Chrome (your profile, logins,
       device-trust) through the ai-dev-browser bridge extension — the way to
-      look human on hardened sites (Google SSO). **Not autonomous**: it needs
-      the extension installed + enabled and Chrome running, and can't run
-      headless or parallel. If it isn't set up, this returns the exact
+      look human on hardened sites (Google SSO). It drives a dedicated
+      automation tab and FOLLOWS the popups/new tabs your automation opens (an
+      OAuth account-chooser, a magic-link tab), so multi-tab logins don't stall
+      — reach them with `tab_list`/`tab_switch` or `--tab-url`, exactly like cdp;
+      your own tabs are never touched. **Not autonomous**: it needs the
+      extension installed + enabled and Chrome running, and can't run headless
+      or parallel. If it isn't set up, this returns the exact
       `setup_instructions` to hand the user (Chrome blocks command-line
       loading, so a person loads it once).
 
@@ -363,9 +367,9 @@ async def browser_connect(
 
     Returns:
         dict with `transport`, `connected`. cdp+connected: `port, tab_count,
-        tabs`. extension+connected: `account`. Not connected: `setup_instructions`
-        + `extension_dir` (and `bridge_running` once the daemon is up), or the
-        cdp connect error.
+        tabs`. extension+connected: `account, tab_count, tabs`. Not connected:
+        `setup_instructions` + `extension_dir` (and `bridge_running` once the
+        daemon is up), or the cdp connect error.
 
     Failure:
         cdp + not connected → no Chrome on that port; `browser_start` to launch
@@ -395,12 +399,24 @@ async def browser_connect(
         # Give a just-(re)loaded extension a few seconds to dial back in.
         status = await wait_for_extension(timeout=4.0)
         if status and status.get("extension_connected"):
+            # Build the real BrowserClient over the bridge and list its tabs —
+            # same shape as cdp, and it proves the multiplexer end to end.
+            tabs: list[str] = []
+            try:
+                from .connection import connect_extension
+
+                browser = await connect_extension()
+                tabs = [getattr(t._target, "url", "") or "" for t in browser.tabs]
+            except Exception:
+                pass  # connected per the daemon; tab list is best-effort
             # Report WHICH profile/account we're driving — the extension runs in
             # the profile it was loaded into.
             return {
                 "transport": "extension",
                 "connected": True,
                 "account": status.get("account"),
+                "tab_count": len(tabs),
+                "tabs": tabs,
                 "bridge_port": EXTENSION_BRIDGE_PORT,
             }
         # Daemon is up, but no extension has dialed in yet — loading/enabling it

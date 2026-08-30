@@ -7,18 +7,28 @@ connects as a "driver", speaks raw CDP, and the daemon relays that to the
 extension's `chrome.debugger` and back. The extension connection survives across
 adb calls — no 30s reconnect wait per command.
 
-Both sides connect to the same port and are told apart by their first frame:
-  - driver    → a CDP command `{id, method, params}`
-  - extension → an `{_event: ...}` handshake (e.g. `attached`)
+The daemon is a **CDP multiplexer**, so adb's ordinary CDP machinery
+(`BrowserClient` + per-tab `Tab` connections, `tab_list`, `tab_switch`,
+`get_active_tab`) drives over the extension *unchanged* — same code path as a
+real `--remote-debugging-port` Chrome:
 
-MVP: one extension, one active driver at a time, single active tab (the
-extension attaches `chrome.debugger` to the active tab). Multi-target / browser-
-level shims come later.
+  - A driver opens a **browser-level** connection (path `/devtools/browser`) for
+    `Target.*` / `Storage.*`, and one **per-tab** connection each
+    (`/devtools/page/<targetId>`) for page/DOM/input/runtime commands.
+  - All of them fan into the *single* extension socket. The daemon namespaces
+    every driver command with a global id so responses route back to the right
+    driver+id, and tags each per-tab connection with its targetId so the
+    extension knows which `chrome.debugger` tab to hit and so CDP events route
+    back to the connection that asked for them.
+
+Role of the first frame: the extension leads with `{_hello: ...}`; a driver
+leads with a CDP command `{id, method, ...}`.
 """
 
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import logging
 
@@ -29,13 +39,38 @@ from .extension import EXTENSION_BRIDGE_PORT
 logger = logging.getLogger(__name__)
 
 
+def _conn_path(ws) -> str:
+    """The HTTP path the driver connected on (routes browser-level vs per-tab).
+
+    websockets>=11 exposes it at `ws.request.path`; fall back to `/` so a client
+    that omits a path is treated as browser-level.
+    """
+    req = getattr(ws, "request", None)
+    return getattr(req, "path", None) or "/"
+
+
+def _target_id_from_path(path: str) -> str | None:
+    """`/devtools/page/<targetId>` → `<targetId>`; anything else → None
+    (browser-level: `/devtools/browser`, `/`, the status probe)."""
+    marker = "/devtools/page/"
+    if marker in path:
+        return path.rsplit("/", 1)[-1] or None
+    return None
+
+
 class _Bridge:
     def __init__(self) -> None:
-        self.extension: object | None = None  # ws to the extension
-        self.driver: object | None = None  # ws to the current adb driver
-        self.attached: dict | None = None  # last {_event: attached} payload
+        self.extension: object | None = None  # single ws to the extension
+        self.account: str | None = None  # profile email from the extension hello
+        self._gid = itertools.count(1)  # global id namespace across all drivers
+        # gid -> (driver_ws, original_id): where each in-flight command's
+        # response must be delivered.
+        self._pending: dict[int, tuple] = {}
+        # targetId -> driver_ws: the per-tab connection to deliver that tab's
+        # CDP events to.
+        self._tab_conns: dict[str, object] = {}
 
-    async def handler(self, ws, *_):
+    async def handler(self, ws):
         try:
             first = await ws.recv()
         except Exception:
@@ -44,45 +79,77 @@ class _Bridge:
             m = json.loads(first)
         except Exception:
             return
-        # Role by first frame: a driver leads with a CDP command; the extension
-        # leads with an `_event` handshake.
-        if "id" in m and "method" in m:
-            await self._driver(ws, first)
-        else:
+        if "_hello" in m:
             await self._extension(ws, m)
+        else:
+            await self._driver(ws, _conn_path(ws), first)
 
-    async def _extension(self, ws, first_msg):
+    # ------------------------------------------------------------------ extension
+    async def _extension(self, ws, hello):
         self.extension = ws
-        if first_msg.get("_event") == "attached":
-            self.attached = first_msg
-        logger.info("extension connected (%s)", first_msg.get("_event"))
+        self.account = hello.get("account")
+        logger.info("extension connected (account=%s)", self.account)
         try:
             async for raw in ws:
                 try:
                     m = json.loads(raw)
                 except Exception:
                     continue
-                if "_event" in m:
-                    if m.get("_event") == "attached":
-                        self.attached = m
-                    continue  # handshake frames are internal, never relayed
-                # responses ({id,result}) and CDP events ({method,params}) →
-                # forward to the driver verbatim
-                if self.driver is not None:
+                if "_gid" in m:
+                    # A command response — route back to the driver that sent it.
+                    entry = self._pending.pop(m["_gid"], None)
+                    if entry is None:
+                        continue
+                    driver_ws, orig_id = entry
+                    out: dict = {"id": orig_id}
+                    if "error" in m:
+                        out["error"] = m["error"]
+                    else:
+                        out["result"] = m.get("result", {})
                     try:
-                        await self.driver.send(raw)
+                        await driver_ws.send(json.dumps(out))
                     except Exception:
                         pass
+                elif "_event_tab" in m:
+                    # A CDP event from a tab — deliver only to the driver holding
+                    # that tab's connection (keeps each Tab's event stream clean).
+                    conn = self._tab_conns.get(m["_event_tab"])
+                    if conn is not None:
+                        try:
+                            await conn.send(
+                                json.dumps(
+                                    {
+                                        "method": m.get("method"),
+                                        "params": m.get("params", {}),
+                                    }
+                                )
+                            )
+                        except Exception:
+                            pass
+                elif "_hello" in m:
+                    self.account = m.get("account")
         except websockets.exceptions.ConnectionClosed:
             pass  # extension disconnected — normal
         finally:
             if self.extension is ws:
                 self.extension = None
-                self.attached = None
+                self.account = None
+                # Fail every in-flight command so no driver hangs.
+                for gid, (driver_ws, orig_id) in list(self._pending.items()):
+                    try:
+                        await driver_ws.send(
+                            json.dumps(
+                                {
+                                    "id": orig_id,
+                                    "error": {"message": "extension disconnected"},
+                                }
+                            )
+                        )
+                    except Exception:
+                        pass
+                self._pending.clear()
 
-    # Security-meaningful actions to surface in the action log (driving your
-    # REAL browser). Low-level plumbing (Page.enable, DOM.getDocument, …) is
-    # skipped as noise.
+    # ------------------------------------------------------------------ drivers
     _LOGGED = (
         "Page.navigate",
         "Input.dispatch",
@@ -90,15 +157,12 @@ class _Bridge:
         "Runtime.callFunctionOn",
     )
 
-    def _log_action(self, raw):
-        try:
-            m = json.loads(raw)
-        except Exception:
-            return
-        method = m.get("method", "")
+    def _log_action(self, method, params):
+        # Surface security-meaningful actions (driving your REAL browser). Skip
+        # low-level plumbing (Page.enable, DOM.getDocument, …) as noise.
         if not any(method.startswith(p) for p in self._LOGGED):
             return
-        params = m.get("params", {}) or {}
+        params = params or {}
         detail = ""
         if method == "Page.navigate":
             detail = " -> " + str(params.get("url", ""))[:120]
@@ -106,55 +170,72 @@ class _Bridge:
             detail = " " + str(params.get("expression", ""))[:80].replace("\n", " ")
         logger.info("action: %s%s", method, detail)
 
-    async def _relay_from_driver(self, ws, raw):
-        # Daemon-local status query — answered from the daemon's own state, NOT
-        # relayed to the extension. Lets browser_connect tell the three failure
-        # states apart (daemon down / no extension session / connected).
+    async def _driver(self, ws, path, first):
+        target_id = _target_id_from_path(path)
+        if target_id is not None:
+            self._tab_conns[target_id] = ws
         try:
-            probe = json.loads(raw)
+            await self._forward(ws, target_id, first)
+            async for raw in ws:
+                await self._forward(ws, target_id, raw)
+        except websockets.exceptions.ConnectionClosed:
+            pass  # the adb CLI process exited — normal per-call lifecycle
+        finally:
+            if target_id is not None and self._tab_conns.get(target_id) is ws:
+                del self._tab_conns[target_id]
+
+    async def _forward(self, ws, target_id, raw):
+        try:
+            msg = json.loads(raw)
         except Exception:
-            probe = {}
-        if probe.get("method") == "_bridge.status":
+            return
+        mid = msg.get("id")
+        method = msg.get("method")
+
+        # Daemon-local status query — answered from the daemon's own state, never
+        # relayed. Lets browser_connect tell the failure states apart.
+        if method == "_bridge.status":
             await ws.send(
                 json.dumps(
                     {
-                        "id": probe.get("id"),
+                        "id": mid,
                         "result": {
                             "extension_connected": self.extension is not None,
-                            "account": (self.attached or {}).get("account"),
+                            "account": self.account,
                         },
                     }
                 )
             )
             return
 
-        if self.extension is not None:
-            self._log_action(raw)
-            await self.extension.send(raw)
+        if self.extension is None:
+            # No extension: reply with a clean per-command error (echo the id so
+            # the driver's CDPConnection resolves it) WITHOUT closing — closing
+            # would cancel every pending transaction and spew warnings.
+            await ws.send(
+                json.dumps({"id": mid, "error": {"message": "extension not connected"}})
+            )
             return
-        # No extension: reply with a clean per-command error (echo the id so the
-        # driver's CDPConnection resolves it, not hangs) WITHOUT closing the
-        # connection — closing would cancel every pending transaction and spew
-        # "listener stopped" warnings.
-        try:
-            fid = json.loads(raw).get("id")
-        except Exception:
-            fid = None
-        await ws.send(
-            json.dumps({"id": fid, "error": {"message": "extension not connected"}})
-        )
 
-    async def _driver(self, ws, first):
-        self.driver = ws
+        self._log_action(method or "", msg.get("params"))
+        gid = next(self._gid)
+        self._pending[gid] = (ws, mid)
         try:
-            await self._relay_from_driver(ws, first)
-            async for raw in ws:
-                await self._relay_from_driver(ws, raw)
-        except websockets.exceptions.ConnectionClosed:
-            pass  # the adb CLI process exited — normal per-call lifecycle
-        finally:
-            if self.driver is ws:
-                self.driver = None
+            await self.extension.send(
+                json.dumps(
+                    {
+                        "_gid": gid,
+                        "tab": target_id,
+                        "method": method,
+                        "params": msg.get("params") or {},
+                    }
+                )
+            )
+        except Exception:
+            self._pending.pop(gid, None)
+            await ws.send(
+                json.dumps({"id": mid, "error": {"message": "extension send failed"}})
+            )
 
 
 def bridge_is_up(port: int = EXTENSION_BRIDGE_PORT) -> bool:
@@ -227,7 +308,7 @@ async def wait_for_extension(
 
 
 async def run_bridge(port: int = EXTENSION_BRIDGE_PORT):
-    """Serve the bridge until cancelled. Returns the server (for tests)."""
+    """Serve the bridge until cancelled. Returns (server, bridge) for tests."""
     bridge = _Bridge()
     server = await websockets.serve(bridge.handler, "127.0.0.1", port)
     logger.info("extension bridge listening on 127.0.0.1:%d", port)

@@ -392,12 +392,13 @@ def as_cli(requires_tab: bool = True):
                         ):
                             from ai_dev_browser.core.connection import connect_extension
 
-                            tab = await connect_extension(url_contains=args.tab_url)
+                            browser = await connect_extension()
                         else:
                             browser = await connect_browser(port=args.port)
-                            tab = await get_active_tab(
-                                browser, url_contains=args.tab_url
-                            )
+                        # Same tab-selection path for both transports — the
+                        # bridge is a real BrowserClient, so get_active_tab /
+                        # --tab-url work identically.
+                        tab = await get_active_tab(browser, url_contains=args.tab_url)
 
                         # Connection-scope args select the target, they are not
                         # arguments to the core function — strip before calling.

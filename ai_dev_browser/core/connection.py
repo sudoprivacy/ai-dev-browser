@@ -164,10 +164,18 @@ class BrowserClient:
         self._cookies: CookieJar | None = None
 
     @classmethod
-    async def connect(cls, host: str, port: int) -> BrowserClient:
+    async def connect(
+        cls, host: str, port: int, ws_url: str | None = None
+    ) -> BrowserClient:
         """Connect to an existing Chrome instance via CDP.
 
         Reuses existing connection if one is alive for the same host:port.
+
+        `ws_url` overrides the browser-level WebSocket URL and skips the
+        `http://host:port/json/version` discovery — the extension bridge speaks
+        CDP but serves no HTTP endpoint, so it passes its fixed browser-level URL
+        directly. Everything downstream (per-tab connections, Target discovery)
+        is identical to a real CDP Chrome.
         """
         key = (host, port)
 
@@ -184,8 +192,8 @@ class BrowserClient:
 
         instance = cls(host, port)
 
-        # 1. Get WebSocket URL
-        ws_url = await instance._get_ws_url()
+        # 1. Get WebSocket URL (or use the caller-supplied one, e.g. the bridge)
+        ws_url = ws_url or await instance._get_ws_url()
 
         # 2. Connect browser-level WebSocket
         instance.connection = CDPConnection(ws_url)
@@ -497,47 +505,25 @@ async def get_active_tab(
     return await _prepared(await browser.get("about:blank"))
 
 
-class _ExtensionBrowser:
-    """Minimal BrowserClient stand-in for the extension transport.
-
-    Exposes the bridge connection + a CookieJar so browser-level cookie ops
-    (`cookies_extract_live` / `save` / `load`) work — the extension shims
-    `Storage.getCookies` via `chrome.cookies`. Single-tab: no target discovery.
-    """
-
-    def __init__(self, connection: CDPConnection):
-        self.connection = connection
-        self.targets: list = []
-        self._cookies: CookieJar | None = None
-
-    @property
-    def cookies(self) -> CookieJar:
-        if self._cookies is None:
-            self._cookies = CookieJar(self)  # type: ignore[arg-type]
-        return self._cookies
-
-    @property
-    def tabs(self) -> list:
-        return self.targets
-
-    async def update_targets(self):
-        return
-
-
-async def connect_extension(url_contains: str | None = None) -> Tab:
+async def connect_extension() -> BrowserClient:
     """Attach to the user's REAL browser via the bridge extension.
 
-    Ensures the local bridge daemon is running, then returns a single Tab bound
-    to the browser's active tab (the extension attaches `chrome.debugger` to it).
-    Unlike CDP mode this drives the user's live profile — no viewport override,
-    no new tab.
+    Ensures the local bridge daemon is running and an extension has dialed in,
+    then returns a `BrowserClient` wired to the bridge. The bridge is a CDP
+    multiplexer, so this is a *real* BrowserClient — every ordinary tab tool
+    (`tab_list` / `tab_switch` / `get_active_tab`) and the cookie store work
+    exactly as they do on a `--remote-debugging-port` Chrome, no extension-
+    specific code path. Drives your live profile: a dedicated automation tab, no
+    viewport override, and it follows popups/new tabs your automation opens (an
+    OAuth account-chooser, a magic-link tab) while never touching your own tabs.
+
+    Pair with `get_active_tab(browser, url_contains=...)` to pick the tab, same
+    as CDP mode.
 
     Raises:
         ConnectionError: the bridge won't start, or the extension isn't loaded /
             connected — the message carries the exact "Load unpacked" steps.
     """
-    from ai_dev_browser.cdp import target as cdp_target
-
     from .ext_bridge import (
         EXTENSION_BRIDGE_PORT,
         ensure_bridge_running,
@@ -559,34 +545,20 @@ async def connect_extension(url_contains: str | None = None) -> Tab:
             "(if you just reloaded it, wait a moment and retry).\n\n"
             + extension_load_instructions()
         )
-
-    ws_url = f"ws://127.0.0.1:{EXTENSION_BRIDGE_PORT}"
-    tinfo = cdp_target.TargetInfo(
-        target_id=cdp_target.TargetID("ext-active"),
-        type_="page",
-        title="",
-        url="",
-        attached=True,
-        can_access_opener=False,
-    )
-    # browser=None: single-tab, no multi-target discovery. Browser-level ops
-    # (the cookie store, tab management) need extension-side shims — not yet.
-    tab = Tab(ws_url, target=tinfo, browser=None)  # type: ignore[arg-type]
-    # A minimal browser so tab.browser.cookies (Storage.getCookies) works over
-    # the bridge — the extension shims it via chrome.cookies.
-    browser = _ExtensionBrowser(tab._connection)
-    browser.targets = [tab]
-    tab._browser = browser  # type: ignore[assignment]
     try:
-        await tab._ensure_connected()
-        current = await tab.evaluate("location.href", timeout=5)
-        tinfo.url = current or ""
+        # The bridge serves no HTTP; hand BrowserClient the fixed browser-level
+        # WS URL so it skips /json/version discovery. Everything else is the
+        # normal CDP path.
+        return await BrowserClient.connect(
+            host="127.0.0.1",
+            port=EXTENSION_BRIDGE_PORT,
+            ws_url=f"ws://127.0.0.1:{EXTENSION_BRIDGE_PORT}/devtools/browser",
+        )
     except Exception as e:
         raise ConnectionError(
             "Extension transport isn't ready (the bridge extension isn't "
             f"connected): {e}\n\n{extension_load_instructions()}"
         ) from e
-    return tab
 
 
 async def graceful_close_browser(
