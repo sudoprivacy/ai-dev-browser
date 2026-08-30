@@ -14,6 +14,7 @@ from .config import (
     DEFAULT_REUSE_STRATEGY,
     ReuseStrategy,
     get_workspace_profile_dir,
+    resolve_startup_timeout,
 )
 from .connection import connect_browser, graceful_close_browser
 from .extension import (
@@ -97,7 +98,7 @@ def browser_start(
     profile: str | None = None,
     temp: bool = False,
     reuse: ReuseStrategy = DEFAULT_REUSE_STRATEGY,
-    startup_timeout: float = 30.0,
+    startup_timeout: float | None = None,
     extra_args: list[str] | None = None,
     override_default_args: dict[str, str | None] | None = None,
     silent_stderr: bool = False,
@@ -144,12 +145,13 @@ def browser_start(
             Chrome, default). Only consulted for a named profile — an
             ephemeral session never reuses.
         startup_timeout: Seconds to wait for Chrome to bind its debug port
-            after spawn. Default 30s covers cold-start on slow Windows
-            machines (fresh profile init + Defender scan + I/O contention
-            from the user's main Chrome). Bump higher if you see
-            "started but port not listening" on a known-good environment;
-            lower it (e.g. 5s) for headless CI where startup is fast and
-            you want to fail loud quickly.
+            after spawn. `None` (default) resolves to the
+            `AI_DEV_BROWSER_STARTUP_TIMEOUT` env var, else 30s — which
+            covers cold-start on slow Windows machines (fresh profile init
+            + Defender scan + I/O contention from the user's main Chrome).
+            Bump higher (arg or env) if you see "started but port not
+            listening" on a known-slow host (a loaded CI runner); lower it
+            (e.g. 5s) for fast headless CI where you want to fail loud quickly.
         extra_args: Additional Chrome command-line flags appended after
             the defaults. Plain passthrough to `launch_chrome`.
         override_default_args: Override or remove default Chrome flags.
@@ -175,6 +177,8 @@ def browser_start(
     Returns:
         dict with port, pid, headless, url, profile, reused, message
     """
+    startup_timeout = resolve_startup_timeout(startup_timeout)
+
     # Isolation by default: an unnamed session has nothing to persist and must
     # not reuse a shared Chrome (where it could act on another session's tabs),
     # so run it as a throwaway temp session. A named profile is the explicit

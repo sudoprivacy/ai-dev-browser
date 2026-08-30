@@ -51,6 +51,31 @@ def resolve_transport(explicit: str | None = None) -> str:
     )
 
 
+# Seconds browser_start waits for Chrome to bind its debug port. The default
+# covers slow cold-start (fresh profile init + Defender scan + I/O contention);
+# set this env to give a *known-slow* host (a loaded CI runner) more headroom
+# process-wide instead of threading startup_timeout through every call.
+STARTUP_TIMEOUT_ENV = "AI_DEV_BROWSER_STARTUP_TIMEOUT"
+DEFAULT_STARTUP_TIMEOUT = 30.0
+
+
+def resolve_startup_timeout(explicit: float | None = None) -> float:
+    """`explicit` arg → `AI_DEV_BROWSER_STARTUP_TIMEOUT` env → 30s. An unparsable
+    or non-positive env value is ignored (falls through to the default) rather
+    than silently disabling the wait."""
+    if explicit is not None:
+        return explicit
+    raw = os.environ.get(STARTUP_TIMEOUT_ENV, "").strip()
+    if raw:
+        try:
+            val = float(raw)
+            if val > 0:
+                return val
+        except ValueError:
+            pass
+    return DEFAULT_STARTUP_TIMEOUT
+
+
 # Env var pinning which page target every tool acts on, as a URL substring.
 # For a browser with one tab this is unnecessary; for one with several page
 # targets (Electron windows, a many-tab Chrome) it replaces a guess — see
