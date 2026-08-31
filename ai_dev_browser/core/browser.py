@@ -644,34 +644,48 @@ def browser_list(all_workspaces: bool = False) -> dict:
 
         browsers = list_chromes(all_workspaces=all_workspaces)
     except ImportError:
-        # No psutil → can't see the user's real (non-debug) Chrome or classify
-        # origin; fall back to adb's debug Chromes only.
+        # No psutil → can't see the user's real (non-debug) Chrome. We can still
+        # classify DEBUG Chromes deterministically from the launch registry:
+        # `adb` (a port adb launched) vs `unknown` (a debug Chrome not in the
+        # registry — could be external; without psutil we can't be sure). We
+        # never label these `external` — that's reserved for the psutil path
+        # that actually sees the user-data-dir.
+        mine = registry.registered_ports()
+        rows = (
+            list(find_debug_chromes())
+            if all_workspaces
+            else [(p, pid, None) for p, pid in find_workspace_chromes()]
+        )
         fallback: list[dict] = []
-        if all_workspaces:
-            for p, pid, workspace in find_debug_chromes():
-                info: dict = {"port": p, "pid": pid, "origin": "adb"}
-                if workspace:
-                    info["workspace"] = workspace
-                fallback.append(info)
-        else:
-            for p, pid in find_workspace_chromes():
-                fallback.append({"port": p, "pid": pid, "origin": "adb"})
+        for p, pid, workspace in rows:
+            info: dict = {
+                "port": p,
+                "pid": pid,
+                "origin": "adb" if p in mine else "unknown",
+            }
+            if workspace:
+                info["workspace"] = workspace
+            fallback.append(info)
+        by_origin: dict[str, int] = {}
+        for b in fallback:
+            by_origin[b["origin"]] = by_origin.get(b["origin"], 0) + 1
         return {
             "browsers": fallback,
             "count": len(fallback),
+            "by_origin": by_origin,
             "psutil": False,
             "hint": (
                 "Install ai-dev-browser[cleanup] (psutil) to also see the user's "
-                "real Chrome and classify adb vs external deterministically."
+                "real Chrome and classify external deterministically."
             ),
         }
 
-    by_origin: dict[str, int] = {}
+    origin_counts: dict[str, int] = {}
     for b in browsers:
-        by_origin[b["origin"]] = by_origin.get(b["origin"], 0) + 1
+        origin_counts[b["origin"]] = origin_counts.get(b["origin"], 0) + 1
     return {
         "browsers": browsers,
         "count": len(browsers),
-        "by_origin": by_origin,
+        "by_origin": origin_counts,
         "psutil": True,
     }

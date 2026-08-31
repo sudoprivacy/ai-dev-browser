@@ -119,6 +119,29 @@ def test_cleanup_bad_scope_rejected(fake_env):
         cl.browser_cleanup(scope="everything", dry_run=True)  # type: ignore[arg-type]
 
 
+def test_browser_list_fallback_without_psutil_classifies_via_registry(monkeypatch):
+    # No psutil → browser_list falls back to debug-only, and classifies each via
+    # the launch registry: `adb` (registered) vs `unknown` (a debug Chrome we
+    # didn't launch). It must NOT guess "adb" for everything, and must NOT claim
+    # "external" (only the psutil path can see the user-data-dir).
+    import ai_dev_browser.core.browser as b
+
+    def _no_psutil():
+        raise ImportError("simulated: no psutil")
+
+    monkeypatch.setattr(cl, "_require_psutil", _no_psutil)
+    monkeypatch.setattr(b, "find_workspace_chromes", lambda: [(9500, 101), (9600, 202)])
+    monkeypatch.setattr(b.registry, "registered_ports", lambda: {9500})
+
+    r = b.browser_list()
+    assert r["psutil"] is False and "hint" in r
+    by = {x["port"]: x["origin"] for x in r["browsers"]}
+    assert by[9500] == "adb", "a registered port is adb's"
+    assert by[9600] == "unknown", "an unregistered debug Chrome is unknown, not adb"
+    assert r["by_origin"] == {"adb": 1, "unknown": 1}
+    assert all(x["origin"] != "external" for x in r["browsers"])
+
+
 def test_external_is_never_managed():
     # The structural guarantee: a path outside adb's namespace is never managed,
     # so it can never be a cleanup target regardless of scope.

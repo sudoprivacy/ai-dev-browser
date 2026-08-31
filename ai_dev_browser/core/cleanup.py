@@ -217,9 +217,9 @@ def browser_cleanup(
         and `count`.
 
     Failure:
-        Requires the `cleanup` extra for psutil: pip install
-        'ai-dev-browser[cleanup]'. scope="profile" with no `profile` name is a
-        usage error — pass the profile to scope to, or use scope="workspace".
+        Needs the `cleanup` extra for psutil — pip install
+        'ai-dev-browser[cleanup]', then retry. (A bad or missing scope is a
+        usage error whose own message says exactly what to pass.)
     """
     _require_psutil()
 
