@@ -43,6 +43,9 @@ fuzzy = [
 cleanup = [
     "psutil>=5.9",  # For browser_cleanup orphan-process scan
 ]
+osinput = [
+    "pyautogui>=0.9",  # For the OS-level real-cursor click fallback (click os_click)
+]
 
 [project.urls]
 Homepage = "https://github.com/sudoprivacy/ai-dev-browser"

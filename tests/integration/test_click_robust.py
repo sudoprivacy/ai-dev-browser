@@ -35,6 +35,7 @@ _HTML = """<!doctype html><meta charset=utf-8><body>
     onclick="document.getElementById('cres').textContent='covered-clicked'">Send it another way</button>
   <div id="cover" style="position:absolute;inset:0;z-index:5"></div>
 </div>
+<div id="inert" style="width:200px;height:30px">Inert label</div>
 <div id="result">none</div>
 <div id="cres">no</div>
 <script>
@@ -111,3 +112,28 @@ async def test_plain_button_still_verifies(tab):
     res = await click_by_text(tab, "Use another account")
     assert res.get("verified") is True and res.get("method") == "trusted", res
     assert (await tab.evaluate("document.title")) == "PLAIN"
+
+
+@pytest.mark.asyncio
+async def test_os_click_engaged_only_when_opted_in(tab, monkeypatch):
+    # OS input can't be exercised for real in CI (it moves the machine's cursor),
+    # so mock it: an inert element makes every CDP rung fail verification, so the
+    # OS rung is the only thing left — and it must fire ONLY when opted in.
+    import ai_dev_browser.core.ax as ax
+
+    calls = []
+
+    async def fake_os_click(t, el):
+        calls.append(1)
+        return False  # dispatched but (mock) no effect
+
+    monkeypatch.setattr(ax, "_os_click", fake_os_click)
+    monkeypatch.setattr(ax, "_pyautogui_available", lambda: False)
+
+    off = await click_by_text(tab, "Inert label", os_click=False)
+    assert calls == [], "OS rung must NOT run when opted out"
+    assert off.get("verified") is False
+
+    on = await click_by_text(tab, "Inert label", os_click=True)
+    assert calls == [1], "OS rung must run as the last resort when opted in"
+    assert "hint" in on and "osinput" in on["hint"], on

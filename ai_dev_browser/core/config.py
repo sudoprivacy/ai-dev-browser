@@ -76,6 +76,27 @@ def resolve_startup_timeout(explicit: float | None = None) -> float:
     return DEFAULT_STARTUP_TIMEOUT
 
 
+# Opt-in: allow click_by_* to fall back to a REAL OS-level mouse click (moves the
+# actual cursor) for elements even a trusted CDP click can't drive. Off by
+# default — it hijacks the user's mouse and needs a visible, focused window.
+OS_CLICK_ENV = "AI_DEV_BROWSER_OS_CLICK"
+
+
+def resolve_os_click(explicit: bool | None = None) -> bool:
+    """`explicit` arg → `AI_DEV_BROWSER_OS_CLICK` env → False. Only an explicit
+    True (arg) or a truthy env (`1`/`true`/`yes`/`on`) enables the OS-level
+    click fallback; anything else stays off (the safe default — it moves the
+    real cursor)."""
+    if explicit is not None:
+        return explicit
+    return os.environ.get(OS_CLICK_ENV, "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 # Env var pinning which page target every tool acts on, as a URL substring.
 # For a browser with one tab this is unnecessary; for one with several page
 # targets (Electron windows, a many-tab Chrome) it replaces a guess — see

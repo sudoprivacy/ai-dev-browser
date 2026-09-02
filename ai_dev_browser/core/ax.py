@@ -151,6 +151,60 @@ _SIG_JS = (
 )
 
 
+# Maps the target's viewport centre to SCREEN coordinates for a real OS click:
+# window top-left on screen + top-chrome height (tab strip + toolbar) + the
+# element's viewport centre — all in CSS/logical pixels (`devicePixelRatio`
+# returned too, for a HiDPI adjustment if a platform needs physical px).
+_SCREEN_PT_JS = (
+    "(el) => { var t = el && el.nodeType === 1 ? el : (el && el.parentElement);"
+    " if (!t) return null; var r = t.getBoundingClientRect();"
+    " return { cx: r.x + r.width/2, cy: r.y + r.height/2,"
+    " screenX: window.screenX, screenY: window.screenY,"
+    " top: (window.outerHeight - window.innerHeight),"
+    " dpr: window.devicePixelRatio || 1 }; }"
+)
+
+
+def _pyautogui_available() -> bool:
+    try:
+        import pyautogui  # noqa: F401
+
+        return True
+    except Exception:
+        return False
+
+
+async def _os_click(tab: Tab, element: Element) -> bool:
+    """Move the REAL OS cursor onto `element` and click it (pyautogui). Returns
+    True if the click was dispatched — NOT whether it had an effect; the caller
+    verifies. Best-effort: needs the `osinput` extra + a visible, focused window
+    (it hijacks the real mouse), and the viewport→screen mapping is approximate
+    on HiDPI / multi-monitor. Off unless the caller opted in."""
+    try:
+        import pyautogui
+    except Exception:
+        return False
+    pt = await element.apply(_SCREEN_PT_JS)
+    if not isinstance(pt, dict):
+        return False
+    try:
+        await tab.activate()  # bring the tab/window forward so the click lands
+    except Exception:
+        pass
+    x = pt["screenX"] + pt["cx"]
+    y = pt["screenY"] + pt["top"] + pt["cy"]
+
+    def _do():
+        pyautogui.moveTo(x, y, duration=0.12)
+        pyautogui.click()
+
+    try:
+        await asyncio.get_running_loop().run_in_executor(None, _do)
+        return True
+    except Exception:
+        return False
+
+
 async def _click_changed(tab: Tab, before: dict) -> bool:
     """Did the page observably change since `before` (a `_SIG_JS` snapshot)?
     Lenient (any url/title/activeElement/DOM-length delta) — a false negative
@@ -169,6 +223,7 @@ async def _click_by_node_id(
     node_id: int,
     human_like: bool = True,
     robust: bool = False,
+    os_click: bool = False,
 ) -> dict:
     """Click element by backend node ID via CDP.
 
@@ -192,7 +247,7 @@ async def _click_by_node_id(
 
         if robust:
             robust_result = await _robust_click(
-                tab, backend_node_id, node_id, human_like
+                tab, backend_node_id, node_id, human_like, os_click=os_click
             )
             if robust_result is not None:
                 return robust_result
@@ -234,7 +289,9 @@ async def _click_by_node_id(
         return {"clicked": False, "error": str(e)}
 
 
-async def _robust_click(tab, backend_node_id, node_id, human_like) -> dict | None:
+async def _robust_click(
+    tab, backend_node_id, node_id, human_like, os_click: bool = False
+) -> dict | None:
     """Resolve the real clickable target, click it, verify, and fall through a
     ladder of methods. None ONLY if the element can't be resolved at all (caller
     then tries a plain box-model click).
@@ -275,20 +332,35 @@ async def _robust_click(tab, backend_node_id, node_id, human_like) -> dict | Non
         await asyncio.sleep(0.35)
         if await _click_changed(tab, before):
             method = "synthetic"
-    # 3) plain JS .click() — last resort.
+    # 3) plain JS .click() — last resort within CDP.
     if method is None:
         await element.apply(_JSCLICK_JS)
         await asyncio.sleep(0.35)
         if await _click_changed(tab, before):
             method = "js_click"
 
-    return {
+    # 4) OS-level real-cursor click — opt-in, for elements even a trusted CDP
+    #    click can't drive (some Google SSO options, reCAPTCHA). Moves the real
+    #    mouse; needs a visible focused window + the `osinput` extra.
+    if method is None and os_click:
+        if await _os_click(tab, element):
+            await asyncio.sleep(0.35)
+            if await _click_changed(tab, before):
+                method = "os"
+
+    result = {
         "clicked": True,  # a located element always gets a full click attempt
         "verified": method is not None,
         "method": method,
         "node_id": node_id,
         "target": target.get("tag"),
     }
+    if os_click and method != "os" and not _pyautogui_available():
+        result["hint"] = (
+            "OS-level click needs the osinput extra: "
+            "pip install 'ai-dev-browser[osinput]'."
+        )
+    return result
 
 
 async def _wait_for_ax_element(
@@ -349,6 +421,7 @@ async def _click_ax_element(
     wait_timeout: float = 5.0,
     wait_interval: float = 0.3,
     human_like: bool = True,
+    os_click: bool = False,
 ) -> dict:
     """Click element by accessibility tree ref or node_id.
 
@@ -376,7 +449,7 @@ async def _click_ax_element(
     # If node_id provided directly, use it (stable, no re-fetch)
     if node_id is not None:
         result = await _click_by_node_id(
-            tab, node_id, human_like=human_like, robust=True
+            tab, node_id, human_like=human_like, robust=True, os_click=os_click
         )
         if result.get("clicked") and (wait_for_role or wait_for_name):
             waited = await _wait_for_ax_element(
@@ -394,7 +467,7 @@ async def _click_ax_element(
     # If ref contains embedded node_id, use it directly (most reliable)
     if embedded_node_id is not None:
         result = await _click_by_node_id(
-            tab, embedded_node_id, human_like=human_like, robust=True
+            tab, embedded_node_id, human_like=human_like, robust=True, os_click=os_click
         )
         if result.get("clicked"):
             result["ref"] = ref
@@ -438,7 +511,7 @@ async def _click_ax_element(
 
     # Click the element
     result = await _click_by_node_id(
-        tab, target_node_id, human_like=human_like, robust=True
+        tab, target_node_id, human_like=human_like, robust=True, os_click=os_click
     )
     if result.get("clicked"):
         result["ref"] = ref
@@ -462,6 +535,7 @@ async def click_by_ref(
     tab: Tab,
     ref: str,
     human_like: bool = True,
+    os_click: bool | None = None,
 ) -> dict:
     """Use when: you already called `page_discover()` / `find_by_text`
     and have a ref (there was no natural id / xpath / text locator, or
@@ -489,11 +563,17 @@ async def click_by_ref(
             random in-bounds offset instead of a dead-centre click. Default
             True, same as `click_by_text`: how you *name* an element should not
             change how it gets *clicked*.
+        os_click: Allow a REAL OS-level cursor click as the final fallback when
+            even a trusted CDP click can't drive the element (some Google SSO
+            options, reCAPTCHA). None → the `AI_DEV_BROWSER_OS_CLICK` env
+            (default off). It moves the real mouse and needs a visible, focused
+            window + the `osinput` extra (`pip install 'ai-dev-browser[osinput]'`).
 
     Returns:
         dict with clicked status, element info, and navigation feedback:
-        `{clicked, ref, role, name, url_before, url_after, title_after, navigated}`.
-        `navigated=True` means the top-level URL changed after the click
+        `{clicked, verified, method, ref, role, name, url_before, url_after,
+        title_after, navigated}`. `navigated=True` means the top-level URL changed
+        after the click
         (SPA route change or full page load).
 
     Failure:
@@ -511,10 +591,13 @@ async def click_by_ref(
     """
     # Import lazily to avoid a circular dependency with elements.py, which
     # imports from this module.
+    from .config import resolve_os_click
     from .elements import _capture_page_state, _with_nav_feedback
 
     url_before_state = await _capture_page_state(tab)
-    result = await _click_ax_element(tab, ref=ref, human_like=human_like)
+    result = await _click_ax_element(
+        tab, ref=ref, human_like=human_like, os_click=resolve_os_click(os_click)
+    )
     result["url_before"] = url_before_state.get("url", "")
     if not result.get("clicked"):
         result.update(

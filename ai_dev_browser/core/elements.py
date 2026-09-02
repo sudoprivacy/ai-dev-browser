@@ -755,6 +755,7 @@ async def click_by_text(
     text: str,
     timeout: float = 10,
     human_like: bool = True,
+    os_click: bool | None = None,
 ) -> dict:
     """Use when: you know the element's visible text (button label, link
     anchor, menu item). Atomic locate+click, and it locates the same way
@@ -787,11 +788,16 @@ async def click_by_text(
         text: Text content of the element to click
         timeout: How long to wait for the text to appear, in seconds
         human_like: Use the human-like actuator (default True, recommended)
+        os_click: Allow a REAL OS-level cursor click as the final fallback when
+            even a trusted CDP click can't drive the element (some Google SSO
+            options, reCAPTCHA). None → the `AI_DEV_BROWSER_OS_CLICK` env
+            (default off). Moves the real mouse; needs a visible focused window
+            + the `osinput` extra (`pip install 'ai-dev-browser[osinput]'`).
 
     Returns:
-        dict with clicked, text, ref, url_before, url_after, title_after,
-        navigated. `navigated=True` means the top-level URL changed after the
-        click (SPA route change or full page load).
+        dict with clicked, verified, method, text, ref, url_before, url_after,
+        title_after, navigated. `navigated=True` means the top-level URL changed
+        after the click (SPA route change or full page load).
 
     Failure:
         No element with this accessible name, in the main frame or any
@@ -814,7 +820,9 @@ async def click_by_text(
     # X" must never return different answers.
     located = await _wait_ax_by_text(tab, text, timeout)
     if located:
-        result = await click_by_ref(tab, located["ref"], human_like=human_like)
+        result = await click_by_ref(
+            tab, located["ref"], human_like=human_like, os_click=os_click
+        )
         result["text"] = text
         return result
 
