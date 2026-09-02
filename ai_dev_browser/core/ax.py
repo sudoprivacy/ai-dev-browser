@@ -1,6 +1,7 @@
 """Accessibility tree operations for element interaction."""
 
 import asyncio
+import json
 
 from ai_dev_browser.cdp import dom
 from ai_dev_browser.cdp import input_ as cdp_input
@@ -537,13 +538,149 @@ async def press_key(
     return {"pressed": True, "key": dom_key, "ref": ref}
 
 
+def _char_key_spec(ch: str) -> tuple[str, str, int]:
+    """(domKey, code, windowsVirtualKeyCode) for a printable char.
+
+    Populates `event.code` (e.g. "Digit5", "KeyA") and `event.keyCode` (0x30-39
+    for digits, 0x41-5A for letters) that some fields gate on — a digit code box
+    (Google `#idvPin`) can ignore a keydown whose keyCode is 0. Falls back to
+    ('', 0) for other chars; the char's `text` still drives keypress/input."""
+    if ch in "0123456789":
+        return (ch, "Digit" + ch, 0x30 + int(ch))
+    o = ord(ch)
+    if 65 <= o <= 90:  # A-Z
+        return (ch, "Key" + ch, o)
+    if 97 <= o <= 122:  # a-z
+        return (ch, "Key" + ch.upper(), o - 32)  # keyCode is the uppercase VK
+    return (ch, "", 0)
+
+
 async def _type_keystrokes(tab: Tab, text: str) -> None:
     """Type `text` into the focused element via real per-character key events
-    (keydown/keypress/input/keyup) — the same dispatch path as `press_key`. For
-    inputs whose handlers fire on keydown/keyup (live filters, autocomplete) and
-    ignore a bulk value change. Shared by `type_by_ref` and `type_by_text`."""
+    (keydown/keypress/input/keyup) — the same dispatch path as `press_key`, now
+    with per-char `code`+`keyCode` so keyCode-gated fields accept it. For inputs
+    whose handlers fire on keydown/keyup (live filters, autocomplete, a digit
+    code box) and ignore a bulk value change. Shared by the *_by_ref/_by_text
+    typing tools."""
     for ch in text:
-        await _dispatch_key(tab, ch, "", 0, text=ch)
+        dom_key, code, vkey = _char_key_spec(ch)
+        await _dispatch_key(tab, dom_key, code, vkey, text=ch)
+
+
+# --- Verified fill: type, read the value back, fall back until it lands -------
+# The failure this fixes: type_by_* used to return typed:True unconditionally,
+# so a field that silently rejected the input (Google's 0x0 `#idvPin`) reported
+# success while empty. This types, reads `el.value` back (comparing IN JS so a
+# secret code never returns to Python), and falls through insertText -> real
+# per-char keys -> native value setter until the field actually holds the text.
+
+
+async def _focus_el(element: Element) -> None:
+    try:
+        await element.focus()  # CDP DOM.focus
+    except Exception:
+        pass
+    try:
+        await element.apply("(el) => { if (el && el.focus) el.focus(); }")
+    except Exception:
+        pass
+
+
+async def _clear_el(tab: Tab, element: Element) -> None:
+    try:
+        await element.apply(
+            "(el) => { if (!el) return; if (el.focus) el.focus();"
+            " if ('value' in el) { el.value = '';"
+            " el.dispatchEvent(new Event('input', {bubbles: true})); }"
+            " else if (el.isContentEditable) { el.textContent = ''; } }"
+        )
+    except Exception:
+        pass
+
+
+async def _field_state(element: Element, text: str) -> dict:
+    """{matches, empty, length} for the field vs `text`, compared in-page so the
+    (possibly secret) value never crosses back into Python."""
+    val_js = json.dumps(text)
+    js = (
+        "(el) => { var v = (el && el.value != null) ? el.value"
+        " : (el ? (el.textContent || '') : '');"
+        " return { matches: v === " + val_js + ", empty: v.length === 0,"
+        " length: v.length }; }"
+    )
+    try:
+        st = await element.apply(js)
+        return (
+            st
+            if isinstance(st, dict)
+            else {"matches": False, "empty": True, "length": 0}
+        )
+    except Exception:
+        return {"matches": False, "empty": True, "length": 0}
+
+
+async def _native_set(element: Element, text: str) -> None:
+    val_js = json.dumps(text)
+    await element.apply(
+        "(el) => { if (!el) return;"
+        " var proto = (window.HTMLTextAreaElement && el instanceof HTMLTextAreaElement)"
+        " ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;"
+        " var d = Object.getOwnPropertyDescriptor(proto, 'value');"
+        " if (d && d.set) { d.set.call(el, " + val_js + "); }"
+        " else { try { el.value = " + val_js + "; } catch (e) {} }"
+        " el.dispatchEvent(new Event('input', {bubbles: true}));"
+        " el.dispatchEvent(new Event('change', {bubbles: true})); }"
+    )
+
+
+async def _fill_verified(
+    tab: Tab, element: Element, text: str, prefer: str | None = None
+) -> dict:
+    """Type `text` into `element`, verifying `el.value === text` and falling
+    through methods until it lands. `prefer` biases the FIRST method
+    ("keys" / "human"), then still falls back. Returns
+    `{typed, verified, method, methods_tried}` — `typed` reflects reality (False
+    if the field stayed empty). Always targets value===text (clears first), so
+    verification is meaningful."""
+    order = ["insertText", "keys", "native"]
+    if prefer == "keys":
+        order = ["keys", "insertText", "native"]
+    elif prefer == "human":
+        order = ["human", "keys", "native"]
+
+    tried: list[str] = []
+    st: dict | None = None
+    for i, method in enumerate(order):
+        await _clear_el(tab, element)
+        await _focus_el(element)
+        tried.append(method)
+        try:
+            if method == "insertText":
+                await tab.send(cdp_input.insert_text(text=text))
+            elif method == "keys":
+                await _type_keystrokes(tab, text)
+            elif method == "human":
+                await human.type_text(tab, text, element, humanize=True)
+            elif method == "native":
+                await _native_set(element, text)
+        except Exception:
+            continue
+        st = await _field_state(element, text)
+        if st.get("matches"):
+            return {
+                "typed": True,
+                "verified": True,
+                "method": method,
+                "methods_tried": tried,
+            }
+
+    empty = st is None or st.get("empty", True)
+    return {
+        "typed": not empty,
+        "verified": False,
+        "method": None,
+        "methods_tried": tried,
+    }
 
 
 async def type_by_ref(
@@ -556,8 +693,9 @@ async def type_by_ref(
     human_like: bool = False,
 ) -> dict:
     """Use when: you have a `ref` from `page_discover()` and want to type
-    into that specific input. Returns `{typed, ref, text}` (plus `entered`
-    when `enter=True`).
+    into that specific input. Returns `{typed, verified, method, ref, text}`
+    (plus `entered` when `enter=True`) — `verified` already tells you the value
+    actually landed, so don't screenshot or re-read the field to check.
 
     If you can identify the input by its visible label / placeholder, skip
     `page_discover` and use `type_by_text` directly.
@@ -567,70 +705,60 @@ async def type_by_ref(
     dropdown only appears on a real Enter. For other submit keys use
     `press_key` separately.
 
-    Typing mechanism (default is a fast single `insertText` commit):
-    - `keystrokes=True` sends real per-character key events — for fields that
-      ignore a bulk value change (live filters / autocomplete, ERP "快捷过滤").
-    - `human_like=True` types character-by-character with human timing — for
-      anti-bot pages that flag instant fills.
-    `keystrokes` takes precedence over `human_like` if both are set.
+    Typing is VERIFIED with automatic fallback: it types, reads `el.value` back,
+    and falls through `insertText` → real per-char keys (with `code`/`keyCode`)
+    → native value setter until the field holds the text — so a field that
+    silently rejects a bulk change (a 0x0/framework code box like Google's
+    `#idvPin`) still gets filled, and if NOTHING lands you get `typed:false`
+    instead of a false success. `method` reports which one worked.
+    - `keystrokes=True` tries real per-char keys FIRST (live filters /
+      autocomplete, ERP "快捷过滤").
+    - `human_like=True` types with human timing first — for anti-bot pages.
+    Both still fall back if the preferred method doesn't land.
 
     Args:
         tab: Tab instance
         ref: Element ref from page_discover() (e.g., "5#214")
         text: Text to type into the element
-        clear: If True, clear existing content first
+        clear: Kept for compatibility. The verified fill always targets
+            `value===text`, so the field is cleared as needed regardless.
         enter: If True, press Enter after typing (submits the field)
-        keystrokes: If True, send real per-character key events (for live
-            filters / autocomplete); default False uses a fast single commit
-        human_like: If True, type with human timing (for anti-bot pages)
+        keystrokes: If True, try real per-character key events FIRST (for live
+            filters / autocomplete); still falls back if they don't land
+        human_like: If True, type with human timing first (for anti-bot pages)
 
     Returns:
-        dict with typed status; includes `entered` when `enter=True`
+        dict with `typed` (the value actually landed), `verified` (value===text),
+        `method` (`insertText`/`keys`/`native`, or None if nothing landed),
+        `methods_tried`, `ref`, `text`; `entered` when `enter=True`.
+
+    Failure:
+        `typed:false` / `verified:false` means every method left the field empty
+        — it's not a normal editable (a display-only element behind an overlay,
+        a disabled input, a canvas widget). Re-check the ref points at the real
+        `<input>/<textarea>/[contenteditable]`; for a masked/overlay field find
+        the true input via `page_discover` / `find_by_html_id`.
 
     Example:
         type_by_ref("5#214", "myusername")
-        type_by_ref("5#214", "newvalue", clear=True)
         type_by_ref("5#214", "widget", enter=True)          # type + submit
         type_by_ref("5#214", "FIN", keystrokes=True)        # trigger a live filter
     """
-    # First focus the element
-    focus_result = await focus_by_ref(tab, ref)
-    if not focus_result.get("focused"):
-        return {"typed": False, "error": focus_result.get("error", "Focus failed")}
+    element = await get_element_by_ref(tab, ref)
+    if element is None:
+        return {"typed": False, "verified": False, "error": "element not found"}
 
-    # Clear if requested: select the field's content in JS, then delete it
-    # with a real Backspace (so frameworks see a genuine delete event).
-    # Selection is done via el.select() rather than a Ctrl/Cmd+A chord because
-    # select-all is platform-specific — Ctrl+A is a caret move on macOS, so the
-    # old key-based clear deleted only one char there ("OLDVALUE" -> "OLDVALU").
-    if clear:
-        try:
-            element = await get_element_by_ref(tab, ref)
-            await element.apply(
-                "(el) => { if (el.focus) el.focus();"
-                " if (typeof el.select === 'function') { el.select(); }"
-                " else { const r = document.createRange();"
-                " r.selectNodeContents(el); const s = window.getSelection();"
-                " s.removeAllRanges(); s.addRange(r); } }"
-            )
-        except Exception:
-            pass
-        bs_key, bs_code, bs_vkey, _ = _KEY_SPECS["backspace"]
-        await _dispatch_key(tab, bs_key, bs_code, bs_vkey)
-
-    if keystrokes:
-        await _type_keystrokes(tab, text)
-    elif human_like:
-        element = await get_element_by_ref(tab, ref)
-        await human.type_text(tab, text, element, humanize=True)
-    else:
-        # Default: one IME-style commit — fast and reliable for plain inputs.
-        await tab.send(cdp_input.insert_text(text=text))
-
-    result = {"typed": True, "ref": ref, "text": text}
+    # Verified fill: type, read the value back, and fall through methods until
+    # it lands. `keystrokes`/`human_like` bias the first method; the fallback
+    # still runs so a silently-rejecting field (0x0 code box) can't report a
+    # false success. `clear` is subsumed — the fill always targets value===text.
+    prefer = "keys" if keystrokes else ("human" if human_like else None)
+    result = await _fill_verified(tab, element, text, prefer=prefer)
+    result["ref"] = ref
+    result["text"] = text
     if enter:
         # Re-focus the same ref before Enter so the key lands on this field
-        # even if insertText or a framework moved focus.
+        # even if a framework moved focus during the fill.
         pressed = await press_key(tab, "Enter", ref=ref)
         result["entered"] = bool(pressed.get("pressed"))
     return result

@@ -10,7 +10,12 @@ from . import human
 from ._element import Element
 from ._ref import make_ref
 from ._tab import Tab
-from .ax import _type_keystrokes, click_by_ref, get_element_by_ref, press_key
+from .ax import (
+    _fill_verified,
+    click_by_ref,
+    get_element_by_ref,
+    press_key,
+)
 from .snapshot import _get_snapshot
 from .text_match import _best_match
 
@@ -1106,18 +1111,20 @@ async def type_by_text(
 ) -> dict:
     """Use when: you know an input's visible label / placeholder / accessible
     name (e.g. "Email", "Search…"). Locates by AX name + types. Returns
-    `{typed, name}` (plus `entered` when `enter=True`).
+    `{typed, verified, method, name}` (plus `entered` when `enter=True`) —
+    `verified` already confirms the value landed, so don't re-read to check.
 
     Prefer over `type_by_ref` when you can identify the input by its
     human-visible label rather than needing a prior `page_discover` ref. The
     `clear` / `enter` / `keystrokes` / `human_like` options mirror `type_by_ref`
     so the two are interchangeable once the input is located.
 
-    Set `enter=True` to press Enter after typing (submit a search). The typing
-    mechanism defaults to per-character `char` events; `keystrokes=True` sends
-    real key events for fields that ignore a bulk change (live filters /
-    autocomplete), and `human_like` adds human timing — `keystrokes` wins if
-    both are set.
+    Typing is VERIFIED with automatic fallback (shared with `type_by_ref`): it
+    types, reads `el.value` back, and falls through `insertText` → real per-char
+    keys → native value setter until the field holds the text, so a field that
+    silently rejects a bulk change still gets filled and a total failure reports
+    `typed:false` instead of a false success. `keystrokes=True` / `human_like`
+    bias the first method; both still fall back.
 
     Args:
         tab: Tab instance
@@ -1131,13 +1138,16 @@ async def type_by_text(
             filters / autocomplete)
 
     Returns:
-        dict with typed status; includes `entered` when `enter=True`
+        dict with `typed`, `verified`, `method`, `name`, `ref`; `entered` when
+        `enter=True`.
 
     Failure:
         No input with this accessible name, in the main frame or any same-origin
         iframe, within `timeout`. If the input has no accessible name at all
         (no label, no placeholder, no aria-label), locate it by html id or xpath
         instead: `find_by_html_id` / `find_by_xpath` → `type_by_ref`.
+        `typed:false` with the element found means every method left it empty —
+        it isn't a real editable (display-only / disabled / canvas widget).
         Cross-origin iframes are not scanned — type into one with
         `js_evaluate(frame="<url-substr>", "el.value = ...")`.
 
@@ -1163,24 +1173,20 @@ async def type_by_text(
 
     element = await get_element_by_ref(tab, located["ref"])
     if element is None:
-        return {"typed": False, "error": f"Element with name '{name}' not found"}
+        return {"typed": False, "verified": False, "error": f"'{name}' not found"}
 
-    if clear:
-        await element.clear_input()
-
+    # Verified fill (shared with type_by_ref): type, read back, fall through
+    # methods until value===text so a silently-rejecting field can't report a
+    # false success. keystrokes/human_like bias the first method.
     if keystrokes:
-        await element.focus()  # keys land on the focused element
-        await _type_keystrokes(tab, text)
+        prefer = "keys"
+    elif human_like or (human_like is None and human.get_config().type_humanize):
+        prefer = "human"
     else:
-        use_human = (
-            human_like if human_like is not None else human.get_config().type_humanize
-        )
-        if use_human:
-            await human.type_text(tab, text, element, humanize=True)
-        else:
-            await element.send_keys(text)
-
-    result = {"typed": True, "name": name, "ref": located["ref"]}
+        prefer = None
+    result = await _fill_verified(tab, element, text, prefer=prefer)
+    result["name"] = name
+    result["ref"] = located["ref"]
     if enter:
         pressed = await press_key(tab, "Enter", ref=located["ref"])
         result["entered"] = bool(pressed.get("pressed"))
