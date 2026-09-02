@@ -1,0 +1,91 @@
+"""click_by_* now resolves the real clickable ancestor, verifies, and falls back.
+
+Reproduces the reporter's framework-managed UI: a Material-style option whose
+click handler is on the CONTAINER's pointerdown (text leaf inside), and a target
+hidden behind an overlay so the trusted click can't reach it (exercising the
+synthetic-dispatch fallback). Launches a real headless Chrome (E2E).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import contextlib
+
+import pytest
+
+from ai_dev_browser.core import connect_browser, get_active_tab
+from ai_dev_browser.core.browser import browser_start, browser_stop
+from ai_dev_browser.core.elements import click_by_text
+
+_HTML = """<!doctype html><meta charset=utf-8><body>
+<div id="opt" jsaction="x" role="button"
+     style="height:55px;padding:15px;cursor:pointer;background:#eee">
+  <span id="lbl">Get a verification code</span>
+</div>
+<button id="plain" onclick="document.title='PLAIN'">Use another account</button>
+<div style="position:relative;height:40px;width:320px;margin-top:8px">
+  <button id="covered" style="position:absolute;inset:0"
+    onclick="document.getElementById('cres').textContent='covered-clicked'">Send it another way</button>
+  <div id="cover" style="position:absolute;inset:0;z-index:5"></div>
+</div>
+<div id="result">none</div>
+<div id="cres">no</div>
+<script>
+  // Handler on the CONTAINER's pointerdown — a text-leaf coordinate click that
+  // resolves to the leaf's thin box would miss it.
+  document.getElementById('opt').addEventListener('pointerdown', function () {
+    document.getElementById('result').textContent = 'selected';
+    document.title = 'SELECTED';
+  });
+</script></body>"""
+
+
+@pytest.fixture
+async def tab():
+    result = browser_start(headless=True, temp=True, reuse="none")
+    assert "error" not in result, f"browser_start failed: {result}"
+    port = result["port"]
+    browser = None
+    try:
+        browser = await connect_browser(port=port)
+        the_tab = await get_active_tab(browser)
+        url = "data:text/html;base64," + base64.b64encode(_HTML.encode()).decode()
+        await the_tab.get(url)
+        await asyncio.sleep(0.3)
+        yield the_tab
+    finally:
+        if browser is not None:
+            with contextlib.suppress(Exception):
+                await browser.close()
+        with contextlib.suppress(Exception):
+            browser_stop(port=port)
+
+
+@pytest.mark.asyncio
+async def test_click_resolves_container_and_fires_pointerdown_handler(tab):
+    res = await click_by_text(tab, "Get a verification code")
+    marker = await tab.evaluate("document.getElementById('result').textContent")
+    assert marker == "selected", "container pointerdown handler must fire"
+    assert res.get("verified") is True, res
+    assert res.get("target") == "div", (
+        "must resolve the clickable container, not the leaf"
+    )
+
+
+@pytest.mark.asyncio
+async def test_click_falls_back_to_synthetic_when_trusted_is_blocked(tab):
+    # The trusted click at the button's centre lands on the overlay; the fallback
+    # dispatches events directly on the resolved element.
+    res = await click_by_text(tab, "Send it another way")
+    cres = await tab.evaluate("document.getElementById('cres').textContent")
+    assert cres == "covered-clicked", "fallback must reach the covered handler"
+    assert res.get("verified") is True, res
+    assert res.get("method") in ("synthetic", "js_click"), res
+
+
+@pytest.mark.asyncio
+async def test_plain_button_still_verifies(tab):
+    res = await click_by_text(tab, "Use another account")
+    assert res.get("verified") is True and res.get("method") == "trusted", res
+    assert (await tab.evaluate("document.title")) == "PLAIN"

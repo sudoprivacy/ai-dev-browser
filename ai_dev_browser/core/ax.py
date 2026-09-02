@@ -70,10 +70,99 @@ async def _get_frame_id_by_prefix(tab: Tab, prefix: str) -> str | None:
         return None
 
 
+# --- Robust click: resolve the real clickable target, click, verify, fall back.
+# The failure this fixes: a text leaf (Google 2FA option label) is 0x0 or a thin
+# sliver, so the AX-node box center is (0,0) or the wrong element and the click
+# misses the handler-bearing container. `__pick` climbs to the nearest SIZED,
+# clickable ancestor (role / jsaction / onclick / tabindex / cursor:pointer) —
+# but keeps an already-clickable-and-sized node as-is, so it never climbs past a
+# real target (e.g. a row that click_row_by_text already resolved).
+_PICK_CLICKABLE = """
+function __pick(el) {
+  var ROLES = ['button','link','menuitem','menuitemcheckbox','menuitemradio',
+    'option','tab','checkbox','radio','switch'];
+  function clickable(n) {
+    if (!n || n.nodeType !== 1) return false;
+    var tag = n.tagName.toLowerCase();
+    if (['a','button','summary','label','select'].indexOf(tag) >= 0) return true;
+    var role = n.getAttribute && n.getAttribute('role');
+    if (role && ROLES.indexOf(role) >= 0) return true;
+    if (n.hasAttribute && (n.hasAttribute('onclick') || n.hasAttribute('jsaction')
+      || n.hasAttribute('jsname'))) return true;
+    if (typeof n.tabIndex === 'number' && n.tabIndex >= 0) return true;
+    try { if (getComputedStyle(n).cursor === 'pointer') return true; } catch (e) {}
+    return false;
+  }
+  function sized(n) {
+    try { var r = n.getBoundingClientRect(); return r.width > 0 && r.height > 0; }
+    catch (e) { return false; }
+  }
+  if (clickable(el) && sized(el)) return el;
+  var n = el, i;
+  for (i = 0; n && i < 10; i++, n = n.parentElement)
+    if (clickable(n) && sized(n)) return n;
+  for (n = el, i = 0; n && i < 10; i++, n = n.parentElement)
+    if (sized(n)) return n;
+  return el;
+}
+"""
+
+_TARGET_JS = (
+    "(el) => { "
+    + _PICK_CLICKABLE
+    + " var t = __pick(el); if (!t) return {found:false};"
+    " try { if (t.scrollIntoViewIfNeeded) t.scrollIntoViewIfNeeded(true);"
+    " else t.scrollIntoView({block:'center', inline:'center'}); } catch (e) {}"
+    " var r = t.getBoundingClientRect();"
+    " return {found:true, x:r.x, y:r.y, w:r.width, h:r.height,"
+    " tag:t.tagName.toLowerCase()}; }"
+)
+
+_SYNTH_JS = (
+    "(el) => { " + _PICK_CLICKABLE + " var t = __pick(el); if (!t) return false;"
+    " var r = t.getBoundingClientRect(); var cx = r.x + r.width/2, cy = r.y + r.height/2;"
+    " var o = {bubbles:true, cancelable:true, composed:true, clientX:cx, clientY:cy,"
+    " button:0, buttons:1};"
+    " var seq = ['pointerover','pointerenter','pointerdown','mousedown','pointerup',"
+    " 'mouseup','click'];"
+    " for (var i=0;i<seq.length;i++){ var ty=seq[i];"
+    " try { var E = ty.indexOf('pointer')===0 ? PointerEvent : MouseEvent;"
+    " t.dispatchEvent(new E(ty, o)); }"
+    " catch (e) { try { t.dispatchEvent(new MouseEvent(ty.replace('pointer','mouse'), o)); }"
+    " catch (e2) {} } } return true; }"
+)
+
+_JSCLICK_JS = (
+    "(el) => { " + _PICK_CLICKABLE + " var t = __pick(el);"
+    " if (t && t.click) { t.click(); return true; } return false; }"
+)
+
+_SIG_JS = (
+    "(() => ({ url: location.href, title: document.title,"
+    " active: (document.activeElement && (document.activeElement.id ||"
+    " document.activeElement.tagName)) || '',"
+    " len: document.body ? document.body.innerHTML.length : 0 }))()"
+)
+
+
+async def _click_changed(tab: Tab, before: dict) -> bool:
+    """Did the page observably change since `before` (a `_SIG_JS` snapshot)?
+    Lenient (any url/title/activeElement/DOM-length delta) — a false negative
+    would trigger a fallback DOUBLE click, which is worse than a false positive."""
+    try:
+        after = await tab.evaluate(_SIG_JS)
+    except Exception:
+        return False
+    if not isinstance(after, dict) or not isinstance(before, dict):
+        return False
+    return any(after.get(k) != before.get(k) for k in ("url", "title", "active", "len"))
+
+
 async def _click_by_node_id(
     tab: Tab,
     node_id: int,
     human_like: bool = True,
+    robust: bool = False,
 ) -> dict:
     """Click element by backend node ID via CDP.
 
@@ -84,13 +173,24 @@ async def _click_by_node_id(
             approach path + in-bounds random offset). Same default and same
             meaning as `click_by_text`'s `human_like` — an element is named
             differently by each `*_by_*` tool, but clicked the same way.
+        robust: Resolve the nearest sized clickable ancestor (for 0x0/thin text
+            leaves), verify a change, and fall back trusted → synthetic pointer
+            sequence → JS click. On (adds `verified`, `method`). Off for callers
+            that already resolved their exact target (click_row_by_text).
 
     Returns:
-        dict with clicked status
+        dict with clicked status (+ `verified`, `method` when robust).
     """
     try:
-        # Wrap int in BackendNodeId
         backend_node_id = dom.BackendNodeId(node_id)
+
+        if robust:
+            robust_result = await _robust_click(
+                tab, backend_node_id, node_id, human_like
+            )
+            if robust_result is not None:
+                return robust_result
+            # else: no clickable target resolved — fall through to box-model click
 
         # Get box model for the node
         box = await tab.send(dom.get_box_model(backend_node_id=backend_node_id))
@@ -126,6 +226,49 @@ async def _click_by_node_id(
         return {"clicked": True, "node_id": node_id}
     except Exception as e:
         return {"clicked": False, "error": str(e)}
+
+
+async def _robust_click(tab, backend_node_id, node_id, human_like) -> dict | None:
+    """Resolve the real clickable ancestor, click it, verify, and fall back
+    trusted → synthetic → JS click. None if no clickable target could be
+    resolved (caller falls back to a plain box-model click)."""
+    node_info = await tab.send(
+        dom.describe_node(backend_node_id=backend_node_id, depth=0)
+    )
+    element = Element(node_info, tab)
+    target = await element.apply(_TARGET_JS)
+    if not isinstance(target, dict) or not target.get("found"):
+        return None
+    if not (target.get("w") and target.get("h")):
+        return None
+
+    cx = target["x"] + target["w"] / 2
+    cy = target["y"] + target["h"] / 2
+    before = await tab.evaluate(_SIG_JS)
+
+    # 1) trusted CDP click at the resolved target's centre.
+    await human.click_box(tab, (cx, cy), target["w"], target["h"])
+    await asyncio.sleep(0.35)
+    method = "trusted"
+    if not await _click_changed(tab, before):
+        # 2) full synthetic pointer+mouse sequence on the target.
+        await element.apply(_SYNTH_JS)
+        await asyncio.sleep(0.35)
+        method = "synthetic"
+        if not await _click_changed(tab, before):
+            # 3) plain JS .click() — last resort.
+            await element.apply(_JSCLICK_JS)
+            await asyncio.sleep(0.35)
+            method = "js_click"
+
+    verified = await _click_changed(tab, before)
+    return {
+        "clicked": True,
+        "verified": verified,
+        "method": method if verified else None,
+        "node_id": node_id,
+        "target": target.get("tag"),
+    }
 
 
 async def _wait_for_ax_element(
@@ -212,7 +355,9 @@ async def _click_ax_element(
 
     # If node_id provided directly, use it (stable, no re-fetch)
     if node_id is not None:
-        result = await _click_by_node_id(tab, node_id, human_like=human_like)
+        result = await _click_by_node_id(
+            tab, node_id, human_like=human_like, robust=True
+        )
         if result.get("clicked") and (wait_for_role or wait_for_name):
             waited = await _wait_for_ax_element(
                 tab, wait_for_role, wait_for_name, wait_timeout, wait_interval
@@ -228,7 +373,9 @@ async def _click_ax_element(
 
     # If ref contains embedded node_id, use it directly (most reliable)
     if embedded_node_id is not None:
-        result = await _click_by_node_id(tab, embedded_node_id, human_like=human_like)
+        result = await _click_by_node_id(
+            tab, embedded_node_id, human_like=human_like, robust=True
+        )
         if result.get("clicked"):
             result["ref"] = ref
             if wait_for_role or wait_for_name:
@@ -270,7 +417,9 @@ async def _click_ax_element(
         return {"error": f"Element ref '{ref}' has no nodeId"}
 
     # Click the element
-    result = await _click_by_node_id(tab, target_node_id, human_like=human_like)
+    result = await _click_by_node_id(
+        tab, target_node_id, human_like=human_like, robust=True
+    )
     if result.get("clicked"):
         result["ref"] = ref
         result["element"] = {
@@ -299,11 +448,15 @@ async def click_by_ref(
     the target is inside an iframe that `click_by_text` can't reach).
     Atomic click + navigation feedback.
 
-    Returns `{clicked, ref, role, name, url_before, url_after,
-    title_after, navigated}` — **don't** screenshot after the click
-    just to see if it worked, `navigated` + `url_after` already tell
-    you. Only screenshot when you need to inspect visual state the
-    return values can't express.
+    Returns `{clicked, verified, method, ref, role, name, url_before,
+    url_after, title_after, navigated}` — `verified` (a change was observed) +
+    `navigated` already tell you whether it worked, so **don't** screenshot just
+    to check. Only screenshot for visual state the return can't express.
+
+    Robust actuation (shared with `click_by_text`): resolves the nearest SIZED
+    clickable ancestor so a 0x0 / thin text leaf is clicked on its handler-
+    bearing container, then verifies and falls back trusted → synthetic pointer
+    sequence → JS click (`method` reports which; None if nothing changed).
 
     If you know the element's html id / xpath / unique text, skip
     `page_discover` and go directly to `click_by_html_id` /

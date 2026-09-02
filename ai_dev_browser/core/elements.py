@@ -760,12 +760,18 @@ async def click_by_text(
     anchor, menu item). Atomic locate+click, and it locates the same way
     `find_by_text` does — if `find_by_text` can see it, this can click it.
 
-    Returns `{clicked, ref, url_before, url_after, title_after, navigated}` —
-    **don't** screenshot after the click just to see if it worked,
-    `navigated` + `url_after` already tell you. Only screenshot when you
-    need to inspect visual state the return values can't express
-    (form-validation error rendering, captcha pixels for OCR, final
-    result view for the user).
+    Returns `{clicked, verified, method, ref, url_before, url_after,
+    title_after, navigated}` — `verified` (a change was observed) + `navigated`
+    already tell you whether it worked, so **don't** screenshot just to check.
+    Only screenshot for visual state the return can't express (form-validation
+    rendering, captcha pixels for OCR, the final view for the user).
+
+    Robust actuation: resolves the nearest SIZED clickable ancestor (role /
+    jsaction / onclick / cursor:pointer), so a 0x0 or thin text leaf — a
+    Google-style option row where the handler lives on the tall container — is
+    clicked on the container, not the sliver. Then it verifies a change and, if
+    none, falls back trusted → synthetic pointer sequence → JS click; `method`
+    reports which worked (None if nothing observably changed).
 
     Matches on the element's *accessible name*, so it handles the two cases a
     raw text search misses: a label split across children
