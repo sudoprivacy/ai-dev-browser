@@ -24,6 +24,12 @@ _HTML = """<!doctype html><meta charset=utf-8><body>
   <span id="lbl">Get a verification code</span>
 </div>
 <button id="plain" onclick="document.title='PLAIN'">Use another account</button>
+<ul style="list-style:none;padding:0;margin:0">
+  <li id="li" style="width:460px;height:55px;line-height:55px;background:#ddd;cursor:default">
+    <span>Get a code from the app</span>
+  </li>
+</ul>
+<div id="lires">no</div>
 <div style="position:relative;height:40px;width:320px;margin-top:8px">
   <button id="covered" style="position:absolute;inset:0"
     onclick="document.getElementById('cres').textContent='covered-clicked'">Send it another way</button>
@@ -37,6 +43,11 @@ _HTML = """<!doctype html><meta charset=utf-8><body>
   document.getElementById('opt').addEventListener('pointerdown', function () {
     document.getElementById('result').textContent = 'selected';
     document.title = 'SELECTED';
+  });
+  // Reporter's FR-A shape: sized <li>, handler via addEventListener, NO
+  // role/jsaction/onclick attribute, cursor NOT pointer.
+  document.getElementById('li').addEventListener('click', function () {
+    document.getElementById('lires').textContent = 'li-clicked';
   });
 </script></body>"""
 
@@ -82,6 +93,17 @@ async def test_click_falls_back_to_synthetic_when_trusted_is_blocked(tab):
     assert cres == "covered-clicked", "fallback must reach the covered handler"
     assert res.get("verified") is True, res
     assert res.get("method") in ("synthetic", "js_click"), res
+
+
+@pytest.mark.asyncio
+async def test_sized_element_with_no_clickable_attribute_still_clicks(tab):
+    # FR-A: a sized, visible element whose handler is addEventListener'd (no
+    # role/jsaction/onclick) must still get a full click — never clicked:False.
+    res = await click_by_text(tab, "Get a code from the app")
+    fired = await tab.evaluate("document.getElementById('lires').textContent")
+    assert res.get("clicked") is True, res
+    assert res.get("verified") is True, res
+    assert fired == "li-clicked", "addEventListener handler must fire"
 
 
 @pytest.mark.asyncio

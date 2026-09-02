@@ -118,8 +118,14 @@ _TARGET_JS = (
     " tag:t.tagName.toLowerCase()}; }"
 )
 
+# The dispatch-based rungs fire on the LOCATED element itself (coerced to an
+# element if a text node was resolved), NOT __pick's clickable ancestor: the
+# handler is often addEventListener'd on the element with no attribute, and
+# `bubbles:true` still reaches an ancestor's handler. __pick is only for the
+# trusted coordinate click (which needs a real box).
 _SYNTH_JS = (
-    "(el) => { " + _PICK_CLICKABLE + " var t = __pick(el); if (!t) return false;"
+    "(el) => { var t = el && el.nodeType === 1 ? el : (el && el.parentElement);"
+    " if (!t) return false;"
     " var r = t.getBoundingClientRect(); var cx = r.x + r.width/2, cy = r.y + r.height/2;"
     " var o = {bubbles:true, cancelable:true, composed:true, clientX:cx, clientY:cy,"
     " button:0, buttons:1};"
@@ -133,7 +139,7 @@ _SYNTH_JS = (
 )
 
 _JSCLICK_JS = (
-    "(el) => { " + _PICK_CLICKABLE + " var t = __pick(el);"
+    "(el) => { var t = el && el.nodeType === 1 ? el : (el && el.parentElement);"
     " if (t && t.click) { t.click(); return true; } return false; }"
 )
 
@@ -229,43 +235,57 @@ async def _click_by_node_id(
 
 
 async def _robust_click(tab, backend_node_id, node_id, human_like) -> dict | None:
-    """Resolve the real clickable ancestor, click it, verify, and fall back
-    trusted → synthetic → JS click. None if no clickable target could be
-    resolved (caller falls back to a plain box-model click)."""
-    node_info = await tab.send(
-        dom.describe_node(backend_node_id=backend_node_id, depth=0)
-    )
-    element = Element(node_info, tab)
-    target = await element.apply(_TARGET_JS)
-    if not isinstance(target, dict) or not target.get("found"):
-        return None
-    if not (target.get("w") and target.get("h")):
-        return None
+    """Resolve the real clickable target, click it, verify, and fall through a
+    ladder of methods. None ONLY if the element can't be resolved at all (caller
+    then tries a plain box-model click).
 
-    cx = target["x"] + target["w"] / 2
-    cy = target["y"] + target["h"] / 2
+    Once an element is located this NEVER gives up on a `clicked:False`: a
+    located, sized element always gets a full trusted click (it's the target
+    even with no role/jsaction/onclick — many handlers are addEventListener'd
+    with no identifiable attribute), and a 0x0 element still gets the synthetic
+    + JS-click rungs (which need no coordinates). `verified` reports whether a
+    change was observed; `method` is the rung that worked (None if none did)."""
+    try:
+        node_info = await tab.send(
+            dom.describe_node(backend_node_id=backend_node_id, depth=0)
+        )
+        element = Element(node_info, tab)
+    except Exception:
+        return None  # can't resolve the element — caller falls back
+
+    target = await element.apply(_TARGET_JS)
+    target = target if isinstance(target, dict) else {}
+    have_coords = bool(target.get("found") and target.get("w") and target.get("h"))
     before = await tab.evaluate(_SIG_JS)
 
-    # 1) trusted CDP click at the resolved target's centre.
-    await human.click_box(tab, (cx, cy), target["w"], target["h"])
-    await asyncio.sleep(0.35)
-    method = "trusted"
-    if not await _click_changed(tab, before):
-        # 2) full synthetic pointer+mouse sequence on the target.
+    method = None
+    # 1) trusted CDP click at the target's centre — the full trusted pointer+
+    #    mouse sequence Chrome generates from a real press/release. Only when we
+    #    have a real box; a 0x0 target skips straight to dispatch-based rungs.
+    if have_coords:
+        cx = target["x"] + target["w"] / 2
+        cy = target["y"] + target["h"] / 2
+        await human.click_box(tab, (cx, cy), target["w"], target["h"])
+        await asyncio.sleep(0.35)
+        if await _click_changed(tab, before):
+            method = "trusted"
+    # 2) full synthetic pointer+mouse sequence dispatched on the element.
+    if method is None:
         await element.apply(_SYNTH_JS)
         await asyncio.sleep(0.35)
-        method = "synthetic"
-        if not await _click_changed(tab, before):
-            # 3) plain JS .click() — last resort.
-            await element.apply(_JSCLICK_JS)
-            await asyncio.sleep(0.35)
+        if await _click_changed(tab, before):
+            method = "synthetic"
+    # 3) plain JS .click() — last resort.
+    if method is None:
+        await element.apply(_JSCLICK_JS)
+        await asyncio.sleep(0.35)
+        if await _click_changed(tab, before):
             method = "js_click"
 
-    verified = await _click_changed(tab, before)
     return {
-        "clicked": True,
-        "verified": verified,
-        "method": method if verified else None,
+        "clicked": True,  # a located element always gets a full click attempt
+        "verified": method is not None,
+        "method": method,
         "node_id": node_id,
         "target": target.get("tag"),
     }
