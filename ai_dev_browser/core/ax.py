@@ -355,7 +355,9 @@ async def _robust_click(
         "node_id": node_id,
         "target": target.get("tag"),
     }
-    if os_click and method != "os" and not _pyautogui_available():
+    # Only when nothing worked (OS was the last hope) AND its dependency is the
+    # missing piece — never on a click that already succeeded via CDP.
+    if os_click and method is None and not _pyautogui_available():
         result["hint"] = (
             "OS-level click needs the osinput extra: "
             "pip install 'ai-dev-browser[osinput]'."

@@ -137,3 +137,24 @@ async def test_os_click_engaged_only_when_opted_in(tab, monkeypatch):
     on = await click_by_text(tab, "Inert label", os_click=True)
     assert calls == [1], "OS rung must run as the last resort when opted in"
     assert "hint" in on and "osinput" in on["hint"], on
+
+
+@pytest.mark.asyncio
+async def test_no_os_rung_or_hint_when_cdp_click_already_worked(tab, monkeypatch):
+    # A click that succeeds via CDP must NOT reach the OS rung and must NOT carry
+    # an "install osinput" hint, even with os_click on and pyautogui absent.
+    import ai_dev_browser.core.ax as ax
+
+    calls = []
+
+    async def fake_os_click(t, el):
+        calls.append(1)
+        return False
+
+    monkeypatch.setattr(ax, "_os_click", fake_os_click)
+    monkeypatch.setattr(ax, "_pyautogui_available", lambda: False)
+
+    res = await click_by_text(tab, "Use another account", os_click=True)
+    assert res.get("verified") is True and res.get("method") == "trusted", res
+    assert calls == [], "OS rung must be skipped once a CDP rung succeeded"
+    assert "hint" not in res, "no install hint on a successful click"
