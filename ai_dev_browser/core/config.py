@@ -97,6 +97,23 @@ def resolve_os_click(explicit: bool | None = None) -> bool:
     )
 
 
+# Whether browser_start auto-derives timezone/geolocation from the proxy egress.
+# None (env unset) = let the default apply (on when a --proxy-server is set and
+# no explicit --timezone/--geo given); a truthy/falsey env forces it.
+MATCH_PROXY_ENV = "AI_DEV_BROWSER_MATCH_PROXY"
+
+
+def resolve_match_proxy_env() -> bool | None:
+    """`AI_DEV_BROWSER_MATCH_PROXY` → True / False, or None if unset (so
+    browser_start's default applies — auto-on when a proxy is set)."""
+    raw = os.environ.get(MATCH_PROXY_ENV, "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return None
+
+
 # Env var pinning which page target every tool acts on, as a URL substring.
 # For a browser with one tab this is unnecessary; for one with several page
 # targets (Electron windows, a many-tab Chrome) it replaces a guess — see

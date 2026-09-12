@@ -91,6 +91,44 @@ def _env_headless_default() -> bool | str:
     return raw in ("1", "true")
 
 
+def _proxy_in_args(extra_args: list[str] | None) -> bool:
+    """True if a `--proxy-server=...` flag is present in extra_args (the trigger
+    for default timezone/geo matching)."""
+    return any(
+        isinstance(a, str) and a.startswith("--proxy-server=")
+        for a in (extra_args or [])
+    )
+
+
+def _resolve_do_match(
+    explicit_identity: bool, match_proxy: bool | None, extra_args: list[str] | None
+) -> bool:
+    """Whether to auto-derive timezone/geo from the proxy egress. Explicit
+    tz/geo always wins (no lookup); else the `match_proxy` arg; else the env;
+    else the DEFAULT — on when a `--proxy-server` is present."""
+    from .config import resolve_match_proxy_env
+
+    if explicit_identity:
+        return False
+    if match_proxy is not None:
+        return match_proxy
+    env_match = resolve_match_proxy_env()
+    return env_match if env_match is not None else _proxy_in_args(extra_args)
+
+
+def _run_coro(coro):
+    """Run a coroutine from the sync browser_start: asyncio.run normally, or a
+    worker thread if a loop is already running (sync fn called from async)."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(lambda: asyncio.run(coro)).result()
+
+
 def browser_start(
     port: int | None = None,
     headless: bool | str = None,  # type: ignore[assignment]
@@ -106,6 +144,7 @@ def browser_start(
     timezone: str | None = None,
     geo: str | None = None,
     locale: str | None = None,
+    match_proxy: bool | None = None,
 ) -> dict:
     """Start a browser instance — ISOLATED and STEALTH by default.
 
@@ -193,12 +232,24 @@ def browser_start(
             user behind a Tokyo IP is normal, and auto-switching to ja-JP would
             make a fresh inconsistency and turn every site Japanese. So set
             `locale` only when you explicitly want to.
+        match_proxy: Auto-derive `timezone` + `geolocation` from the egress.
+            Default (None) is **ON when a `--proxy-server` is in `extra_args`
+            and no explicit `timezone`/`geo` is given** — so even an agent that
+            never heard of this gets a consistent identity for free. It does one
+            geo-IP lookup THROUGH the browser (so via the proxy — the host IP is
+            never exposed); explicit `timezone`/`geo` skip the lookup entirely.
+            `True`/`False` force it; also `AI_DEV_BROWSER_MATCH_PROXY`, and the
+            endpoint is `AI_DEV_BROWSER_GEO_ENDPOINT`. If the lookup fails the
+            launch still succeeds but the return flags it (see below).
 
     Returns:
-        dict with port, pid, headless, url, profile, reused, message. When an
-        identity override is set, also `identity_consistent` + the effective
-        `timezone` / `geolocation` / `locale`, so you confirm consistency in one
-        call without evaluating it yourself.
+        dict with port, pid, headless, url, profile, reused, message. With an
+        identity override: `identity_consistent: true` + the effective
+        `timezone` / `geolocation` / `locale` (+ `egress_ip` when matched), so
+        you confirm consistency in one call. If matching was attempted but the
+        egress lookup failed: `identity_consistent: false` + `identity_warning`
+        (the browser launched, but IP and location signals may be inconsistent —
+        pass explicit `timezone`/`geo` or check the proxy).
     """
     startup_timeout = resolve_startup_timeout(startup_timeout)
 
@@ -364,10 +415,41 @@ def browser_start(
     # only degrades to the cmdline fallback.
     # Proxy-consistent identity: timezone / geolocation / explicit locale,
     # recorded so get_active_tab re-asserts them every session (they'd otherwise
-    # be lost per-call). Explicit values are deterministic — no network lookup.
-    from .identity import build_identity, parse_geo
+    # be lost per-call).
+    from .identity import build_identity, derive_from_proxy, parse_geo
 
-    identity = build_identity(timezone=timezone, geo=parse_geo(geo), locale=locale)
+    identity_warning: str | None = None
+    egress_ip: str | None = None
+    explicit_identity = bool(timezone or geo)
+
+    # Decide whether to auto-derive location from the proxy egress. Default ON
+    # when a --proxy-server is set and no explicit tz/geo is given — so an agent
+    # with no context still gets a consistent identity (a proxy that changes the
+    # IP but not the clock is a classic anti-fraud tell). Explicit values always
+    # win and never trigger a lookup (deterministic, no network).
+    do_match = _resolve_do_match(explicit_identity, match_proxy, extra_args)
+
+    if do_match:
+        derived = _run_coro(derive_from_proxy(port))
+        if derived and derived.get("timezone"):
+            timezone = derived["timezone"]
+            if derived.get("lat") is not None and derived.get("lon") is not None:
+                geo = f"{derived['lat']},{derived['lon']}"
+            egress_ip = derived.get("ip")
+        else:
+            # Fail LOUD, not hard: launch anyway but tell the caller the identity
+            # couldn't be made consistent, so it doesn't ship a half-disguise
+            # unknowingly. (A hard fail would wedge work for a geo nice-to-have.)
+            identity_warning = (
+                "proxy set but egress geo-lookup failed — timezone/geolocation "
+                "left at host values, so the IP and location signals may be "
+                "INCONSISTENT. Pass timezone=/geo= explicitly, verify the proxy, "
+                "or set AI_DEV_BROWSER_GEO_ENDPOINT."
+            )
+
+    identity = build_identity(
+        timezone=timezone, geo=parse_geo(geo), locale=locale, egress_ip=egress_ip
+    )
 
     registry.register_instance(
         port=port,
@@ -389,7 +471,10 @@ def browser_start(
     }
     # Surface the effective identity so the caller confirms consistency in one
     # call — no need to evaluate timezone/geo itself to verify.
-    if identity:
+    if identity_warning:
+        result["identity_consistent"] = False
+        result["identity_warning"] = identity_warning
+    elif identity:
         result["identity_consistent"] = True
         if identity.get("timezone"):
             result["timezone"] = identity["timezone"]
@@ -397,6 +482,8 @@ def browser_start(
             result["geolocation"] = identity["geo"]
         if identity.get("locale"):
             result["locale"] = identity["locale"]
+        if egress_ip:
+            result["egress_ip"] = egress_ip
     return result
 
 

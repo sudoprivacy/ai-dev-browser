@@ -12,9 +12,10 @@ import contextlib
 
 import pytest
 
+import ai_dev_browser.core.identity as identity_mod
 from ai_dev_browser.core import connect_browser, get_active_tab
-from ai_dev_browser.core.browser import browser_start, browser_stop
-from ai_dev_browser.core.identity import build_identity, parse_geo
+from ai_dev_browser.core.browser import _resolve_do_match, browser_start, browser_stop
+from ai_dev_browser.core.identity import build_identity, parse_geo, parse_geo_json
 
 
 def test_parse_geo():
@@ -81,5 +82,85 @@ async def test_no_identity_args_leaves_host_timezone_and_no_fields():
     r = browser_start(headless=True, temp=True, reuse="none")
     assert "error" not in r, r
     assert "identity_consistent" not in r and "timezone" not in r, r
+    with contextlib.suppress(Exception):
+        browser_stop(port=r["port"])
+
+
+# --- Increment 2: --match-proxy default + fail-soft ------------------------
+
+_PROXY = ["--proxy-server=http://127.0.0.1:11082"]
+
+
+def test_resolve_do_match_default_and_overrides(monkeypatch):
+    monkeypatch.delenv("AI_DEV_BROWSER_MATCH_PROXY", raising=False)
+    assert _resolve_do_match(False, None, _PROXY) is True  # default: proxy -> on
+    assert _resolve_do_match(True, None, _PROXY) is False  # explicit tz/geo wins
+    assert _resolve_do_match(False, None, []) is False  # no proxy -> off
+    assert _resolve_do_match(False, True, []) is True  # forced on
+    assert _resolve_do_match(False, False, _PROXY) is False  # forced off
+    monkeypatch.setenv("AI_DEV_BROWSER_MATCH_PROXY", "0")
+    assert _resolve_do_match(False, None, _PROXY) is False  # env off beats default
+
+
+def test_parse_geo_json_both_schemas():
+    ipapi = parse_geo_json(
+        '{"timezone":"Asia/Tokyo","lat":35.6,"lon":139.7,"query":"1.2.3.4"}'
+    )
+    assert ipapi == {
+        "timezone": "Asia/Tokyo",
+        "ip": "1.2.3.4",
+        "lat": 35.6,
+        "lon": 139.7,
+    }
+    ipinfo = parse_geo_json(
+        '{"timezone":"Asia/Tokyo","loc":"35.6,139.7","ip":"1.2.3.4"}'
+    )
+    assert ipinfo == {
+        "timezone": "Asia/Tokyo",
+        "ip": "1.2.3.4",
+        "lat": 35.6,
+        "lon": 139.7,
+    }
+    assert parse_geo_json('{"lat":1,"lon":2}') is None  # no timezone
+    assert parse_geo_json("not json") is None
+
+
+@pytest.mark.asyncio
+async def test_match_proxy_success_applies_and_surfaces(monkeypatch):
+    # Mock the egress lookup (a real through-proxy lookup is validated by the
+    # reporter); assert the matched identity is surfaced AND actually applied.
+    async def fake_derive(port, endpoint=None, timeout=15.0):
+        return {"timezone": "Asia/Tokyo", "lat": 35.68, "lon": 139.69, "ip": "1.2.3.4"}
+
+    monkeypatch.setattr(identity_mod, "derive_from_proxy", fake_derive)
+    r = browser_start(headless=True, temp=True, reuse="none", match_proxy=True)
+    assert "error" not in r, r
+    assert r.get("identity_consistent") is True, r
+    assert r.get("timezone") == "Asia/Tokyo" and r.get("egress_ip") == "1.2.3.4", r
+    assert r.get("geolocation") == [35.68, 139.69], r
+    port = r["port"]
+    browser = None
+    try:
+        browser = await connect_browser(port=port)
+        tab = await get_active_tab(browser)
+        assert await _tz(tab) == "Asia/Tokyo"  # matched identity really applied
+    finally:
+        if browser is not None:
+            with contextlib.suppress(Exception):
+                await browser.close()
+        with contextlib.suppress(Exception):
+            browser_stop(port=port)
+
+
+@pytest.mark.asyncio
+async def test_match_proxy_failure_fails_loud_not_hard(monkeypatch):
+    async def fake_none(port, endpoint=None, timeout=15.0):
+        return None
+
+    monkeypatch.setattr(identity_mod, "derive_from_proxy", fake_none)
+    r = browser_start(headless=True, temp=True, reuse="none", match_proxy=True)
+    assert "error" not in r, "lookup failure must not hard-fail the launch"
+    assert r.get("identity_consistent") is False, r
+    assert "identity_warning" in r and "inconsistent" in r["identity_warning"].lower()
     with contextlib.suppress(Exception):
         browser_stop(port=r["port"])
