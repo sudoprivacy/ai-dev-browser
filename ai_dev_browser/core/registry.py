@@ -41,9 +41,14 @@ def register_instance(
     workspace: str | None,
     pid: int | None,
     user_data_dir: str | None = None,
+    identity: dict | None = None,
 ) -> None:
     """Record a launched Chrome. Best-effort — a write failure degrades
-    discovery to the cmdline fallback, it must never fail the launch."""
+    discovery to the cmdline fallback, it must never fail the launch.
+
+    `identity` (timezone/geo/locale to re-assert each session, see
+    core.identity) is always written — None clears it — so a reused port can't
+    inherit a previous launch's overrides."""
     try:
         _REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
         _entry_path(port).write_text(
@@ -54,12 +59,28 @@ def register_instance(
                     "pid": pid,
                     "workspace": workspace,
                     "user_data_dir": user_data_dir,
+                    "identity": identity,
                 }
             ),
             encoding="utf-8",
         )
     except OSError as e:
         logger.debug("instance registry write failed (port %s): %s", port, e)
+
+
+def read_identity(port: int) -> dict | None:
+    """The identity overrides recorded for `port` (timezone/geo/locale), or None.
+
+    Read by `get_active_tab` to re-assert the overrides every call. No guid
+    check: the worst case of a just-reused port is re-applying a benign location
+    override, and the register-time write always overwrites (None clears), so a
+    stale record is short-lived."""
+    try:
+        entry = json.loads(_entry_path(port).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    identity = entry.get("identity")
+    return identity if isinstance(identity, dict) else None
 
 
 def lookup(port: int, guid: str | None) -> dict | None:

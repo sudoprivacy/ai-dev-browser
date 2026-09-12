@@ -103,6 +103,9 @@ def browser_start(
     override_default_args: dict[str, str | None] | None = None,
     silent_stderr: bool = False,
     stealth: bool = True,
+    timezone: str | None = None,
+    geo: str | None = None,
+    locale: str | None = None,
 ) -> dict:
     """Start a browser instance — ISOLATED and STEALTH by default.
 
@@ -173,9 +176,29 @@ def browser_start(
             restores both flags (legacy behavior). Workspace/profile
             discovery is registry-backed and does not rely on these, so
             stealth stays on with no loss of function.
+        timezone: IANA timezone (e.g. "Asia/Tokyo") to override the browser's
+            timezone. Re-asserted on every tool call, so it holds across new
+            tabs and navigation — unlike a one-shot `cdp_send`, whose Emulation
+            override dies with its session. Use this when a `--proxy-server`
+            routes your egress to another country, so the IP and the timezone
+            don't contradict (a Tokyo IP with an Asia/Shanghai clock is a
+            classic anti-fraud tell).
+        geo: "lat,lon" (e.g. "35.68,139.69") to override geolocation (granted,
+            so a site that reads it sees the mocked position). Same re-assert-
+            every-call persistence as `timezone`. Pair with `timezone` to keep
+            all location signals consistent with the proxy egress.
+        locale: ICU/BCP-47 locale (e.g. "ja-JP") to override — OFF by default
+            and ON PURPOSE. Timezone/geo are LOCATION signals (align them with
+            the proxy); language is an IDENTITY signal, not location — a zh-CN
+            user behind a Tokyo IP is normal, and auto-switching to ja-JP would
+            make a fresh inconsistency and turn every site Japanese. So set
+            `locale` only when you explicitly want to.
 
     Returns:
-        dict with port, pid, headless, url, profile, reused, message
+        dict with port, pid, headless, url, profile, reused, message. When an
+        identity override is set, also `identity_consistent` + the effective
+        `timezone` / `geolocation` / `locale`, so you confirm consistency in one
+        call without evaluating it yourself.
     """
     startup_timeout = resolve_startup_timeout(startup_timeout)
 
@@ -339,15 +362,23 @@ def browser_start(
     # off under stealth). Keyed later by the browser GUID from /json/version so
     # a reused port can't alias a stale record. Best-effort — a failed write
     # only degrades to the cmdline fallback.
+    # Proxy-consistent identity: timezone / geolocation / explicit locale,
+    # recorded so get_active_tab re-asserts them every session (they'd otherwise
+    # be lost per-call). Explicit values are deterministic — no network lookup.
+    from .identity import build_identity, parse_geo
+
+    identity = build_identity(timezone=timezone, geo=parse_geo(geo), locale=locale)
+
     registry.register_instance(
         port=port,
         guid=_query_chrome_guid(port),
         workspace=os.getcwd(),
         pid=process.pid,
         user_data_dir=str(user_data_dir),
+        identity=identity,
     )
 
-    return {
+    result = {
         "port": port,
         "pid": process.pid,
         "headless": headless,
@@ -356,6 +387,17 @@ def browser_start(
         "reused": False,
         "message": f"Browser started on port {port}",
     }
+    # Surface the effective identity so the caller confirms consistency in one
+    # call — no need to evaluate timezone/geo itself to verify.
+    if identity:
+        result["identity_consistent"] = True
+        if identity.get("timezone"):
+            result["timezone"] = identity["timezone"]
+        if identity.get("geo"):
+            result["geolocation"] = identity["geo"]
+        if identity.get("locale"):
+            result["locale"] = identity["locale"]
+    return result
 
 
 async def browser_connect(

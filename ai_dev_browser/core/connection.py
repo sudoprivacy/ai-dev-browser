@@ -443,6 +443,23 @@ async def get_active_tab(
             except Exception:
                 pass  # best-effort; never block tab acquisition on dialog setup
 
+        # Re-assert the proxy-consistent identity (timezone / geolocation /
+        # explicit locale) recorded at browser_start. Emulation.* overrides are
+        # per-session and every tool call is a fresh session, so re-applying here
+        # — like the viewport below — is what makes them survive new session /
+        # new tab / navigation (the three places a one-shot cdp_send override
+        # died). A launch with no proxy / no overrides stores no identity → skip.
+        from . import registry
+        from .identity import apply_identity
+
+        try:
+            port = getattr(browser, "port", None)
+            identity = registry.read_identity(port) if port is not None else None
+            if identity:
+                await apply_identity(tab, identity)
+        except Exception:
+            pass  # best-effort; never block tab acquisition on identity setup
+
         # Give every tab a desktop render viewport so responsive apps don't
         # collapse to mobile layout. SSOT: the size lives in resolve_viewport();
         # None means the consumer opted out (AI_DEV_BROWSER_VIEWPORT=native).
