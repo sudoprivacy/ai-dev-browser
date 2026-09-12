@@ -166,6 +166,14 @@ def browser_start(
     profiles). Reusing your real login is `browser_connect --transport
     extension`, not a fresh `browser_start`.
 
+    Proxy consistency (automatic): if `extra_args` carries a `--proxy-server`
+    and you don't pass an explicit `timezone`/`geo`, this auto-aligns the
+    browser's timezone + geolocation with the proxy's egress (a Tokyo IP with a
+    Shanghai clock is a classic anti-fraud tell). The return reports
+    `identity_consistent` + the effective `timezone`/`geolocation`/`egress_ip`,
+    so you don't need to read them back yourself. Language is left alone — set
+    `locale` only when you mean to. See `match_proxy`.
+
     Args:
         port: Debug port (auto-assigned if None)
         headless: Run in headless mode. Accepts `False` (default,
