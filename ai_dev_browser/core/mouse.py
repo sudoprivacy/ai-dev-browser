@@ -111,12 +111,17 @@ async def mouse_click(
         True on success
 
     Failure:
-        A mouse event timed out — the page's mousedown/up (or hover) handler
-        blocked the render thread: a heavy SPA, a synchronous recalc, or a
-        modal/dialog the click opened. Retry with `move=False` to cut the
-        pre-click events; if the click raises a JS dialog, handle it with
-        `dialog_respond` first. `js element.click()` is NOT a fallback — sites
-        that gate on trusted events ignore synthetic clicks.
+        A mouse event timed out. Two causes with different fixes: (1) the page's
+        mousedown/up (or hover) handler blocked the render thread — a heavy SPA,
+        a synchronous recalc, or a modal the click opened; retry with
+        `move=False` to cut the pre-click events, and if the click raised a JS
+        dialog handle it with `dialog_respond` first. (2) some Chrome builds
+        drop or hang `Input.dispatchMouseEvent` itself — then NO coordinate mouse
+        tool can land; target a DOM element with `click_by_ref` / `click_by_text`
+        instead, which fall through to a synthetic/JS dispatch that doesn't use
+        CDP mouse input. (That fallback is `isTrusted=false`, so a site gating
+        strictly on trusted events may still ignore it — but for most elements it
+        works, and it's the only path when CDP mouse input is dead.)
     """
     x, y = _scale_coords(x, y, screenshot)
 
