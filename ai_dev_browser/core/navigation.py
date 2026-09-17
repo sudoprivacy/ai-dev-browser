@@ -14,9 +14,11 @@ async def page_goto(
     wait: bool = True,
 ) -> dict:
     """Use when: you want to load a specific URL (first navigation, jumping
-    directly to a page, opening in a new tab). Returns `{url, title,
-    success}` — next step is typically `page_discover` or a targeted
-    `click_by_*` / `find_by_*`.
+    directly to a page, opening in a new tab). Returns `{url, title, success,
+    ready}` — `url`/`title` are the LANDED page (read live post-nav), and with
+    `wait=True` `ready` tells you whether the load actually completed, so you
+    don't have to call `page_wait_ready` just to check. Next step is typically
+    `page_discover` or a targeted `click_by_*` / `find_by_*`.
 
     Args:
         tab: Tab instance
@@ -25,12 +27,23 @@ async def page_goto(
         wait: If True, wait for page load
 
     Returns:
-        dict with url, title, success
+        dict with url, title, success, and (when wait=True) `ready` — whether
+        the page reached `readyState === "complete"` within the wait window.
+        `success` reports that the navigation was issued without error; `ready`
+        reports whether it finished loading (they differ on a slow SPA).
+
+    Failure:
+        `ready: false` means the page hadn't finished loading when the wait
+        window elapsed (a slow SPA, a stalled resource) — the DOM may be
+        incomplete. Poll with `page_wait_ready(timeout=<larger>)`, or
+        `page_wait_url` for a redirect / multi-step flow, before reading the
+        DOM. A bad or blocked URL instead raises with the reason inline.
     """
     result_tab = await tab.get(url, tab_new=tab_new)
 
+    ready = None
     if wait:
-        await page_wait_ready(result_tab)
+        ready = await page_wait_ready(result_tab)
 
     try:
         title = await result_tab.evaluate("document.title")
@@ -49,11 +62,17 @@ async def page_goto(
     if not final_url:
         final_url = (result_tab.target.url if result_tab.target else None) or url
 
-    return {
+    result = {
         "url": final_url,
         "title": title,
         "success": True,
     }
+    # Fold the load state into the return (only when we actually waited) so the
+    # caller never has to chain page_wait_ready just to confirm the page
+    # finished — success says "navigation issued", ready says "finished loading".
+    if ready is not None:
+        result["ready"] = ready
+    return result
 
 
 async def _back(tab: Tab) -> bool:

@@ -48,3 +48,16 @@ async def test_page_goto_returns_post_nav_url(tab):
     assert "about:blank" not in res.get("url", ""), res
     # title and url now share liveness — both reflect the landed page.
     assert res.get("title") == "Landed", res
+    # with wait=True the load state is folded into the return (no need to chain
+    # page_wait_ready just to confirm the page finished).
+    assert res.get("ready") is True, res
+
+
+@pytest.mark.asyncio
+async def test_page_goto_omits_ready_when_not_waiting(tab):
+    html = "<!doctype html><title>NoWait</title><body>ok</body>"
+    url = "data:text/html;base64," + base64.b64encode(html.encode()).decode()
+    res = await page_goto(tab, url, wait=False)
+    assert res.get("success") is True, res
+    # ready is only reported when we actually waited — no misleading value.
+    assert "ready" not in res, res
