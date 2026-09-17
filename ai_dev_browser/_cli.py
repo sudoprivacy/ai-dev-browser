@@ -412,12 +412,17 @@ def as_cli(requires_tab: bool = True):
 
                         result = await func(tab, **kwargs)
                         print(json.dumps(result, ensure_ascii=False, indent=2))
+                        # Semantic exit code (Rule 7): a failure exits non-zero so
+                        # the shell can route without parsing JSON. func is the
+                        # wrap_core wrapper, so it returns a dict (never raises).
+                        sys.exit(_exit_code_for_result(result))
 
+                    except SystemExit:
+                        raise
                     except Exception as e:
-                        print(
-                            json.dumps({"error": str(e)}, ensure_ascii=False, indent=2)
-                        )
-                        sys.exit(1)
+                        out = _augment_failure({"error": str(e)}, str(e))
+                        print(json.dumps(out, ensure_ascii=False, indent=2))
+                        sys.exit(_exit_code_for_result(out))
 
                 asyncio.run(run())
             else:
@@ -428,10 +433,14 @@ def as_cli(requires_tab: bool = True):
                     result = asyncio.run(func(**kwargs)) if is_async else func(**kwargs)
 
                     print(json.dumps(result, ensure_ascii=False, indent=2))
+                    sys.exit(_exit_code_for_result(result))
 
+                except SystemExit:
+                    raise
                 except Exception as e:
-                    print(json.dumps({"error": str(e)}, ensure_ascii=False, indent=2))
-                    sys.exit(1)
+                    out = _augment_failure({"error": str(e)}, str(e))
+                    print(json.dumps(out, ensure_ascii=False, indent=2))
+                    sys.exit(_exit_code_for_result(out))
 
         # Attach CLI runner to the function
         wrapper.cli_main = cli_main  # type: ignore[attr-defined]
@@ -465,6 +474,87 @@ def _json_serializable(obj: Any) -> bool:
 def _filter_dict_for_json(d: dict) -> dict:
     """Filter dict to only JSON-serializable values."""
     return {k: v for k, v in d.items() if _json_serializable(v)}
+
+
+# --- Structured failure signal (cli-steering-engineering Rules 5b + 7) --------
+# Additive + backward-compatible ON PURPOSE: `error` stays the verbatim human
+# string and `hint` stays a top-level sibling (downstream reads both as-is), and
+# every failure return ALSO carries a stable `error_code` token plus a
+# `retryable` flag the caller can branch on without parsing prose. The full
+# nested `{"error": {code, message, ...}}` shape from the skill is deliberately
+# NOT used — a live integrator already reads `error` as a string, and nesting
+# would break that for a cosmetic gain. `retryable` defaults False: an LLM must
+# not blindly re-run an identical call (a not-found locator, a wedged timeout, a
+# bad ref never improve on retry); only a clearly transient class (the browser
+# not yet reachable) is retryable.
+_EXIT_BY_CODE = {
+    "validation": 2,
+    "not_found": 4,
+    "conflict": 5,
+    "auth_failed": 7,
+    "rate_limited": 8,
+    "transient": 9,
+    "timeout": 1,
+    "error": 1,
+}
+
+
+def _classify_error(message: str | None) -> tuple[str, bool]:
+    """`(error_code, retryable)` inferred from a failure message. Conservative:
+    an unrecognized message is `("error", False)`. Only a clear
+    browser-reachability failure is retryable; a timeout is left non-retryable
+    so the caller follows the `hint` instead of looping an identical call."""
+    m = (message or "").lower()
+    if any(
+        s in m
+        for s in (
+            "failed to connect",
+            "connection refused",
+            "connection error",
+            "websocket",
+            "not listening",
+        )
+    ):
+        return "transient", True
+    if "timed out" in m or "timeout" in m:
+        return "timeout", False
+    if any(
+        s in m
+        for s in ("not found", "no such", "no node", "does not exist", "has no nodeid")
+    ):
+        return "not_found", False
+    if any(s in m for s in ("already in use", "already exists")):
+        return "conflict", False
+    if any(
+        s in m for s in ("must specify", "is required", "invalid ref", "unknown key")
+    ):
+        return "validation", False
+    return "error", False
+
+
+def _augment_failure(out: dict, message: str | None) -> dict:
+    """Add `error_code` + `retryable` to a failure dict (Rule 5b: pair the prose
+    `hint` with a machine-branchable flag). `setdefault` so a core function that
+    already set its own `retryable` / `error_code` wins."""
+    code, retryable = _classify_error(message)
+    out.setdefault("error_code", code)
+    out.setdefault("retryable", retryable)
+    return out
+
+
+def _failure_message(d: dict) -> str:
+    """The best human error string a failure dict carries, for classification."""
+    return d.get("error") or d.get("reason") or d.get("message") or ""
+
+
+def _exit_code_for_result(result: Any) -> int:
+    """Semantic exit code from a wrapped result. Non-zero only for a HARD failure
+    — a top-level `error` string (an exception, or a bool-False tool). A
+    structured soft failure like `{clicked: False, ...}` stays exit 0: the caller
+    branches on the dict, not the shell exit code."""
+    if isinstance(result, dict) and "error" in result:
+        return _EXIT_BY_CODE.get(result.get("error_code"), 1)
+    return 0
 
 
 def wrap_core(core_func: Callable, result_key: str = "success") -> Callable:
@@ -505,7 +595,7 @@ def wrap_core(core_func: Callable, result_key: str = "success") -> Callable:
             out: dict = {"error": str(e)}
             if failure_hint:
                 out["hint"] = failure_hint
-            return out
+            return _augment_failure(out, str(e))
 
         if isinstance(result, bool):
             if result:
@@ -513,15 +603,20 @@ def wrap_core(core_func: Callable, result_key: str = "success") -> Callable:
             out = {"error": "Operation failed"}
             if failure_hint:
                 out["hint"] = failure_hint
-            return out
+            return _augment_failure(out, failure_hint or "")
         if isinstance(result, dict):
             filtered = _filter_dict_for_json(result)
             # Auto-inject failure hint when the tool reports failure via
             # result_key=False. Pairs with cli-steering-engineering Rule 5a: failure
             # steering goes through the return channel (100% reach at
             # invocation time), not docstring (only reaches on --help).
-            if filtered.get(result_key) is False and failure_hint:
+            is_soft_fail = filtered.get(result_key) is False
+            if is_soft_fail and failure_hint:
                 filtered.setdefault("hint", failure_hint)
+            # Pair a machine-branchable retryable/error_code with ANY failure the
+            # dict reports (result_key False, or an explicit `error` string).
+            if is_soft_fail or "error" in filtered:
+                _augment_failure(filtered, _failure_message(filtered))
             return filtered
         if isinstance(result, list):
             # Pass lists through unwrapped — tools returning catalogs
@@ -569,7 +664,7 @@ def wrap_core_sync(core_func: Callable, result_key: str = "success") -> Callable
             out: dict = {"error": str(e)}
             if failure_hint:
                 out["hint"] = failure_hint
-            return out
+            return _augment_failure(out, str(e))
 
         if isinstance(result, bool):
             if result:
@@ -577,11 +672,14 @@ def wrap_core_sync(core_func: Callable, result_key: str = "success") -> Callable
             out = {"error": "Operation failed"}
             if failure_hint:
                 out["hint"] = failure_hint
-            return out
+            return _augment_failure(out, failure_hint or "")
         if isinstance(result, dict):
             filtered = _filter_dict_for_json(result)
-            if filtered.get(result_key) is False and failure_hint:
+            is_soft_fail = filtered.get(result_key) is False
+            if is_soft_fail and failure_hint:
                 filtered.setdefault("hint", failure_hint)
+            if is_soft_fail or "error" in filtered:
+                _augment_failure(filtered, _failure_message(filtered))
             return filtered
         if isinstance(result, list):
             return result  # see wrap_core note on list passthrough
