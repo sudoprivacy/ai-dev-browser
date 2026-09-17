@@ -97,6 +97,26 @@ async def test_click_falls_back_to_synthetic_when_trusted_is_blocked(tab):
 
 
 @pytest.mark.asyncio
+async def test_trusted_rung_timeout_does_not_abort_the_ladder(tab, monkeypatch):
+    # Reporter's Chrome build: Input.dispatchMouseEvent times out (raises) instead
+    # of no-op'ing. The trusted rung must not take the whole ladder down with it —
+    # the dispatch-based rungs don't touch CDP mouse input and still land the
+    # click. Pre-fix this surfaced as {clicked:false, error:"...timed out..."}.
+    import ai_dev_browser.core.human as human
+
+    async def boom(*a, **k):
+        raise TimeoutError("CDP command timed out after 5.0s: Input.dispatchMouseEvent")
+
+    monkeypatch.setattr(human, "click_box", boom)
+
+    res = await click_by_text(tab, "Use another account")
+    assert res.get("clicked") is True, res
+    assert res.get("verified") is True, res
+    assert res.get("method") in ("synthetic", "js_click"), res
+    assert (await tab.evaluate("document.title")) == "PLAIN", "handler must fire"
+
+
+@pytest.mark.asyncio
 async def test_sized_element_with_no_clickable_attribute_still_clicks(tab):
     # FR-A: a sized, visible element whose handler is addEventListener'd (no
     # role/jsaction/onclick) must still get a full click — never clicked:False.

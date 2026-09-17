@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 
 from ai_dev_browser.cdp import dom
 from ai_dev_browser.cdp import input_ as cdp_input
@@ -13,6 +14,8 @@ from ._ref import node_id_of, parse_ref
 from ._tab import Tab
 
 from .snapshot import _get_snapshot
+
+logger = logging.getLogger(__name__)
 
 
 async def get_element_by_ref(tab: Tab, ref: str) -> Element:
@@ -218,6 +221,23 @@ async def _click_changed(tab: Tab, before: dict) -> bool:
     return any(after.get(k) != before.get(k) for k in ("url", "title", "active", "len"))
 
 
+async def _rung_landed(tab: Tab, before: dict, action) -> bool:
+    """Run one click-ladder rung (`action` returns the awaitable that actuates
+    it) and report whether the page changed. A rung that RAISES — e.g. a Chrome
+    build where `Input.dispatchMouseEvent` times out instead of no-op'ing — is
+    swallowed so the ladder falls through to the next rung, which is the whole
+    point of having a ladder. Without this, one hanging trusted-click dispatch
+    aborted the entire ladder before the dispatch-based rungs (which don't touch
+    CDP mouse input) ever ran."""
+    try:
+        await action()
+    except Exception:
+        logger.debug("click rung raised; falling through to the next", exc_info=True)
+        return False
+    await asyncio.sleep(0.35)
+    return await _click_changed(tab, before)
+
+
 async def _click_by_node_id(
     tab: Tab,
     node_id: int,
@@ -316,37 +336,41 @@ async def _robust_click(
     before = await tab.evaluate(_SIG_JS)
 
     method = None
+    # Each rung is guarded (see _rung_landed): a rung that RAISES falls through
+    # to the next instead of aborting the ladder, so a broken/hanging
+    # Input.dispatchMouseEvent (Chrome builds where it times out) still lands the
+    # click via the dispatch-based rungs, which don't touch CDP mouse input.
     # 1) trusted CDP click at the target's centre — the full trusted pointer+
     #    mouse sequence Chrome generates from a real press/release. Only when we
     #    have a real box; a 0x0 target skips straight to dispatch-based rungs.
     if have_coords:
         cx = target["x"] + target["w"] / 2
         cy = target["y"] + target["h"] / 2
-        await human.click_box(tab, (cx, cy), target["w"], target["h"])
-        await asyncio.sleep(0.35)
-        if await _click_changed(tab, before):
+        if await _rung_landed(
+            tab,
+            before,
+            lambda: human.click_box(tab, (cx, cy), target["w"], target["h"]),
+        ):
             method = "trusted"
     # 2) full synthetic pointer+mouse sequence dispatched on the element.
-    if method is None:
-        await element.apply(_SYNTH_JS)
-        await asyncio.sleep(0.35)
-        if await _click_changed(tab, before):
-            method = "synthetic"
+    if method is None and await _rung_landed(
+        tab, before, lambda: element.apply(_SYNTH_JS)
+    ):
+        method = "synthetic"
     # 3) plain JS .click() — last resort within CDP.
-    if method is None:
-        await element.apply(_JSCLICK_JS)
-        await asyncio.sleep(0.35)
-        if await _click_changed(tab, before):
-            method = "js_click"
+    if method is None and await _rung_landed(
+        tab, before, lambda: element.apply(_JSCLICK_JS)
+    ):
+        method = "js_click"
 
     # 4) OS-level real-cursor click — opt-in, for elements even a trusted CDP
     #    click can't drive (some Google SSO options, reCAPTCHA). Moves the real
-    #    mouse; needs a visible focused window + the `osinput` extra.
+    #    mouse; needs a visible focused window + the `osinput` extra. _os_click
+    #    is itself best-effort (returns False on any failure), so it fits the
+    #    same "dispatch, then verify a change" shape.
     if method is None and os_click:
-        if await _os_click(tab, element):
-            await asyncio.sleep(0.35)
-            if await _click_changed(tab, before):
-                method = "os"
+        if await _rung_landed(tab, before, lambda: _os_click(tab, element)):
+            method = "os"
 
     result = {
         "clicked": True,  # a located element always gets a full click attempt
