@@ -14,7 +14,12 @@ import pytest
 
 import ai_dev_browser.core.identity as identity_mod
 from ai_dev_browser.core import connect_browser, get_active_tab
-from ai_dev_browser.core.browser import _resolve_do_match, browser_start, browser_stop
+from ai_dev_browser.core.browser import (
+    _resolve_do_match,
+    _with_lang_arg,
+    browser_start,
+    browser_stop,
+)
 from ai_dev_browser.core.identity import build_identity, parse_geo, parse_geo_json
 
 
@@ -69,6 +74,51 @@ async def test_timezone_survives_fresh_acquisition_new_tab_and_nav():
         # per-session override survives navigation within the session)
         await tab2.get("https://example.org")
         assert await _tz(tab2) == "Asia/Tokyo"
+    finally:
+        if browser is not None:
+            with contextlib.suppress(Exception):
+                await browser.close()
+        with contextlib.suppress(Exception):
+            browser_stop(port=port)
+
+
+def test_with_lang_arg_injects_and_respects_caller():
+    assert _with_lang_arg(None, "en-SG") == ["--lang=en-SG"]
+    assert _with_lang_arg(["--foo"], "ja-JP") == ["--foo", "--lang=ja-JP"]
+    # a --lang the caller already passed wins (not doubled)
+    assert _with_lang_arg(["--lang=fr-FR"], "en-SG") == ["--lang=fr-FR"]
+    # no locale -> untouched (None stays None)
+    assert _with_lang_arg(None, None) is None
+    assert _with_lang_arg(["--foo"], None) == ["--foo"]
+
+
+@pytest.mark.asyncio
+async def test_locale_actually_moves_navigator_language_and_reports_landed():
+    # The v0.38.0 bug: locale went in via setLocaleOverride (Intl only), so it was
+    # reported applied while navigator.language stayed the host default. Now it
+    # drives --lang at launch (moves navigator.language) and the return reports
+    # the LANDED locale, not the request.
+    r = browser_start(headless=True, temp=True, reuse="none", locale="en-SG")
+    assert "error" not in r, r
+    assert r.get("identity_consistent") is True, r
+    landed = r.get("locale")
+    assert isinstance(landed, str) and landed.lower().startswith("en"), r
+    port = r["port"]
+    browser = None
+    try:
+        browser = await connect_browser(port=port)
+        tab = await get_active_tab(browser)
+        nav_lang = await tab.evaluate("navigator.language")
+        # the reported locale is the one that actually landed (honest report)
+        assert nav_lang == landed, (nav_lang, landed)
+        # --lang took effect: navigator.language is an en-* locale, not zh-CN
+        assert nav_lang.lower().startswith("en"), nav_lang
+        # the per-session Intl override carries the precise requested locale
+        intl = await tab.evaluate("Intl.DateTimeFormat().resolvedOptions().locale")
+        assert intl == "en-SG", intl
+        # when Chrome normalized the UI locale, the request is still surfaced
+        if landed != "en-SG":
+            assert r.get("locale_requested") == "en-SG", r
     finally:
         if browser is not None:
             with contextlib.suppress(Exception):

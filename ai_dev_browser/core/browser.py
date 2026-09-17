@@ -100,6 +100,27 @@ def _proxy_in_args(extra_args: list[str] | None) -> bool:
     )
 
 
+def _with_lang_arg(
+    extra_args: list[str] | None, locale: str | None
+) -> list[str] | None:
+    """Ensure a `--lang=<locale>` launch flag when a `locale` is requested.
+
+    navigator.language / navigator.languages are fixed at renderer launch by
+    Chrome's UI locale, which ONLY the `--lang` flag sets — a per-session
+    `Emulation.setLocaleOverride` moves `Intl` but never `navigator.language`.
+    So an explicit locale has to go in at launch, not just through the per-call
+    re-apply. A `--lang` the caller already passed wins (returned untouched);
+    Chrome maps the value to its nearest supported UI locale (e.g. en-SG→en-GB),
+    so the landed navigator.language can differ from the request."""
+    if not locale:
+        return extra_args
+    args = list(extra_args or [])
+    if any(isinstance(a, str) and a.startswith("--lang=") for a in args):
+        return args
+    args.append(f"--lang={locale}")
+    return args
+
+
 def _resolve_do_match(
     explicit_identity: bool, match_proxy: bool | None, extra_args: list[str] | None
 ) -> bool:
@@ -114,6 +135,33 @@ def _resolve_do_match(
         return match_proxy
     env_match = resolve_match_proxy_env()
     return env_match if env_match is not None else _proxy_in_args(extra_args)
+
+
+async def _read_navigator_language(port: int) -> str | None:
+    """The locale actually in effect — `navigator.language` read back from the
+    launched browser. Chrome maps --lang to its nearest supported UI locale, so
+    this is what a site sees, which may differ from the requested locale.
+    Best-effort: None if the browser can't be reached."""
+    import contextlib
+
+    from .connection import connect_browser, get_active_tab
+
+    browser = None
+    try:
+        browser = await connect_browser(port=port)
+        tab = await get_active_tab(browser)
+        val = await tab.evaluate("navigator.language")
+        return val if isinstance(val, str) and val else None
+    except Exception:
+        return None
+    finally:
+        # Close the CDP connection (NOT the Chrome process) so its cache entry —
+        # bound to this ephemeral _run_coro loop — doesn't linger and break a
+        # same-process async consumer that connects next (same guard
+        # derive_from_proxy uses).
+        if browser is not None:
+            with contextlib.suppress(Exception):
+                await browser.close()
 
 
 def _run_coro(coro):
@@ -239,7 +287,12 @@ def browser_start(
             the proxy); language is an IDENTITY signal, not location — a zh-CN
             user behind a Tokyo IP is normal, and auto-switching to ja-JP would
             make a fresh inconsistency and turn every site Japanese. So set
-            `locale` only when you explicitly want to.
+            `locale` only when you explicitly want to. When set, it drives BOTH
+            the `--lang` launch flag (which is what actually moves
+            `navigator.language` / `navigator.languages`) and a per-call `Intl`
+            override. Chrome maps `--lang` to its nearest supported UI locale, so
+            the landed `navigator.language` can differ from the request (en-SG →
+            en-GB); the return reports what actually landed (see below).
         match_proxy: Auto-derive `timezone` + `geolocation` from the egress.
             Default (None) is **ON when a `--proxy-server` is in `extra_args`
             and no explicit `timezone`/`geo` is given** — so even an agent that
@@ -254,10 +307,12 @@ def browser_start(
         dict with port, pid, headless, url, profile, reused, message. With an
         identity override: `identity_consistent: true` + the effective
         `timezone` / `geolocation` / `locale` (+ `egress_ip` when matched), so
-        you confirm consistency in one call. If matching was attempted but the
-        egress lookup failed: `identity_consistent: false` + `identity_warning`
-        (the browser launched, but IP and location signals may be inconsistent —
-        pass explicit `timezone`/`geo` or check the proxy).
+        you confirm consistency in one call. `locale` is the locale that actually
+        LANDED (`navigator.language` read back), plus `locale_requested` when
+        Chrome normalized it to a different UI locale. If matching was attempted
+        but the egress lookup failed: `identity_consistent: false` +
+        `identity_warning` (the browser launched, but IP and location signals may
+        be inconsistent — pass explicit `timezone`/`geo` or check the proxy).
     """
     startup_timeout = resolve_startup_timeout(startup_timeout)
 
@@ -344,6 +399,9 @@ def browser_start(
     # stay put); a temp session gets a fresh dir, a named profile keeps its own.
     start_url = url or "about:blank"
     headless_resolved = _env_headless_default() if headless is None else headless
+    # An explicit locale must go in at launch (--lang) to move navigator.language;
+    # the per-session setLocaleOverride only covers Intl. See _with_lang_arg.
+    extra_args = _with_lang_arg(extra_args, locale)
     poll_interval = 0.2
     max_attempts = 2 if auto_port else 1
     last_error: dict = {}
@@ -489,7 +547,16 @@ def browser_start(
         if identity.get("geo"):
             result["geolocation"] = identity["geo"]
         if identity.get("locale"):
-            result["locale"] = identity["locale"]
+            # Report the locale that actually LANDED (navigator.language), not the
+            # request — Chrome maps --lang to its nearest supported UI locale, so
+            # echoing the request would over-report (the v0.38.0 bug: it claimed
+            # the locale applied while navigator.language was unchanged). Surface
+            # the requested value too when Chrome normalized it away.
+            requested = identity["locale"]
+            effective = _run_coro(_read_navigator_language(port)) or requested
+            result["locale"] = effective
+            if effective != requested:
+                result["locale_requested"] = requested
         if egress_ip:
             result["egress_ip"] = egress_ip
     return result
