@@ -91,6 +91,11 @@ TOOL_META = {
     "download_link": {"result_key": "downloaded"},
 }
 
+# One template for both sync and async — the wrapper name and the assignment
+# line are computed per tool. `{assignment}` is pre-wrapped to match what
+# `ruff format` would produce, so running the generator leaves NO drift the
+# pre-commit hook then has to reformat (a long tool name used to emit a >88col
+# one-liner that ruff immediately re-wrapped).
 TEMPLATE = '''"""AUTO-GENERATED from ai_dev_browser.core — {func_name}
 DO NOT EDIT - modify the core function instead, then run:
     python -m ai_dev_browser.tools._generate
@@ -98,30 +103,29 @@ DO NOT EDIT - modify the core function instead, then run:
 
 from ai_dev_browser.core import {func_name} as _core_func
 
-from .._cli import as_cli, wrap_core
+from .._cli import as_cli, {wrapper}
 
 
-{func_name} = as_cli({no_tab})(wrap_core(_core_func, "{result_key}"))
-
-if __name__ == "__main__":
-    {func_name}.cli_main()
-'''
-
-TEMPLATE_SYNC = '''"""AUTO-GENERATED from ai_dev_browser.core — {func_name}
-DO NOT EDIT - modify the core function instead, then run:
-    python -m ai_dev_browser.tools._generate
-"""
-
-from ai_dev_browser.core import {func_name} as _core_func
-
-from .._cli import as_cli, wrap_core_sync
-
-
-{func_name} = as_cli({no_tab})(wrap_core_sync(_core_func, "{result_key}"))
+{assignment}
 
 if __name__ == "__main__":
     {func_name}.cli_main()
 '''
+
+# ruff's default line length; a generated assignment longer than this gets the
+# same magic-trailing-comma-free wrap ruff would apply.
+_LINE_LENGTH = 88
+
+
+def _assignment(func_name: str, no_tab: str, wrapper: str, result_key: str) -> str:
+    """The `NAME = as_cli(...)(wrapper(_core_func, "key"))` line, wrapped across
+    lines exactly as ruff format would when it exceeds the line length."""
+    oneline = f'{func_name} = as_cli({no_tab})({wrapper}(_core_func, "{result_key}"))'
+    if len(oneline) <= _LINE_LENGTH:
+        return oneline
+    return (
+        f'{func_name} = as_cli({no_tab})(\n    {wrapper}(_core_func, "{result_key}")\n)'
+    )
 
 
 def _discover_tools():
@@ -178,12 +182,12 @@ def main():
         file_path = tools_dir / f"{name}.py"
 
         no_tab = "requires_tab=False" if not tool["requires_tab"] else ""
-        template = TEMPLATE if tool["is_async"] else TEMPLATE_SYNC
+        wrapper = "wrap_core" if tool["is_async"] else "wrap_core_sync"
 
-        content = template.format(
+        content = TEMPLATE.format(
             func_name=name,
-            result_key=tool["result_key"],
-            no_tab=no_tab,
+            wrapper=wrapper,
+            assignment=_assignment(name, no_tab, wrapper, tool["result_key"]),
         )
 
         if file_path.exists():
