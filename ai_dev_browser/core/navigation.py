@@ -37,8 +37,20 @@ async def page_goto(
     except Exception:
         title = ""
 
+    # Read the landed URL LIVE (location.href), the same liveness as title —
+    # `result_tab.target.url` is the attach-time snapshot (still about:blank
+    # right after a fresh navigation), so it reported a pre-nav URL next to a
+    # post-nav title. Fall back to the snapshot / requested URL only if the
+    # live read fails.
+    try:
+        final_url = await result_tab.evaluate("location.href")
+    except Exception:
+        final_url = None
+    if not final_url:
+        final_url = (result_tab.target.url if result_tab.target else None) or url
+
     return {
-        "url": result_tab.target.url if result_tab.target else url,
+        "url": final_url,
         "title": title,
         "success": True,
     }
