@@ -30,6 +30,12 @@ def test_classify_error_is_conservative():
     assert _classify_error("Element not found for ref 5#9") == ("not_found", False)
     assert _classify_error("Port 9350 is already in use") == ("conflict", False)
     assert _classify_error("Must specify ref or node_id") == ("validation", False)
+    # page_pdf size-parse errors are validation (fix the value, don't retry)
+    assert _classify_error("paper_width: unknown unit 'furlong'") == (
+        "validation",
+        False,
+    )
+    assert _classify_error("paper: unknown preset 'foo'") == ("validation", False)
     # unrecognized -> generic, never retryable
     assert _classify_error("something odd") == ("error", False)
     assert _classify_error("") == ("error", False)

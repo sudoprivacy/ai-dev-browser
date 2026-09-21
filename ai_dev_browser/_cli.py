@@ -526,7 +526,16 @@ def _classify_error(message: str | None) -> tuple[str, bool]:
     if any(s in m for s in ("already in use", "already exists")):
         return "conflict", False
     if any(
-        s in m for s in ("must specify", "is required", "invalid ref", "unknown key")
+        s in m
+        for s in (
+            "must specify",
+            "is required",
+            "invalid ref",
+            "unknown key",
+            "cannot parse",
+            "unknown unit",
+            "unknown preset",
+        )
     ):
         return "validation", False
     return "error", False
