@@ -494,54 +494,165 @@ async def page_html(
     }
 
 
+# --- Print-size parsing for page_pdf -----------------------------------------
+# CDP Page.printToPDF takes INCHES only; making callers pre-divide by 25.4 is
+# exactly the arithmetic that silently produces a wrong trim size. So every
+# length here accepts a unit suffix and is converted once, in one place. A bare
+# number stays inches (CDP's native unit), so a plain-number caller is unchanged.
+_UNIT_TO_INCHES = {
+    "in": 1.0,
+    "inch": 1.0,
+    "inches": 1.0,
+    "mm": 1.0 / 25.4,
+    "cm": 1.0 / 2.54,
+    "pt": 1.0 / 72.0,
+    "px": 1.0 / 96.0,  # CSS reference pixel
+}
+
+# Physical page presets as (width, height) UNIT STRINGS — parsed through the
+# same path as an explicit size, so every number lives in exactly one place.
+# Portrait; use landscape= to rotate.
+_PAPER_PRESETS = {
+    "letter": ("8.5in", "11in"),
+    "legal": ("8.5in", "14in"),
+    "tabloid": ("11in", "17in"),
+    "a3": ("297mm", "420mm"),
+    "a4": ("210mm", "297mm"),
+    "a5": ("148mm", "210mm"),
+    "a6": ("105mm", "148mm"),
+    "card-cn": ("90mm", "54mm"),  # Chinese business card
+    "card-intl": ("85mm", "55mm"),  # ISO/EU business card
+    "card-us": ("3.5in", "2in"),  # US business card
+}
+
+_LENGTH_RE = re.compile(r"^\s*([0-9]*\.?[0-9]+)\s*([a-zA-Z]*)\s*$")
+
+
+def _to_inches(value: str | float | int | None, field: str) -> float | None:
+    """Parse a physical length to inches. `None` → None; a number → inches
+    (CDP's native unit); a string may carry a unit suffix (`"90mm"`, `"3.5in"`,
+    `"21cm"`, `"72pt"`). Raises ValueError on an unparsable value or unknown
+    unit — a bad size must fail loud, never silently render the wrong trim."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    m = _LENGTH_RE.match(str(value))
+    if not m:
+        raise ValueError(
+            f"{field}: cannot parse length {value!r} — use e.g. '90mm', '3.5in', "
+            "or a bare number in inches"
+        )
+    unit = (m.group(2) or "in").lower()
+    if unit not in _UNIT_TO_INCHES:
+        allowed = ", ".join(sorted(set(_UNIT_TO_INCHES) - {"inch", "inches"}))
+        raise ValueError(
+            f"{field}: unknown unit {unit!r} in {value!r} — use one of {allowed}"
+        )
+    return float(m.group(1)) * _UNIT_TO_INCHES[unit]
+
+
 async def page_pdf(
     tab: Tab,
     path: str | None = None,
+    paper: str | None = None,
+    paper_width: str | None = None,
+    paper_height: str | None = None,
+    margin: str | None = None,
+    margin_top: str | None = None,
+    margin_bottom: str | None = None,
+    margin_left: str | None = None,
+    margin_right: str | None = None,
     landscape: bool = False,
     print_background: bool = True,
+    prefer_css_page_size: bool = False,
     scale: float = 1.0,
-    paper_width: float = 8.5,
-    paper_height: float = 11.0,
-    margin_top: float = 0.0,
-    margin_bottom: float = 0.0,
-    margin_left: float = 0.0,
-    margin_right: float = 0.0,
     page_ranges: str = "",
 ) -> dict:
-    """Use when: you need a print-quality PDF (vector, multi-page) of the
-    current page. For raster/visual screenshots use `page_screenshot`
-    instead. Returns `{path, size, pages}`.
+    """Use when: you need a print-quality **vector** PDF at an exact physical
+    page size — a card, certificate, invoice, label, contract. Text stays
+    selectable and fonts embedded, unlike `page_screenshot` (which rasterises).
+    Returns `{path, size, pages}`; the decoded PDF is written to `path`, never
+    handed back as a string.
 
-    Failure: if you get "PrintToPDF is not available" the browser is in
-    headed mode — restart with `browser_start --headless` or set
-    `AI_DEV_BROWSER_HEADLESS=1`.
+    Sizes accept a unit suffix — `paper_width="90mm"`, `margin="0.25in"`,
+    `paper="a4"` — and a bare number is inches (CDP's native unit). Defaults are
+    print-appropriate where CDP's silently are not: backgrounds print
+    (`print_background` True vs CDP's False, which drops every background color/
+    image — a blank card) and margins are 0 (vs Chrome's 0.4in, which ruins a
+    full-bleed design). For a **pixel-exact** physical size, have the template
+    declare its own `@page { size: 90mm 54mm }` and set
+    `prefer_css_page_size=True` — that is authoritative and exact; an explicit
+    `paper` / `paper_width` size is honored only to within Chrome's sub-point
+    print rounding (a metric/fractional size can land <1pt off).
 
     Args:
         tab: Tab instance
-        path: Output file path. When omitted, auto-generates
-              `{timestamp}.pdf` in `$AI_DEV_BROWSER_OUTPUT_DIR` (if set)
-              or `./output/` relative to cwd.
-        landscape: Rotate paper to landscape orientation. Default False
-                   (portrait). Only needed when paper_width < paper_height
-                   and you want landscape output.
-        print_background: Print background graphics (colors, images).
-                          Default True — web pages almost always have
-                          styled backgrounds.
-        scale: Scale of the webpage rendering. Default 1.0.
-        paper_width: Paper width in inches. Default 8.5 (US Letter).
-        paper_height: Paper height in inches. Default 11.0 (US Letter).
-        margin_top: Top margin in inches. Default 0 (web pages handle
-                    their own spacing).
-        margin_bottom: Bottom margin in inches. Default 0.
-        margin_left: Left margin in inches. Default 0.
-        margin_right: Right margin in inches. Default 0.
-        page_ranges: Page ranges to print, e.g. "1-5", "1,3,5-9".
-                     Empty string (default) means all pages.
+        path: Output file path. When omitted, auto-generates `{timestamp}.pdf`
+            in `$AI_DEV_BROWSER_OUTPUT_DIR` (if set) or `./output/` relative to
+            cwd.
+        paper: Named size preset — letter, legal, tabloid, a3, a4, a5, a6,
+            card-cn (90×54mm), card-intl (85×55mm), card-us (3.5×2in). Portrait;
+            use `landscape` to rotate. Explicit `paper_width`/`paper_height`
+            override it. Default None → letter.
+        paper_width: Page width with an optional unit suffix (`"210mm"`,
+            `"8.5in"`, `"21cm"`, `"595pt"`); a bare number is inches. Overrides
+            `paper`.
+        paper_height: Page height, same units as `paper_width`.
+        margin: Shorthand for all four margins (with units). A per-side
+            `margin_*` overrides it. Default None → 0 on every side.
+        margin_top: Top margin (with units). Overrides `margin`. Default 0.
+        margin_bottom: Bottom margin. Default 0.
+        margin_left: Left margin. Default 0.
+        margin_right: Right margin. Default 0.
+        landscape: Rotate paper to landscape. Default False (portrait).
+        print_background: Print background graphics (colors, images). Default
+            True — CDP defaults this False, which silently drops every
+            background; for a styled template that means a blank page.
+        prefer_css_page_size: Let the page's own `@page { size: ... }` CSS win
+            over `paper` / `paper_width` / `paper_height`. Default False.
+        scale: Scale of the rendering. Default 1.0.
+        page_ranges: Pages to print, e.g. "1-5", "1,3,5-9". Empty (default) =
+            all pages.
 
     Returns:
-        dict with path, size, pages
+        dict with `path`, `size` (bytes), `pages`, and the achieved trim as
+        `page_size_pt` `[w, h]` (PDF points) + `page_size_mm` `[w, h]` — so you
+        confirm the physical size landed without re-opening the PDF.
+
+    Failure:
+        "PrintToPDF is not available" means the browser is in headed mode —
+        restart with `browser_start --headless` (or set
+        `AI_DEV_BROWSER_HEADLESS=1`). An unparsable size (bad number or unknown
+        unit) fails loud with `error_code: validation` — fix the value, e.g.
+        `"90mm"` / `"3.5in"` / a bare number in inches.
     """
     from ai_dev_browser.cdp import page as cdp_page
+
+    # Resolve the physical size: an explicit width/height wins over a `paper`
+    # preset, which wins over the letter default. Each length accepts a unit.
+    base_w, base_h = _PAPER_PRESETS["letter"]
+    if paper is not None:
+        key = paper.strip().lower()
+        if key not in _PAPER_PRESETS:
+            allowed = ", ".join(sorted(_PAPER_PRESETS))
+            raise ValueError(
+                f"paper: unknown preset {paper!r} — use one of {allowed}, or pass "
+                "paper_width/paper_height"
+            )
+        base_w, base_h = _PAPER_PRESETS[key]
+    width_in = _to_inches(
+        paper_width if paper_width is not None else base_w, "paper_width"
+    )
+    height_in = _to_inches(
+        paper_height if paper_height is not None else base_h, "paper_height"
+    )
+
+    # Margins: a per-side value wins over the `margin` shorthand, which defaults
+    # to 0 (Chrome's 0.4in default ruins a full-bleed card).
+    def _side(side_val, name):
+        inches = _to_inches(side_val if side_val is not None else margin, name)
+        return 0.0 if inches is None else inches
 
     if path is None:
         out_dir = resolve_output_dir()
@@ -554,14 +665,14 @@ async def page_pdf(
             landscape=landscape,
             print_background=print_background,
             scale=scale,
-            paper_width=paper_width,
-            paper_height=paper_height,
-            margin_top=margin_top,
-            margin_bottom=margin_bottom,
-            margin_left=margin_left,
-            margin_right=margin_right,
+            paper_width=width_in,
+            paper_height=height_in,
+            margin_top=_side(margin_top, "margin_top"),
+            margin_bottom=_side(margin_bottom, "margin_bottom"),
+            margin_left=_side(margin_left, "margin_left"),
+            margin_right=_side(margin_right, "margin_right"),
             page_ranges=page_ranges or None,
-            prefer_css_page_size=False,
+            prefer_css_page_size=prefer_css_page_size,
         )
     )
 
@@ -577,8 +688,24 @@ async def page_pdf(
         re.findall(rb"/Type\s*/Pages\b", pdf_bytes)
     )
 
-    return {
+    result_dict: dict = {
         "path": str(out),
         "size": out.stat().st_size,
         "pages": max(pages, 1),
     }
+    # Fold the ACHIEVED physical size into the return (cli-steering 5a): the
+    # whole point of this tool is an exact trim, so report the MediaBox that
+    # landed — in points (PDF-native) and mm — instead of making the caller
+    # re-open the PDF to confirm it.
+    mb = re.search(
+        rb"/MediaBox\s*\[\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\]", pdf_bytes
+    )
+    if mb:
+        w_pt = round(float(mb.group(3)) - float(mb.group(1)), 2)
+        h_pt = round(float(mb.group(4)) - float(mb.group(2)), 2)
+        result_dict["page_size_pt"] = [w_pt, h_pt]
+        result_dict["page_size_mm"] = [
+            round(w_pt / 72 * 25.4, 2),
+            round(h_pt / 72 * 25.4, 2),
+        ]
+    return result_dict

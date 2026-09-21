@@ -95,6 +95,7 @@ jobs:
             tests/integration/test_page_discover.py \
             tests/integration/test_dom_discovery.py \
             tests/integration/test_page_goto.py \
+            tests/integration/test_page_pdf.py \
             tests/integration/test_page_wait_element.py
 
   # ─────────────────────────────────────────────────────────────────────
