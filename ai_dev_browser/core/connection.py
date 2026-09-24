@@ -460,15 +460,34 @@ async def get_active_tab(
         except Exception:
             pass  # best-effort; never block tab acquisition on identity setup
 
-        # Give every tab a desktop render viewport so responsive apps don't
-        # collapse to mobile layout. SSOT: the size lives in resolve_viewport();
-        # None means the consumer opted out (AI_DEV_BROWSER_VIEWPORT=native).
+        # An explicit window_set is recorded per instance and re-asserted here
+        # every call — so an intentional narrow/mobile viewport persists instead
+        # of being clobbered by the desktop default below (a tab below the
+        # desktop threshold would otherwise be forced wide on the next call,
+        # which made mobile-layout testing impossible). Idempotent: only re-set
+        # when the width actually differs.
+        try:
+            recorded_vp = registry.read_viewport(port) if port is not None else None
+        except Exception:
+            recorded_vp = None
+        if recorded_vp:
+            try:
+                current = await tab.evaluate("window.innerWidth", return_by_value=True)
+            except Exception:
+                current = 0
+            if not isinstance(current, (int, float)) or int(current) != recorded_vp[0]:
+                await tab.set_viewport(*recorded_vp)
+            return tab
+
+        # Otherwise give every tab a desktop render viewport so responsive apps
+        # don't collapse to mobile layout. SSOT: the size lives in
+        # resolve_viewport(); None means the consumer opted out
+        # (AI_DEV_BROWSER_VIEWPORT=native).
         #
         # Only *establish* it when the tab is currently mobile-width — an
-        # already-desktop viewport (our default from a prior command, or an
-        # explicit window_set) is left as-is. That keeps the default idempotent,
-        # lets desktop-width window_set overrides persist across independent CLI
-        # commands, and avoids re-laying-out a heavy page on every call.
+        # already-desktop viewport (our default from a prior command) is left
+        # as-is. That keeps the default idempotent and avoids re-laying-out a
+        # heavy page on every call.
         viewport = resolve_viewport()
         if viewport is None:
             return tab

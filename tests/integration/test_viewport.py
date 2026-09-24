@@ -189,3 +189,29 @@ async def test_cdp_send_accepts_camelcase_params(port, monkeypatch):
         assert dims["iw"] == 1440, f"the override should have applied: {dims}"
     finally:
         await browser.close()
+
+
+async def test_explicit_mobile_viewport_persists_across_calls(port, monkeypatch):
+    """An explicit sub-desktop window_set must STICK — before, get_active_tab
+    forced the desktop default back on the next call (innerWidth<1000), so a
+    390px mobile viewport was clobbered and mobile-layout testing was
+    impossible. Asserts on the rendered layout (the media-query fixture), not a
+    number, so it can't be fooled by an innerWidth reflow lag."""
+    monkeypatch.delenv(VIEWPORT_ENV, raising=False)
+    browser = await connect_browser(port=port)
+    try:
+        tab = await get_active_tab(browser)
+        await page_goto(tab, _URL)
+        assert await _visible_nav(tab) == "DESKTOP", "default should be desktop"
+
+        await window_set(tab, width=390, height=844)
+        # a FRESH acquisition must not snap back to the desktop default
+        tab2 = await get_active_tab(browser)
+        assert await _visible_nav(tab2) == "MOBILE", "mobile viewport must persist"
+
+        # and it survives a navigation + another acquisition
+        await page_goto(tab2, _URL)
+        tab3 = await get_active_tab(browser)
+        assert await _visible_nav(tab3) == "MOBILE", "must persist across nav too"
+    finally:
+        await browser.close()

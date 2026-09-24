@@ -48,7 +48,8 @@ def register_instance(
 
     `identity` (timezone/geo/locale to re-assert each session, see
     core.identity) is always written — None clears it — so a reused port can't
-    inherit a previous launch's overrides."""
+    inherit a previous launch's overrides. A fresh launch also clears any
+    `viewport` preference a prior instance on this port left behind."""
     try:
         _REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
         _entry_path(port).write_text(
@@ -60,12 +61,29 @@ def register_instance(
                     "workspace": workspace,
                     "user_data_dir": user_data_dir,
                     "identity": identity,
+                    "viewport": None,
                 }
             ),
             encoding="utf-8",
         )
     except OSError as e:
         logger.debug("instance registry write failed (port %s): %s", port, e)
+
+
+def update_viewport(port: int, viewport: list[int] | None) -> None:
+    """Record an explicit `window_set` render viewport `[w, h]` (or None to
+    clear) for `port`, so `get_active_tab` re-asserts it every call instead of
+    forcing the desktop default. Read-modify-write to preserve the rest of the
+    record; best-effort — a miss just means the viewport won't persist."""
+    try:
+        entry = json.loads(_entry_path(port).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return  # no record to update (best-effort)
+    entry["viewport"] = viewport
+    try:
+        _entry_path(port).write_text(json.dumps(entry), encoding="utf-8")
+    except OSError as e:
+        logger.debug("instance registry viewport write failed (port %s): %s", port, e)
 
 
 def read_identity(port: int) -> dict | None:
@@ -81,6 +99,22 @@ def read_identity(port: int) -> dict | None:
         return None
     identity = entry.get("identity")
     return identity if isinstance(identity, dict) else None
+
+
+def read_viewport(port: int) -> list[int] | None:
+    """The explicit `window_set` viewport `[w, h]` recorded for `port`, or None.
+
+    Read by `get_active_tab`: when set, it re-asserts THIS viewport (so an
+    intentional narrow/mobile viewport persists) instead of forcing the desktop
+    default. A record without the field (older instance) reads as None."""
+    try:
+        entry = json.loads(_entry_path(port).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    vp = entry.get("viewport")
+    if isinstance(vp, list) and len(vp) == 2 and all(isinstance(n, int) for n in vp):
+        return vp
+    return None
 
 
 def lookup(port: int, guid: str | None) -> dict | None:

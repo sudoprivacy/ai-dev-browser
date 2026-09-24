@@ -20,12 +20,13 @@ async def window_set(
     `width`/`height` set the **render viewport** (`window.innerWidth`, what the
     page actually lays out against) — not the OS window frame. That is the size
     responsive apps read to choose desktop vs mobile layout, and it works
-    headless and on a small display where the OS window can't grow. Tabs
-    already open at a desktop viewport by default (1600x950); use this to
-    override, e.g. to reproduce a narrow-breakpoint layout. A narrower-than-
-    desktop override lasts for the current session but is re-asserted to the
-    default on the next tool call (a tab is never left mobile-width); for a
-    viewport that sticks everywhere, set `AI_DEV_BROWSER_VIEWPORT=WxH`.
+    headless and on a small display where the OS window can't grow. Tabs open at
+    a desktop viewport by default (1600x950); use this to override, e.g. to
+    reproduce a narrow-breakpoint / mobile layout. **The override persists** —
+    an explicit `window_set` (even a narrow, sub-desktop one) is re-asserted on
+    every subsequent tool call, so `window_set(width=390)` then `js_evaluate`
+    sees 390 and width media queries fire, instead of the default snapping back.
+    (Process-wide alternative: `AI_DEV_BROWSER_VIEWPORT=WxH`.)
 
     `state` and `focus` act on the OS window (headed Chrome only).
 
@@ -60,6 +61,15 @@ async def window_set(
         h = height if height is not None else vp[1]
         await tab.set_viewport(w, h)
         result.update({"width": w, "height": h})
+        # Persist the explicit viewport so get_active_tab re-asserts THIS size
+        # every call instead of forcing the desktop default back — otherwise a
+        # narrow/mobile viewport (below the desktop threshold) is clobbered on
+        # the next tool call. Best-effort; needs the launching port.
+        from . import registry
+
+        port = getattr(getattr(tab, "_browser", None), "port", None)
+        if port is not None:
+            registry.update_viewport(port, [int(w), int(h)])
 
     if state is not None:
         if state == "maximized":
