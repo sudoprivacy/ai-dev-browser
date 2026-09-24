@@ -32,6 +32,67 @@ def _get_cdp_command(method: str, params: dict):
     return cmd_func(**params) if params else cmd_func()
 
 
+# CDP methods whose effect is bound to the CDP session that issued them. adb's
+# per-call model opens a FRESH session per tool call and closes it when the
+# process exits, so the effect is gone before the next call — often before a
+# follow-up click — while CDP still returns a bare success. That silence is the
+# trap: a caller reads `{"result": null}` as "it worked" and only later finds
+# the override never applied (a download in the default folder, the viewport
+# unchanged). cdp_send attaches a `warning` for these, naming the tool that
+# persists the effect (adb re-applies it every call) or owns the whole sequence
+# in one attach. Keys are lowercased "domain.command".
+_SESSION_SCOPED_METHODS = {
+    "browser.setdownloadbehavior": (
+        "the download still happens but lands in Chrome's DEFAULT folder, not "
+        "your downloadPath. Use `download_link` (it owns click -> wait -> settle "
+        "in one attach and honors download_dir), or `download` for a known URL."
+    ),
+    "page.setdownloadbehavior": (
+        "the download still happens but lands in Chrome's DEFAULT folder, not "
+        "your downloadPath. Use `download_link`, or `download` for a known URL."
+    ),
+    "emulation.setdevicemetricsoverride": (
+        "the viewport reverts on the next tool call. Use `window_set` or the "
+        "AI_DEV_BROWSER_VIEWPORT env, which adb re-applies every call."
+    ),
+    "emulation.cleardevicemetricsoverride": (
+        "adb re-applies its default viewport on the next tool call. Set "
+        "AI_DEV_BROWSER_VIEWPORT=native to disable the default, or `window_set`."
+    ),
+    "emulation.settimezoneoverride": (
+        "reverts on the next tool call. Use `browser_start --timezone`, which "
+        "adb re-applies every call."
+    ),
+    "emulation.setgeolocationoverride": (
+        "reverts on the next tool call. Use `browser_start --geo`."
+    ),
+    "emulation.setlocaleoverride": (
+        "reverts on the next tool call, and it only moves Intl, not "
+        "navigator.language. Use `browser_start --locale` (which also sets --lang)."
+    ),
+    "emulation.setemulatedmedia": (
+        "reverts on the next tool call — set it again in the same call as "
+        "whatever reads it (no persistent tool for this yet)."
+    ),
+    "network.setuseragentoverride": (
+        "reverts on the next tool call (no persistent tool for this yet)."
+    ),
+}
+
+_SESSION_SCOPED_PREFIX = (
+    "This effect is bound to the CDP session. adb opens a fresh session per tool "
+    "call, so it does NOT persist to your next call: "
+)
+
+
+def _session_scoped_note(method: str) -> str | None:
+    """A warning for a session-scoped method whose effect won't survive adb's
+    per-call model, or None. The whole point of issue #7: setDownloadBehavior
+    via cdp_send returns a bare success while silently dropping downloadPath."""
+    tail = _SESSION_SCOPED_METHODS.get(method.strip().lower())
+    return _SESSION_SCOPED_PREFIX + tail if tail else None
+
+
 async def cdp_send(
     tab: Tab,
     method: str,
@@ -42,6 +103,15 @@ async def cdp_send(
     `page_screenshot`, ...); they steer correct usage and shape the return.
     Returns `{result}` — whatever the CDP method returned, verbatim.
 
+    Heads-up on session-scoped overrides: an effect like
+    `Browser.setDownloadBehavior` or the `Emulation.*` overrides is bound to the
+    CDP session, and adb opens a fresh session per tool call — so it will NOT
+    survive to your next call (often gone before a follow-up click), even though
+    CDP reports success. When you call one, the return carries a `warning`
+    naming the durable tool to use instead (`download_link`, `window_set`,
+    `browser_start --timezone/--geo/--locale`). Don't read a bare
+    `{"result": null}` as a lasting change.
+
     Args:
         tab: Tab instance
         method: CDP method name (e.g., "Browser.getVersion", "DOM.getDocument")
@@ -51,7 +121,8 @@ async def cdp_send(
             are accepted.
 
     Returns:
-        dict with result or error
+        dict with `result` (or `error`), plus a `warning` when the method's
+        effect is session-scoped and won't persist to the next call.
 
     Failure:
         The command errored. Common causes: an unknown `method` (must be
@@ -80,6 +151,16 @@ async def cdp_send(
     # Try to serialize result
     try:
         json.dumps(result)
-        return {"result": result}
+        out: dict = {"result": result}
     except (TypeError, ValueError):
-        return {"result": str(result)}
+        out = {"result": str(result)}
+
+    # Fail loud on a silently-non-persistent effect: a session-scoped override
+    # (setDownloadBehavior, Emulation.* overrides) applied here evaporates when
+    # this call's session closes, but CDP returns a bare success. Say so, and
+    # name the durable tool — so `{"result": null}` isn't mistaken for a lasting
+    # change (issue #7).
+    note = _session_scoped_note(method)
+    if note:
+        out["warning"] = note
+    return out
