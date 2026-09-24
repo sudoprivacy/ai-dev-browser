@@ -47,6 +47,22 @@ def _coerce_value(value, annotation):
     return value
 
 
+def _reconcile_param_names(cmd_func, params: dict) -> dict:
+    """Map a param key to `key_` when the binding's signature has the underscore-
+    suffixed form (its convention for Python keywords: `type` -> `type_`) and not
+    the bare one. Best-effort — an unintrospectable callable leaves params as-is."""
+    try:
+        names = set(inspect.signature(cmd_func).parameters)
+    except (TypeError, ValueError):
+        return params
+    out = {}
+    for k, v in params.items():
+        if k not in names and (k + "_") in names:
+            k = k + "_"
+        out[k] = v
+    return out
+
+
 def _coerce_params(cmd_func, params: dict) -> dict:
     """Coerce each param to the binding's annotated type (see _coerce_value).
     Best-effort — if the hints can't be resolved, params pass through as-is."""
@@ -71,11 +87,24 @@ def _get_cdp_command(method: str, params: dict):
     domain_snake = camel_to_snake(domain)
     cmd_snake = camel_to_snake(cmd)
 
+    # `Input` -> `input_`: the binding module is renamed off the `input` builtin
+    # (same alias CDPConnection uses). Without this, `cdp_send Input.*` failed
+    # with "module 'ai_dev_browser.cdp' has no attribute 'input'", so the raw
+    # escape hatch couldn't reach the Input domain at all.
+    if domain_snake == "input":
+        domain_snake = "input_"
+
     # Get the domain module (e.g., cdp.browser)
     domain_mod = getattr(cdp_module, domain_snake)
 
     # Get the command function (e.g., cdp.browser.get_version)
     cmd_func = getattr(domain_mod, cmd_snake)
+
+    # Reconcile params named after a Python keyword: the bindings suffix those
+    # with `_` (CDP's `type` -> `type_`), so a verbatim `{"type": "mouseWheel"}`
+    # would otherwise be an unexpected-kwarg error the moment the Input domain
+    # became reachable.
+    params = _reconcile_param_names(cmd_func, params)
 
     # Rebuild object params (dict / list-of-dict) into the typed classes the
     # binding serializes with .to_json() — so an array-of-objects param like

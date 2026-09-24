@@ -9,7 +9,13 @@ rebuilds them from the param's type annotation.
 from __future__ import annotations
 
 from ai_dev_browser.cdp import emulation
-from ai_dev_browser.core.cdp import _coerce_params, _coerce_value
+from ai_dev_browser.cdp import input_ as cdp_input
+from ai_dev_browser.core.cdp import (
+    _coerce_params,
+    _coerce_value,
+    _get_cdp_command,
+    _reconcile_param_names,
+)
 
 
 def test_coerce_list_of_typed_objects():
@@ -35,3 +41,27 @@ def test_coerce_value_passthrough_without_annotation():
 def test_coerce_value_single_object():
     mf = _coerce_value({"name": "a", "value": "b"}, emulation.MediaFeature)
     assert isinstance(mf, emulation.MediaFeature) and mf.name == "a"
+
+
+def test_reconcile_maps_keyword_param_to_underscore():
+    # CDP's `type` is `type_` in the binding — the key must be remapped
+    out = _reconcile_param_names(
+        cdp_input.dispatch_mouse_event, {"type": "mouseWheel", "x": 1, "y": 2}
+    )
+    assert "type_" in out and "type" not in out
+    assert out["type_"] == "mouseWheel"
+
+
+def test_reconcile_leaves_normal_params_alone():
+    out = _reconcile_param_names(cdp_input.dispatch_mouse_event, {"x": 1, "y": 2})
+    assert out == {"x": 1, "y": 2}
+
+
+def test_get_cdp_command_reaches_input_domain():
+    # "Input" -> "input_" domain alias AND type -> type_ param — a mouseWheel
+    # dispatch is buildable (this used to fail with "no attribute 'input'").
+    gen = _get_cdp_command(
+        "Input.dispatchMouseEvent",
+        {"type": "mouseWheel", "x": 1.0, "y": 2.0, "delta_x": 0.0, "delta_y": 6.0},
+    )
+    assert gen is not None  # a CDP command generator, not an exception
