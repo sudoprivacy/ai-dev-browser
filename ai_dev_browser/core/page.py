@@ -552,6 +552,16 @@ def _to_inches(value: str | float | int | None, field: str) -> float | None:
     return float(m.group(1)) * _UNIT_TO_INCHES[unit]
 
 
+# Injects (or updates) a single throwaway `@page { size }` rule so an explicit
+# paper size prints pixel-exact; removed after the print. `%s` is a JSON string.
+_INJECT_PAGE_SIZE_JS = (
+    "(() => { var e = document.getElementById('__adb_page_size__');"
+    " if (!e) { e = document.createElement('style'); e.id = '__adb_page_size__';"
+    " (document.head || document.documentElement).appendChild(e); }"
+    " e.textContent = %s; return true; })()"
+)
+
+
 async def page_pdf(
     tab: Tab,
     path: str | None = None,
@@ -580,11 +590,12 @@ async def page_pdf(
     print-appropriate where CDP's silently are not: backgrounds print
     (`print_background` True vs CDP's False, which drops every background color/
     image — a blank card) and margins are 0 (vs Chrome's 0.4in, which ruins a
-    full-bleed design). For a **pixel-exact** physical size, have the template
-    declare its own `@page { size: 90mm 54mm }` and set
-    `prefer_css_page_size=True` — that is authoritative and exact; an explicit
-    `paper` / `paper_width` size is honored only to within Chrome's sub-point
-    print rounding (a metric/fractional size can land <1pt off).
+    full-bleed design). An explicit `paper` / `paper_width` size is **pixel-
+    exact** — it's applied via an injected `@page { size }` rule, which Chrome
+    honors exactly (unlike printToPDF's inches path, which rounds a
+    metric/fractional size <1pt). Set `prefer_css_page_size=True` instead when
+    the DOCUMENT declares its own `@page { size }` and should decide — then the
+    paper args are ignored and the template's size wins.
 
     Args:
         tab: Tab instance
@@ -609,8 +620,10 @@ async def page_pdf(
         print_background: Print background graphics (colors, images). Default
             True — CDP defaults this False, which silently drops every
             background; for a styled template that means a blank page.
-        prefer_css_page_size: Let the page's own `@page { size: ... }` CSS win
-            over `paper` / `paper_width` / `paper_height`. Default False.
+        prefer_css_page_size: Defer to the DOCUMENT's own `@page { size: ... }`
+            instead of an explicit size — the paper args are then ignored.
+            Default False (an explicit `paper`/`paper_width` is applied exactly
+            via an injected `@page`; with no explicit size, Letter).
         scale: Scale of the rendering. Default 1.0.
         page_ranges: Pages to print, e.g. "1-5", "1,3,5-9". Empty (default) =
             all pages.
@@ -660,21 +673,50 @@ async def page_pdf(
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         path = str(out_dir / f"{ts}.pdf")
 
-    result = await tab.send(
-        cdp_page.print_to_pdf(
-            landscape=landscape,
-            print_background=print_background,
-            scale=scale,
-            paper_width=width_in,
-            paper_height=height_in,
-            margin_top=_side(margin_top, "margin_top"),
-            margin_bottom=_side(margin_bottom, "margin_bottom"),
-            margin_left=_side(margin_left, "margin_left"),
-            margin_right=_side(margin_right, "margin_right"),
-            page_ranges=page_ranges or None,
-            prefer_css_page_size=prefer_css_page_size,
-        )
+    # Make an explicit/preset size PIXEL-EXACT by injecting an `@page { size }`
+    # rule and letting the CSS page size win: Chrome honors a CSS @page size
+    # exactly, whereas printToPDF's inches path rounds a metric/fractional size
+    # <1pt — so the obvious call (`--paper card-cn`) would otherwise be silently
+    # oversized. Skipped when the caller opted into the document's OWN @page
+    # (prefer_css_page_size) or gave no explicit size. Best-effort: if injection
+    # fails we fall back to the paperWidth/Height (rounding) path.
+    wants_exact = not prefer_css_page_size and (
+        paper is not None or paper_width is not None or paper_height is not None
     )
+    injected = False
+    if wants_exact:
+        try:
+            css = f"@page {{ size: {width_in}in {height_in}in }}"
+            await tab.evaluate(_INJECT_PAGE_SIZE_JS % json.dumps(css))
+            injected = True
+        except Exception:
+            injected = False
+    try:
+        result = await tab.send(
+            cdp_page.print_to_pdf(
+                landscape=landscape,
+                print_background=print_background,
+                scale=scale,
+                paper_width=width_in,
+                paper_height=height_in,
+                margin_top=_side(margin_top, "margin_top"),
+                margin_bottom=_side(margin_bottom, "margin_bottom"),
+                margin_left=_side(margin_left, "margin_left"),
+                margin_right=_side(margin_right, "margin_right"),
+                page_ranges=page_ranges or None,
+                # injected @page wins (exact); else honor the caller's request
+                prefer_css_page_size=prefer_css_page_size or injected,
+            )
+        )
+    finally:
+        if injected:
+            try:
+                await tab.evaluate(
+                    "var e=document.getElementById('__adb_page_size__');"
+                    "if(e)e.remove();"
+                )
+            except Exception:
+                pass  # the throwaway rule is print-only; leaving it is harmless
 
     pdf_data, _ = result  # (base64_str, optional_stream_handle)
     pdf_bytes = base64.b64decode(pdf_data)

@@ -79,21 +79,38 @@ async def test_prefer_css_page_size_is_pixel_exact(tab, tmp_path):
 
 @pytest.mark.asyncio
 async def test_paper_preset_and_units_produce_a_card(tab, tmp_path):
-    # The convenience path: a preset (and equivalently `paper_width="90mm"`)
-    # yields a single card page. Honored to within Chrome's sub-point print
-    # rounding, so allow a small tolerance vs the exact 255.12 x 153.07.
+    # The convenience path is now pixel-exact too (injected @page), so the
+    # obvious `--paper card-cn` call lands on 255.12 x 153.07, not Chrome's
+    # rounded 256.08 x 154.08.
     out = str(tmp_path / "card_preset.pdf")
     res = await page_pdf(tab, path=out, paper="card-cn")
     assert res["pages"] == 1, res
     w, h, _ = _mediabox(out)
-    assert w == pytest.approx(255.12, abs=1.5), w
-    assert h == pytest.approx(153.07, abs=1.5), h
+    assert w == pytest.approx(255.12, abs=0.5), w
+    assert h == pytest.approx(153.07, abs=0.5), h
 
     # explicit unit-suffixed size matches the preset (same physical size)
     out2 = str(tmp_path / "card_units.pdf")
     await page_pdf(tab, path=out2, paper_width="90mm", paper_height="54mm")
     w2, h2, _ = _mediabox(out2)
     assert w2 == pytest.approx(w, abs=0.5) and h2 == pytest.approx(h, abs=0.5)
+
+
+@pytest.mark.asyncio
+async def test_explicit_size_is_exact_without_page_css(tab, tmp_path):
+    # A page that declares NO @page of its own: only the injected @page can make
+    # the explicit size exact. Proves the fix (not the document's CSS) — the
+    # obvious `--paper card-cn` lands on 255.12, not Chrome's rounded 256.08.
+    plain = "<!doctype html><meta charset=utf-8><body style='margin:0'>x</body>"
+    url = "data:text/html;base64," + base64.b64encode(plain.encode()).decode()
+    await tab.get(url)
+    await asyncio.sleep(0.2)
+    out = str(tmp_path / "plain_card.pdf")
+    res = await page_pdf(tab, path=out, paper_width="90mm", paper_height="54mm")
+    w, h, _ = _mediabox(out)
+    assert w == pytest.approx(255.12, abs=0.5), w
+    assert h == pytest.approx(153.07, abs=0.5), h
+    assert res["page_size_mm"][0] == pytest.approx(90.0, abs=0.2), res
 
 
 @pytest.mark.asyncio
