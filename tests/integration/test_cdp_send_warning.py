@@ -54,3 +54,25 @@ async def test_set_download_behavior_carries_persistence_warning(tab):
 async def test_benign_method_has_no_warning(tab):
     res = await cdp_send(tab, "Browser.getVersion")
     assert "result" in res and "warning" not in res, res
+
+
+@pytest.mark.asyncio
+async def test_array_of_objects_param_is_reachable(tab):
+    # setEmulatedMedia's `features` is a list of typed objects — cdp_send used to
+    # blow up ("'dict' has no attribute 'to_json'"); now it coerces + applies.
+    async def dark():
+        return await tab.evaluate("matchMedia('(prefers-color-scheme: dark)').matches")
+
+    res = await cdp_send(
+        tab,
+        "Emulation.setEmulatedMedia",
+        json.dumps({"features": [{"name": "prefers-color-scheme", "value": "light"}]}),
+    )
+    assert "error" not in res, res
+    assert await dark() is False, "forcing light must take effect"
+    await cdp_send(
+        tab,
+        "Emulation.setEmulatedMedia",
+        json.dumps({"features": [{"name": "prefers-color-scheme", "value": "dark"}]}),
+    )
+    assert await dark() is True, "forcing dark must take effect"

@@ -1,11 +1,60 @@
 """CDP (Chrome DevTools Protocol) command operations."""
 
+import inspect
 import json
+import typing
 
 from ai_dev_browser import cdp as cdp_module
 
 from ._case import camel_to_snake
 from ._tab import Tab
+
+
+def _coerce_value(value, annotation):
+    """Turn a plain JSON value into the typed CDP object a binding param expects.
+
+    The vendored bindings type object params as generated classes (e.g.
+    `features: Optional[List[MediaFeature]]`) and serialize each with `.to_json()`
+    — so a raw dict/list-of-dicts from `cdp_send` blows up with
+    "'dict' object has no attribute 'to_json'". Each such class has a `from_json`;
+    this rebuilds the object (recursing Optional/Union and List[...]) using the
+    param's annotation. Anything without a `from_json` annotation passes through
+    unchanged, so primitives and enums are untouched."""
+    if annotation is None or value is None:
+        return value
+    origin = typing.get_origin(annotation)
+    args = typing.get_args(annotation)
+    if origin is typing.Union:  # Optional[X] / Union[...]
+        for arg in (a for a in args if a is not type(None)):
+            coerced = _coerce_value(value, arg)
+            if coerced is not value:
+                return coerced
+        return value
+    if origin in (list, typing.List) and isinstance(value, list):
+        elem = args[0] if args else None
+        if elem is not None and hasattr(elem, "from_json"):
+            return [
+                elem.from_json(item) if isinstance(item, dict) else item
+                for item in value
+            ]
+        return value
+    if (
+        isinstance(value, dict)
+        and inspect.isclass(annotation)
+        and hasattr(annotation, "from_json")
+    ):
+        return annotation.from_json(value)
+    return value
+
+
+def _coerce_params(cmd_func, params: dict) -> dict:
+    """Coerce each param to the binding's annotated type (see _coerce_value).
+    Best-effort — if the hints can't be resolved, params pass through as-is."""
+    try:
+        hints = typing.get_type_hints(cmd_func)
+    except Exception:
+        return params
+    return {k: _coerce_value(v, hints.get(k)) for k, v in params.items()}
 
 
 def _get_cdp_command(method: str, params: dict):
@@ -27,6 +76,11 @@ def _get_cdp_command(method: str, params: dict):
 
     # Get the command function (e.g., cdp.browser.get_version)
     cmd_func = getattr(domain_mod, cmd_snake)
+
+    # Rebuild object params (dict / list-of-dict) into the typed classes the
+    # binding serializes with .to_json() — so an array-of-objects param like
+    # setEmulatedMedia's `features` is reachable through cdp_send.
+    params = _coerce_params(cmd_func, params)
 
     # Call with params
     return cmd_func(**params) if params else cmd_func()
