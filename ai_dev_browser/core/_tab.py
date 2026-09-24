@@ -531,9 +531,17 @@ class Tab:
             )
 
     async def mouse_click(
-        self, x: float, y: float, button: str = "left", modifiers: int = 0
+        self,
+        x: float,
+        y: float,
+        button: str = "left",
+        modifiers: int = 0,
+        session_id: str | None = None,
     ):
-        """Click at coordinates."""
+        """Click at coordinates. With `session_id`, the events are dispatched on
+        that flat session — for a cross-origin iframe (OOPIF) the coordinates are
+        then the frame's own viewport coordinates, so a caller that located the
+        target inside the frame clicks it without translating to top-level."""
         btn = cdp_input.MouseButton(button)
         await self.send(
             cdp_input.dispatch_mouse_event(
@@ -545,6 +553,7 @@ class Tab:
                 modifiers=modifiers,
             ),
             timeout=MOUSE_EVENT_TIMEOUT,
+            session_id=session_id,
         )
         await self.send(
             cdp_input.dispatch_mouse_event(
@@ -556,6 +565,7 @@ class Tab:
                 modifiers=modifiers,
             ),
             timeout=MOUSE_EVENT_TIMEOUT,
+            session_id=session_id,
         )
 
     async def mouse_drag(self, source, dest, steps: int = 10):

@@ -55,6 +55,7 @@ async def download_link(
     xpath: str,
     download_dir: str | None = None,
     timeout: float = 30.0,
+    frame: str | None = None,
 ) -> dict:
     """Use when: clicking a link/button starts a file download and you want the
     saved path back — batch scraping, where you iterate rows and download each
@@ -63,6 +64,14 @@ async def download_link(
     reliable locator for the unnamed download links common in Chinese gov /
     enterprise SPAs), trusted-click it, wait for the file to finish, and return
     where it landed.
+
+    Pass `frame` (same as `js_evaluate`'s: a substring of the iframe's URL, or
+    its target id) when the control lives inside a cross-origin / sandboxed
+    `srcdoc` iframe — embedded viewers, preview shells, "publish a page"
+    products. Without it the XPath only searches the main frame (and same-origin
+    children) and you get `not found`; with it the locate + trusted click run in
+    that frame's own session, so a real end-user download inside the sandbox is
+    actually exercised, not faked with a synthetic click.
 
     Returns `{downloaded: True, path, filename, bytes}` on success, or
     `{downloaded: False, error, clicked?}` so you can tell "link not found"
@@ -75,6 +84,10 @@ async def download_link(
         download_dir: Directory to save into (default: `./downloads`, created
             if missing).
         timeout: Seconds to wait for the download to complete (default 30).
+        frame: Cross-origin / `srcdoc` iframe to locate + click inside — a
+            substring of its URL (`about:srcdoc` for a srcdoc frame) or its
+            target id, matching `js_evaluate`'s `frame`. Omit for a control in
+            the main frame or a same-origin child.
 
     Returns:
         dict: `{downloaded, path, filename, bytes}` or `{downloaded: False,
@@ -84,20 +97,36 @@ async def download_link(
         `clicked: True` but no download completed in time — the link may open a
         viewer/new tab instead of downloading, or it fired a `confirm()` that
         needs `AI_DEV_BROWSER_DIALOG=accept`, or the file is large (raise
-        `timeout`). Without `clicked`, the XPath matched nothing — verify with
-        `find_by_xpath`.
+        `timeout`). Without `clicked`, the XPath matched nothing in the searched
+        frame — verify with `find_by_xpath`, and if the control is inside a
+        cross-origin / `srcdoc` iframe pass `frame=` (a bare XPath only searches
+        the main frame).
     """
     directory = Path(download_dir) if download_dir else (Path.cwd() / "downloads")
     directory.mkdir(parents=True, exist_ok=True)
     dir_str = str(directory.resolve())
 
+    # A control inside a cross-origin / sandboxed iframe (OOPIF) isn't reachable
+    # from the top frame; resolve its session so the locate + click run inside.
+    session_id = await tab.frame_session(frame) if frame else None
+
     # allow + eventsEnabled so downloadWillBegin / downloadProgress fire (under
-    # automation Chrome otherwise denies the download and stays silent).
+    # automation Chrome otherwise denies the download and stays silent). Arm the
+    # top session AND, for an OOPIF target, the frame's own session — a download
+    # initiated inside the OOPIF emits its lifecycle events there, so without
+    # this the file lands correctly but the completion event is never seen.
     await tab.send(
         cdp_browser.set_download_behavior(
             behavior="allow", download_path=dir_str, events_enabled=True
         )
     )
+    if session_id:
+        await tab.send(
+            cdp_browser.set_download_behavior(
+                behavior="allow", download_path=dir_str, events_enabled=True
+            ),
+            session_id=session_id,
+        )
 
     done = asyncio.Event()
     cap: dict = {
@@ -128,7 +157,9 @@ async def download_link(
     tab.add_handler(cdp_browser.DownloadWillBegin, on_begin)
     tab.add_handler(cdp_browser.DownloadProgress, on_progress)
     try:
-        click = await _trusted_click(tab, _xpath_finder_js(xpath), "xpath", xpath)
+        click = await _trusted_click(
+            tab, _xpath_finder_js(xpath), "xpath", xpath, session_id=session_id
+        )
         if not click.get("clicked"):
             return {
                 "downloaded": False,

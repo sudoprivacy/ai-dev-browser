@@ -1628,19 +1628,30 @@ def _xpath_finder_js(xpath: str) -> str:
 
 
 async def _trusted_click(
-    tab: Tab, finder_js: str, locator_key: str, locator_val: str
+    tab: Tab,
+    finder_js: str,
+    locator_key: str,
+    locator_val: str,
+    session_id: str | None = None,
 ) -> dict:
     """Locate (via `finder_js`, which must assign `el`) → scroll into view →
-    dispatch a TRUSTED CDP mouse click at the element's top-level centre.
+    dispatch a TRUSTED CDP mouse click at the element's centre.
 
     Real mouse events (mousedown/up), not `el.click()`, so sites that gate on
     trusted events (banks, government / enterprise SPAs) actually fire; and it's
     scroll-aware, so a target scrolled out of view is brought on-screen first
     instead of clicking stale coordinates. Shared by click_by_xpath /
     click_by_html_id so both behave identically.
+
+    `session_id` routes both the locate and the click into a cross-origin
+    iframe's own CDP session (an OOPIF the top-frame finder can't recurse into) —
+    the coordinates are then frame-local, which is exactly what a session-
+    dispatched Input event expects, so no top-level translation is needed.
     """
     url_before = (await _capture_page_state(tab)).get("url", "")
-    hit = await tab.evaluate(_LOCATE_FOR_CLICK_JS.replace("__FINDER__", finder_js))
+    hit = await tab.evaluate(
+        _LOCATE_FOR_CLICK_JS.replace("__FINDER__", finder_js), session_id=session_id
+    )
     action = {"clicked": False, locator_key: locator_val, "url_before": url_before}
     if not hit:
         action.update(
@@ -1662,7 +1673,7 @@ async def _trusted_click(
             }
         )
         return action
-    await tab.mouse_click(hit["x"], hit["y"])
+    await tab.mouse_click(hit["x"], hit["y"], session_id=session_id)
     action["clicked"] = True
     if not hit.get("wasVisible"):
         # Signal the caller that the target wasn't on-screen — a hint that
