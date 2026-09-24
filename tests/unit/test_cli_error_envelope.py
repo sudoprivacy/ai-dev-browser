@@ -36,6 +36,26 @@ def test_classify_error_is_conservative():
         False,
     )
     assert _classify_error("paper: unknown preset 'foo'") == ("validation", False)
+    # a transport "no target" is its own code (the command never reached a tab)
+    assert _classify_error("no target for Emulation.setDeviceMetricsOverride") == (
+        "no_target",
+        False,
+    )
+    assert _classify_error("no target for Page.navigate") == ("no_target", False)
+
+
+def test_no_target_overrides_tool_hint_with_transport_guidance():
+    from ai_dev_browser._cli import _NO_TARGET_HINT
+
+    # the tool's own Failure hint (stale ref, etc.) is the wrong thing to say
+    # when nothing ran — the transport diagnosis wins and names the recovery.
+    out = _augment_failure(
+        {"error": "no target for Page.navigate", "hint": "ref is stale, re-discover"},
+        "no target for Page.navigate",
+    )
+    assert out["error_code"] == "no_target" and out["retryable"] is False
+    assert out["hint"] is _NO_TARGET_HINT
+    assert "browser_connect --transport extension" in out["hint"]
     # unrecognized -> generic, never retryable
     assert _classify_error("something odd") == ("error", False)
     assert _classify_error("") == ("error", False)

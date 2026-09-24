@@ -490,6 +490,7 @@ def _filter_dict_for_json(d: dict) -> dict:
 _EXIT_BY_CODE = {
     "validation": 2,
     "not_found": 4,
+    "no_target": 4,
     "conflict": 5,
     "auth_failed": 7,
     "rate_limited": 8,
@@ -518,6 +519,13 @@ def _classify_error(message: str | None) -> tuple[str, bool]:
         return "transient", True
     if "timed out" in m or "timeout" in m:
         return "timeout", False
+    # A transport-level "no target for <method>": the tab/target the command
+    # needed isn't attached. In extension mode the bridge is connected but no tab
+    # is attached (a recycled service worker, or browser_connect not run); in CDP
+    # mode the target was closed. Distinct code so the caller can branch, plus a
+    # dedicated hint below — the tool's own Failure hint is about the wrong thing.
+    if "no target" in m:
+        return "no_target", False
     if any(
         s in m
         for s in ("not found", "no such", "no node", "does not exist", "has no nodeid")
@@ -541,13 +549,30 @@ def _classify_error(message: str | None) -> tuple[str, bool]:
     return "error", False
 
 
+# A "no target" error means the command never reached a tab — so the tool's own
+# Failure hint (stale ref, bad locator, …) is about the wrong thing. This says
+# what actually happened and how to recover, and OVERRIDES the tool hint.
+_NO_TARGET_HINT = (
+    "The command had no tab/target to act on — nothing ran. In EXTENSION mode: "
+    "the bridge is connected but no tab is attached (the extension's service "
+    "worker may have been recycled, or browser_connect wasn't run) — re-run "
+    "`browser_connect --transport extension`, and reload the ai-dev-browser "
+    "extension in Chrome if that doesn't recover it. In CDP mode: the tab/target "
+    "was closed — re-acquire it with `tab_list` / `browser_start`."
+)
+
+
 def _augment_failure(out: dict, message: str | None) -> dict:
     """Add `error_code` + `retryable` to a failure dict (Rule 5b: pair the prose
     `hint` with a machine-branchable flag). `setdefault` so a core function that
-    already set its own `retryable` / `error_code` wins."""
+    already set its own `retryable` / `error_code` wins — except a `no_target`
+    diagnosis, which is a transport-level fact more specific than any tool's own
+    Failure hint, so it overrides `hint`."""
     code, retryable = _classify_error(message)
     out.setdefault("error_code", code)
     out.setdefault("retryable", retryable)
+    if code == "no_target":
+        out["hint"] = _NO_TARGET_HINT
     return out
 
 
