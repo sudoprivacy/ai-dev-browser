@@ -400,6 +400,49 @@ async def _resolve_scroll_target(tab: Tab, target: Element | str) -> Element | N
     return await tab.find(target, timeout=3)
 
 
+# A cheap "did anything scroll" signature: window scroll + the scroll position
+# of every scrollable container (bounded so it stays cheap on heavy pages). Used
+# to VERIFY that to_element / direction scrolls actually moved something, so
+# `scrolled: true` can never be a false success (the to_bottom path already
+# verifies; these two didn't).
+_SCROLL_SIG_JS = r"""(function () {
+  function sig(win, prefix) {
+    var s = '';
+    try {
+      var d = win.document;
+      var se = d.scrollingElement || d.documentElement;
+      s += prefix + win.scrollX + ',' + win.scrollY + ',' +
+           (se ? se.scrollTop + ',' + se.scrollLeft : '');
+      var els = d.querySelectorAll('*');
+      var n = 0;
+      for (var i = 0; i < els.length && n < 200; i++) {
+        var e = els[i];
+        if (e.scrollHeight > e.clientHeight + 4 || e.scrollWidth > e.clientWidth + 4) {
+          s += '|' + e.scrollTop + ',' + e.scrollLeft;
+          n++;
+        }
+      }
+      // Recurse same-origin child frames — a to_element scroll often moves the
+      // iframe's own document, which the top-document scan can't see. Cross-
+      // origin frames throw on access and are skipped.
+      for (var j = 0; j < win.frames.length && j < 20; j++) {
+        try { s += sig(win.frames[j], prefix + j + ':'); } catch (e) {}
+      }
+    } catch (e) {}
+    return s;
+  }
+  return sig(window, '');
+})()"""
+
+
+async def _scroll_signature(tab: Tab) -> str:
+    try:
+        sig = await tab.evaluate(_SCROLL_SIG_JS)
+        return sig if isinstance(sig, str) else ""
+    except Exception:
+        return ""
+
+
 async def page_scroll(
     tab: Tab,
     direction: str = "down",
@@ -449,6 +492,7 @@ async def page_scroll(
         field names the container that was scrolled; if it picked the
         wrong one, scroll that element by text via `to_element` instead.
     """
+    target_name = to_element if isinstance(to_element, str) else None
     if to_element is not None:
         element = await _resolve_scroll_target(tab, to_element)
         if element is None:
@@ -456,11 +500,21 @@ async def page_scroll(
                 "scrolled": False,
                 "reason": f"no element found to scroll to for {to_element!r}",
             }
+        before = await _scroll_signature(tab)
         await element.scroll_into_view()
-        return {
-            "scrolled": True,
-            "target": to_element if isinstance(to_element, str) else repr(element),
-        }
+        target = target_name if target_name is not None else repr(element)
+        # Verify movement — don't claim success on a no-op (the element was
+        # already in view, or its container can't scroll). Mirrors to_bottom.
+        if await _scroll_signature(tab) == before:
+            return {
+                "scrolled": False,
+                "target": target,
+                "reason": (
+                    f"{target!r} is already in view or its container isn't "
+                    "scrollable — nothing moved"
+                ),
+            }
+        return {"scrolled": True, "target": target}
 
     if to_bottom or to_top:
         info = await _scroll_to_edge(tab, "bottom" if to_bottom else "top")
@@ -488,10 +542,25 @@ async def page_scroll(
     # Input.synthesizeScrollGesture, JS-scrollBy fallback on embedded
     # targets) — its gesture-shape acceleration matters for anti-bot
     # heuristics, so it is deliberately not routed through the JS scroller.
+    before = await _scroll_signature(tab)
     if direction == "up":
         await tab.scroll_up(amount)
     else:
         await tab.scroll_down(amount)
+    # Verify movement — a page that fits the viewport (nothing scrollable) or is
+    # already at the extent must report scrolled: false, not a false success.
+    if await _scroll_signature(tab) == before:
+        return {
+            "scrolled": False,
+            "direction": direction,
+            "amount": amount,
+            "reason": (
+                f"nothing moved — already at the {direction} extent, the content "
+                "fits the viewport (nothing scrollable), or the scrollable region "
+                "is a cross-origin iframe JS can't reach (try to_element, or "
+                "js_evaluate(frame=...))"
+            ),
+        }
     return {"scrolled": True, "direction": direction, "amount": amount}
 
 
@@ -1098,19 +1167,51 @@ async def find_by_text(
               `{found: False, text}` otherwise.
 
     Failure:
-        Text not found in main frame or any same-origin iframe, in
-        either the interactable or fallback tier. Check spelling /
-        case (match is case-insensitive substring); try a shorter
-        substring; or switch locator — `find_by_html_id` /
-        `find_by_xpath` if a DOM-level locator is known. For a broad
-        survey of what's on the page, run `page_discover` without a
-        text filter. Cross-origin iframes are not scanned — reach into one
-        with `js_evaluate(frame="<url-substr>")`.
+        Text not found in the main document (or a same-origin iframe), in
+        either the interactable or fallback tier. Check spelling / case (match
+        is case-insensitive substring); try a shorter substring; or switch
+        locator — `find_by_html_id` / `find_by_xpath` if a DOM-level locator is
+        known. For a broad survey, run `page_discover` without a text filter.
+        The returned `hint` names only the causes that actually apply to THIS
+        page — a cross-origin iframe to reach with `js_evaluate(frame=...)`, or
+        text drawn inside `<svg>`/`<canvas>` that isn't matchable DOM text — so
+        it won't point at an iframe when the page has none.
     """
     hit = await _ax_by_text(tab, text, interactable_only=interactable_only)
     if hit is None:
-        return {"found": False, "text": text}
+        return {"found": False, "text": text, "hint": await _not_found_hint(tab)}
     return {"found": True, **hit}
+
+
+async def _not_found_hint(tab: Tab) -> str:
+    """A find-by-text miss hint that names only the causes present on THIS page —
+    no iframe advice when the document has no iframes (a red herring the reporter
+    hit), plus an SVG/canvas note when the text is likely drawn, not DOM text."""
+    base = (
+        "Text not found in the main document. Check spelling / case (substring, "
+        "case-insensitive), try a shorter substring, switch locator "
+        "(find_by_html_id / find_by_xpath), or run page_discover for a survey."
+    )
+    try:
+        counts = await tab.evaluate(
+            "({iframe: document.querySelectorAll('iframe').length,"
+            " drawn: document.querySelectorAll('svg,canvas').length})"
+        )
+    except Exception:
+        counts = {}
+    counts = counts if isinstance(counts, dict) else {}
+    if counts.get("iframe"):
+        base += (
+            " This page has an iframe; a cross-origin one isn't scanned — reach "
+            'into it with js_evaluate(frame="<url-substr>").'
+        )
+    if counts.get("drawn"):
+        base += (
+            " This page has <svg>/<canvas>; text painted there (vector paths, or "
+            "not exposed to the accessibility tree) may not be matchable as DOM "
+            "text — if you can see it in a page_screenshot but not here, that's why."
+        )
+    return base
 
 
 async def type_by_text(

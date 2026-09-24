@@ -98,6 +98,7 @@ jobs:
             tests/integration/test_page_pdf.py \
             tests/integration/test_cdp_send_warning.py \
             tests/integration/test_download_link_frame.py \
+            tests/integration/test_page_scroll_verify.py \
             tests/integration/test_page_wait_element.py
 
   # ─────────────────────────────────────────────────────────────────────
