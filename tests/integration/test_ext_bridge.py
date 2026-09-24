@@ -17,6 +17,7 @@ import websockets
 
 from ai_dev_browser.cdp import runtime, target as cdp_target
 from ai_dev_browser.core._transport import CDPConnection, ProtocolException
+from ai_dev_browser.core.connection import BrowserClient, get_active_tab
 from ai_dev_browser.core.ext_bridge import run_bridge
 
 
@@ -87,6 +88,40 @@ async def test_bridge_multiplexes_browser_and_per_tab_connections():
 
         await tconn.disconnect()
         await bconn.disconnect()
+    finally:
+        ext.cancel()
+        server.close()
+
+
+@pytest.mark.asyncio
+async def test_extension_transport_skips_render_viewport(monkeypatch):
+    """get_active_tab must NOT push a render viewport in extension transport —
+    that drives the user's real browser, where setDeviceMetricsOverride is
+    unroutable ("no target" when no tab is attached) and one unwrapped step
+    used to fail every tool. (The fake answers evaluate with 42, so innerWidth
+    reads <1000 — without the skip the desktop viewport would be applied.)"""
+    monkeypatch.delenv("AI_DEV_BROWSER_VIEWPORT", raising=False)
+    port = 9541
+    server, _ = await run_bridge(port)
+    ready = asyncio.Event()
+    seen: list = []
+    ext = asyncio.create_task(_fake_extension(port, ready, seen))
+    try:
+        await asyncio.wait_for(ready.wait(), 5)
+        await asyncio.sleep(0.2)
+        browser = await BrowserClient.connect(
+            host="127.0.0.1",
+            port=port,
+            ws_url=f"ws://127.0.0.1:{port}/devtools/browser",
+        )
+        browser.transport = "extension"  # what connect_extension marks
+        tab = await get_active_tab(browser)
+        assert tab is not None
+        methods = [m for m, _ in seen]
+        assert "Emulation.setDeviceMetricsOverride" not in methods, (
+            f"extension transport must not push a render viewport: {methods}"
+        )
+        await browser.close()
     finally:
         ext.cancel()
         server.close()

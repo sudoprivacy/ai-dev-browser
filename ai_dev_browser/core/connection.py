@@ -162,6 +162,10 @@ class BrowserClient:
         self.targets: list[Tab] = []
         self.connection: CDPConnection | None = None
         self._cookies: CookieJar | None = None
+        # "extension" when driving the user's real browser via the bridge (set by
+        # connect_extension); None for a normal CDP Chrome. get_active_tab reads
+        # it to skip page-only setup that's meaningless against a real browser.
+        self.transport: str | None = None
 
     @classmethod
     async def connect(
@@ -460,12 +464,23 @@ async def get_active_tab(
         except Exception:
             pass  # best-effort; never block tab acquisition on identity setup
 
+        # Skip the render-viewport override entirely in EXTENSION transport: it
+        # drives the user's REAL browser, where forcing a render viewport on
+        # their tab is both undesirable and unroutable — setDeviceMetricsOverride
+        # returns "no target" when no tab is attached, and this one unwrapped
+        # step (unlike the best-effort dialog/identity steps above) took down
+        # EVERY tool through get_active_tab, including tab_list / cookies that
+        # need no page target at all.
+        if getattr(browser, "transport", None) == "extension":
+            return tab
+
         # An explicit window_set is recorded per instance and re-asserted here
         # every call — so an intentional narrow/mobile viewport persists instead
         # of being clobbered by the desktop default below (a tab below the
         # desktop threshold would otherwise be forced wide on the next call,
         # which made mobile-layout testing impossible). Idempotent: only re-set
-        # when the width actually differs.
+        # when the width actually differs. Best-effort — a viewport that can't be
+        # applied must never fail the whole acquisition (see extension note).
         try:
             recorded_vp = registry.read_viewport(port) if port is not None else None
         except Exception:
@@ -473,10 +488,13 @@ async def get_active_tab(
         if recorded_vp:
             try:
                 current = await tab.evaluate("window.innerWidth", return_by_value=True)
+                if (
+                    not isinstance(current, (int, float))
+                    or int(current) != recorded_vp[0]
+                ):
+                    await tab.set_viewport(*recorded_vp)
             except Exception:
-                current = 0
-            if not isinstance(current, (int, float)) or int(current) != recorded_vp[0]:
-                await tab.set_viewport(*recorded_vp)
+                pass  # best-effort; never block tab acquisition on the viewport
             return tab
 
         # Otherwise give every tab a desktop render viewport so responsive apps
@@ -493,10 +511,10 @@ async def get_active_tab(
             return tab
         try:
             current = await tab.evaluate("window.innerWidth", return_by_value=True)
+            if not isinstance(current, (int, float)) or current < DESKTOP_MIN_WIDTH:
+                await tab.set_viewport(*viewport)
         except Exception:
-            current = 0
-        if not isinstance(current, (int, float)) or current < DESKTOP_MIN_WIDTH:
-            await tab.set_viewport(*viewport)
+            pass  # best-effort; never block tab acquisition on the viewport
         return tab
 
     page_targets = [
@@ -585,11 +603,16 @@ async def connect_extension() -> BrowserClient:
         # The bridge serves no HTTP; hand BrowserClient the fixed browser-level
         # WS URL so it skips /json/version discovery. Everything else is the
         # normal CDP path.
-        return await BrowserClient.connect(
+        browser = await BrowserClient.connect(
             host="127.0.0.1",
             port=EXTENSION_BRIDGE_PORT,
             ws_url=f"ws://127.0.0.1:{EXTENSION_BRIDGE_PORT}/devtools/browser",
         )
+        # Mark the transport so get_active_tab can skip page-only setup (the
+        # render-viewport override) that is meaningless / unroutable against the
+        # user's real browser — see _prepared.
+        browser.transport = "extension"
+        return browser
     except Exception as e:
         raise ConnectionError(
             "Extension transport isn't ready (the bridge extension isn't "
