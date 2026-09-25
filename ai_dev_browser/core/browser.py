@@ -562,6 +562,36 @@ def browser_start(
     return result
 
 
+def _build_info() -> dict:
+    """`{version}` (+ `git_commit` when running from a checkout) so a re-tester
+    can tell WHICH code they're driving. In a repo-direct / editable run the
+    packaged version is stale — setuptools-scm resolves it at build time, so the
+    installed metadata lags the working tree — which makes the live git commit
+    the unambiguous signal. Best-effort: omitted when there's no `.git` or git
+    isn't callable."""
+    from ai_dev_browser._version import __version__
+
+    info: dict = {"version": __version__}
+    try:
+        import pathlib
+        import subprocess
+
+        root = pathlib.Path(__file__).resolve().parents[2]
+        if (root / ".git").exists():
+            r = subprocess.run(
+                ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            sha = r.stdout.strip()
+            if r.returncode == 0 and sha:
+                info["git_commit"] = sha
+    except Exception:
+        pass  # no git / not a checkout — version alone
+    return info
+
+
 async def browser_connect(
     transport: Literal["cdp", "extension"] = "cdp",
     port: int | None = None,
@@ -605,7 +635,10 @@ async def browser_connect(
     step); you only ever load the extension once, by hand.
 
     Returns:
-        dict with `transport`, `connected`. cdp+connected: `port, tab_count,
+        dict with `transport`, `connected`, and `version` (+ `git_commit` when
+        run from a checkout, since the packaged version lags a repo-direct /
+        editable working tree — use it to confirm WHICH code you're driving).
+        cdp+connected: `port, tab_count,
         tabs`. extension+connected: `account, tab_count, tabs`. Not connected:
         `setup_instructions` + `extension_dir` (and `bridge_running` once the
         daemon is up), or the cdp connect error.
@@ -657,6 +690,7 @@ async def browser_connect(
                 "tab_count": len(tabs),
                 "tabs": tabs,
                 "bridge_port": EXTENSION_BRIDGE_PORT,
+                **_build_info(),
             }
         # Daemon is up, but no extension has dialed in yet — loading/enabling it
         # (or waiting out a just-reload) and retrying is the fix.
@@ -667,6 +701,7 @@ async def browser_connect(
             "bridge_running": True,
             "extension_dir": str(extension_dir()),
             "setup_instructions": extension_load_instructions(),
+            **_build_info(),
         }
 
     # cdp
@@ -688,6 +723,7 @@ async def browser_connect(
         "port": browser.port,
         "tab_count": len(tabs),
         "tabs": tabs,
+        **_build_info(),
     }
 
 
