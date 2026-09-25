@@ -65,7 +65,16 @@ async def test_to_element_reports_false_when_already_in_view(tab):
     await _load(tab, _FLAT)
     res = await page_scroll(tab, to_element="fits the viewport")
     assert res.get("scrolled") is False, res
-    assert "reason" in res and res.get("target"), res
+    # found:True disambiguates "already in view (proceed)" from "not located"
+    assert res.get("found") is True and res.get("target"), res
+    assert "reason" in res, res
+
+
+@pytest.mark.asyncio
+async def test_to_element_missing_reports_found_false(tab):
+    await _load(tab, _FLAT)
+    res = await page_scroll(tab, to_element="NONEXISTENT_ZZZ")
+    assert res.get("scrolled") is False and res.get("found") is False, res
 
 
 @pytest.mark.asyncio
@@ -79,4 +88,4 @@ async def test_direction_scroll_reports_true_when_it_moves(tab):
 async def test_to_element_reports_true_when_it_moves(tab):
     await _load(tab, _TALL)
     res = await page_scroll(tab, to_element="BOTTOM")
-    assert res.get("scrolled") is True, res
+    assert res.get("scrolled") is True and res.get("found") is True, res

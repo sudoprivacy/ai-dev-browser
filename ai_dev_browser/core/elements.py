@@ -479,25 +479,34 @@ async def page_scroll(
 
     Returns:
         dict — `{scrolled: True, target, ...}` on success;
-        `{scrolled: False, reason}` when nothing was scrollable.
+        `{scrolled: False, reason}` when nothing moved. For `to_element`, a
+        `found` bool disambiguates the two `scrolled: false` cases: `found:
+        true` means the element is located and needed no scroll (already in
+        view) — proceed to act on it; `found: false` means it couldn't be
+        located at all.
 
     Failure:
-        `scrolled: false` means nothing moved. `reason` says why: no
-        element matched `to_element` (check the text with `page_discover`),
-        the page has no scrollable content, or the content lives in a
-        cross-origin iframe JS scroll can't reach — for that case try
-        `direction='down'` (gesture scroll routes to whatever is under the
-        cursor), or scroll it directly with `js_evaluate(frame=...)`. When
-        `to_bottom`/`to_top` succeed, the `target`
-        field names the container that was scrolled; if it picked the
-        wrong one, scroll that element by text via `to_element` instead.
+        `scrolled: false` means nothing moved — but for `to_element` check
+        `found` first: `found: false` = the element wasn't located (check the
+        text with `page_discover`); `found: true` = it's already in view (act on
+        it, this isn't a failure). Otherwise `reason` says why nothing scrolled:
+        the page has no scrollable content, or it lives in a cross-origin iframe
+        JS scroll can't reach — for that try `direction='down'` (gesture scroll
+        routes to whatever is under the cursor), or `js_evaluate(frame=...)`.
+        When `to_bottom`/`to_top` succeed, `target` names the scrolled container;
+        if it picked the wrong one, scroll that element by text via `to_element`.
     """
     target_name = to_element if isinstance(to_element, str) else None
     if to_element is not None:
         element = await _resolve_scroll_target(tab, to_element)
         if element is None:
+            # found:False distinguishes "couldn't locate it" from the
+            # located-but-no-scroll-needed case below — both are scrolled:False,
+            # so a caller branching on `scrolled` alone couldn't tell a failure
+            # to LOCATE from a success that needed no movement.
             return {
                 "scrolled": False,
+                "found": False,
                 "reason": f"no element found to scroll to for {to_element!r}",
             }
         before = await _scroll_signature(tab)
@@ -508,13 +517,14 @@ async def page_scroll(
         if await _scroll_signature(tab) == before:
             return {
                 "scrolled": False,
+                "found": True,
                 "target": target,
                 "reason": (
                     f"{target!r} is already in view or its container isn't "
                     "scrollable — nothing moved"
                 ),
             }
-        return {"scrolled": True, "target": target}
+        return {"scrolled": True, "found": True, "target": target}
 
     if to_bottom or to_top:
         info = await _scroll_to_edge(tab, "bottom" if to_bottom else "top")
