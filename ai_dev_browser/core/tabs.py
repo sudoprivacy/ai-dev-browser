@@ -1,5 +1,9 @@
 """Tab management operations."""
 
+import contextlib
+
+from ai_dev_browser.cdp import target as cdp_target
+
 from ._tab import Tab
 from .connection import BrowserClient
 
@@ -98,18 +102,29 @@ async def tab_close(
     tab_id: int | None = None,
     tab: Tab | None = None,
 ) -> dict:
-    """Close a tab.
+    """Close a tab (the real browser tab, both cdp and extension transports).
+
+    Returns `{closed, remaining}` — `closed` reports whether the tab is actually
+    gone (re-checked against a fresh target list), `remaining` is the live count
+    after closing. `closed: false` means it didn't close (and says why).
 
     Args:
         browser_or_tab: Browser or Tab instance
-        tab_id: Tab index to close
+        tab_id: Tab index to close (from `tab_list`)
         tab: Tab instance to close
 
     Returns:
-        dict with remaining tab count
+        dict with `closed` and `remaining`.
 
     Raises:
-        ValueError: If trying to close the last tab
+        ValueError: If trying to close the last tab, or the target can't be
+            resolved.
+
+    Failure:
+        `closed: false` means the tab is still open after the close — verify the
+        `tab_id` against a fresh `tab_list`. (Closing is driven by
+        `Target.closeTarget`, which the extension bridge maps to
+        `chrome.tabs.remove`, so extension transport is supported.)
     """
     browser = _get_browser(browser_or_tab)
 
@@ -121,5 +136,31 @@ async def tab_close(
     elif tab is None:
         tab = browser.main_tab
 
-    await tab.close()
-    return {"remaining": len(browser.tabs)}
+    target_id = getattr(getattr(tab, "_target", None), "target_id", None)
+    if target_id is None:
+        raise ValueError("Cannot resolve the target to close")
+
+    # Actually close the BROWSER tab via Target.closeTarget (the extension bridge
+    # maps it to chrome.tabs.remove), not just drop adb's per-tab WebSocket —
+    # `tab.close()` only disconnected the socket, so the tab stayed open and the
+    # call looked successful while doing nothing.
+    if browser.connection is not None:
+        await browser.connection.send(cdp_target.close_target(target_id=target_id))
+    with contextlib.suppress(Exception):
+        await tab.close()  # drop our now-dead per-tab socket
+
+    # Re-fetch targets so `remaining` is the live count and we can VERIFY the
+    # close (the old code returned the pre-close count — a failed close read as
+    # success and left the caller acting on a stale/closed tab).
+    await browser.update_targets()
+    still_open = any(
+        getattr(t._target, "target_id", None) == target_id for t in browser.tabs
+    )
+    remaining = len(browser.tabs)
+    if still_open:
+        return {
+            "closed": False,
+            "remaining": remaining,
+            "error": f"tab {tab_id} did not close (target {target_id} still present)",
+        }
+    return {"closed": True, "remaining": remaining}

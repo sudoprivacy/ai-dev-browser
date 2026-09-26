@@ -99,6 +99,7 @@ jobs:
             tests/integration/test_cdp_send_warning.py \
             tests/integration/test_download_link_frame.py \
             tests/integration/test_page_scroll_verify.py \
+            tests/integration/test_tab_close.py \
             tests/integration/test_page_wait_element.py
 
   # ─────────────────────────────────────────────────────────────────────

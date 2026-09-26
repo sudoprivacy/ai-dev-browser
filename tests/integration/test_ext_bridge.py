@@ -127,6 +127,81 @@ async def test_extension_transport_skips_render_viewport(monkeypatch):
         server.close()
 
 
+async def _fake_extension_two_tabs(port, ready, seen):
+    """Mock extension with TWO page targets that honors Target.closeTarget by
+    dropping the target — so a subsequent getTargets reflects the removal, the
+    way the real background.js does via chrome.tabs.remove."""
+    ws = await websockets.connect(f"ws://127.0.0.1:{port}")
+    await ws.send(json.dumps({"_hello": True, "account": "tester@example.com"}))
+    ready.set()
+    targets = {"1", "2"}
+    try:
+        async for raw in ws:
+            m = json.loads(raw)
+            gid = m.get("_gid")
+            if gid is None:
+                continue
+            method = m.get("method")
+            seen.append(
+                (method, (m.get("params") or {}).get("targetId") or m.get("tab"))
+            )
+            if method == "Target.getTargets":
+                result = {
+                    "targetInfos": [
+                        {
+                            "targetId": t,
+                            "type": "page",
+                            "title": "",
+                            "url": "about:blank",
+                            "attached": True,
+                            "canAccessOpener": False,
+                        }
+                        for t in sorted(targets)
+                    ]
+                }
+            elif method == "Target.closeTarget":
+                targets.discard((m.get("params") or {}).get("targetId"))
+                result = {"success": True}
+            else:
+                result = {}
+            await ws.send(json.dumps({"_gid": gid, "result": result}))
+    except Exception:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_tab_close_routes_close_target_over_extension():
+    """tab_close must actually close the tab in extension transport — send
+    Target.closeTarget (the bridge maps it to chrome.tabs.remove), then re-fetch
+    so `remaining` is honest. Before, it only dropped adb's WS and returned a
+    stale count, so a no-op read as success."""
+    from ai_dev_browser.core.tabs import tab_close
+
+    port = 9543
+    server, _ = await run_bridge(port)
+    ready = asyncio.Event()
+    seen: list = []
+    ext = asyncio.create_task(_fake_extension_two_tabs(port, ready, seen))
+    try:
+        await asyncio.wait_for(ready.wait(), 5)
+        await asyncio.sleep(0.2)
+        browser = await BrowserClient.connect(
+            host="127.0.0.1",
+            port=port,
+            ws_url=f"ws://127.0.0.1:{port}/devtools/browser",
+        )
+        browser.transport = "extension"
+        assert len(browser.tabs) == 2, [t._target.target_id for t in browser.tabs]
+        res = await tab_close(browser, tab_id=1)
+        assert res["closed"] is True, res
+        assert res["remaining"] == 1, res
+        assert any(m == "Target.closeTarget" for m, _ in seen), seen
+        await browser.close()
+    finally:
+        ext.cancel()
+        server.close()
+
+
 @pytest.mark.asyncio
 async def test_driver_without_extension_gets_clean_error_not_hang():
     port = 9540
