@@ -321,12 +321,23 @@ class Tab:
         Raises ValueError if no cross-origin iframe matches (same-origin frames
         are reached without a session — they're not separate targets).
         """
-        targets = await self.send(cdp_target.get_targets())
-        iframes = [t for t in targets if getattr(t, "type_", None) == "iframe"]
-        match = next(
-            (t for t in iframes if t.target_id == frame or frame in (t.url or "")),
-            None,
-        )
+
+        # An OOPIF target can register a beat after navigation — poll briefly so
+        # a caller reaching into a just-loaded cross-origin / srcdoc iframe (or a
+        # slow runner) doesn't get a spurious "no such frame". The first pass
+        # usually matches; only the not-yet-there case waits.
+        iframes: list = []
+        match = None
+        for attempt in range(10):  # ~1.5s
+            targets = await self.send(cdp_target.get_targets())
+            iframes = [t for t in targets if getattr(t, "type_", None) == "iframe"]
+            match = next(
+                (t for t in iframes if t.target_id == frame or frame in (t.url or "")),
+                None,
+            )
+            if match is not None:
+                break
+            await asyncio.sleep(0.15)
         if match is None:
             available = [t.url for t in iframes if t.url] or ["(none)"]
             raise ValueError(
