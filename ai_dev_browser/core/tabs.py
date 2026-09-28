@@ -1,5 +1,6 @@
 """Tab management operations."""
 
+import asyncio
 import contextlib
 
 from ai_dev_browser.cdp import target as cdp_target
@@ -151,11 +152,19 @@ async def tab_close(
 
     # Re-fetch targets so `remaining` is the live count and we can VERIFY the
     # close (the old code returned the pre-close count — a failed close read as
-    # success and left the caller acting on a stale/closed tab).
-    await browser.update_targets()
-    still_open = any(
-        getattr(t._target, "target_id", None) == target_id for t in browser.tabs
-    )
+    # success and left the caller acting on a stale/closed tab). Target.closeTarget
+    # is ASYNC — on some platforms (Windows) getTargets briefly still lists the
+    # just-closed target — so poll for it to disappear instead of reading the list
+    # one tick too early (which flaked the close-verify).
+    still_open = True
+    for _ in range(20):  # ~2s at 0.1s
+        await browser.update_targets()
+        still_open = any(
+            getattr(t._target, "target_id", None) == target_id for t in browser.tabs
+        )
+        if not still_open:
+            break
+        await asyncio.sleep(0.1)
     remaining = len(browser.tabs)
     if still_open:
         return {
