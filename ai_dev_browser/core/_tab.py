@@ -73,6 +73,11 @@ class Tab:
         # Cache of {frame target id -> CDP flat-session id} for cross-origin
         # iframe routing; populated lazily by frame_session().
         self._frame_sessions: dict[str, str] = {}
+        # Last cursor position, so an interpolated move starts from where the
+        # pointer actually is instead of sweeping the page from (0,0) — which
+        # would fire hover/mouseover/tooltip handlers all along the path.
+        self._mouse_x: float = 0.0
+        self._mouse_y: float = 0.0
 
     # =========================================================================
     # Properties
@@ -518,9 +523,12 @@ class Tab:
                 cdp_input.dispatch_mouse_event("mouseMoved", x=x, y=y),
                 timeout=MOUSE_EVENT_TIMEOUT,
             )
+            self._mouse_x, self._mouse_y = x, y
             return
-        # Get last known position (default 0,0)
-        from_x, from_y = 0, 0
+        # Interpolate FROM the last known cursor position, not (0,0) — starting
+        # at the origin swept the pointer diagonally across the whole page every
+        # move, tripping hover/tooltip handlers en route (a hidden side effect).
+        from_x, from_y = self._mouse_x, self._mouse_y
         for i in range(steps):
             t = (i + 1) / steps
             ix = from_x + (x - from_x) * t
@@ -529,6 +537,7 @@ class Tab:
                 cdp_input.dispatch_mouse_event("mouseMoved", x=ix, y=iy),
                 timeout=MOUSE_EVENT_TIMEOUT,
             )
+        self._mouse_x, self._mouse_y = x, y
 
     async def mouse_click(
         self,
@@ -567,6 +576,7 @@ class Tab:
             timeout=MOUSE_EVENT_TIMEOUT,
             session_id=session_id,
         )
+        self._mouse_x, self._mouse_y = x, y
 
     async def mouse_drag(self, source, dest, steps: int = 10):
         """Drag from source to dest. Both are (x, y) tuples or have .x/.y attrs."""
@@ -591,7 +601,13 @@ class Tab:
             ix = sx + (dx - sx) * t
             iy = sy + (dy - sy) * t
             await self.send(
-                cdp_input.dispatch_mouse_event("mouseMoved", x=ix, y=iy),
+                # buttons=1 (left held) so the browser treats these as a DRAG,
+                # not free moves: without it every move reports buttons=0, so a
+                # page reading e.buttons never sees a drag, and setPointerCapture
+                # in a pointermove throws NotFoundError (the pointer isn't
+                # "active"). `button` stays default (none) — nothing transitions
+                # on a move; `buttons` is the held-button bitmask.
+                cdp_input.dispatch_mouse_event("mouseMoved", x=ix, y=iy, buttons=1),
                 timeout=MOUSE_EVENT_TIMEOUT,
             )
         await self.send(
@@ -600,6 +616,7 @@ class Tab:
             ),
             timeout=MOUSE_EVENT_TIMEOUT,
         )
+        self._mouse_x, self._mouse_y = dx, dy
 
     # =========================================================================
     # Scroll
