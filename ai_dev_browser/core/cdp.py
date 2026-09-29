@@ -1,5 +1,6 @@
 """CDP (Chrome DevTools Protocol) command operations."""
 
+import enum
 import inspect
 import json
 import typing
@@ -14,12 +15,12 @@ def _coerce_value(value, annotation):
     """Turn a plain JSON value into the typed CDP object a binding param expects.
 
     The vendored bindings type object params as generated classes (e.g.
-    `features: Optional[List[MediaFeature]]`) and serialize each with `.to_json()`
-    — so a raw dict/list-of-dicts from `cdp_send` blows up with
-    "'dict' object has no attribute 'to_json'". Each such class has a `from_json`;
-    this rebuilds the object (recursing Optional/Union and List[...]) using the
-    param's annotation. Anything without a `from_json` annotation passes through
-    unchanged, so primitives and enums are untouched."""
+    `features: Optional[List[MediaFeature]]`) and ENUM params as generated
+    enums (e.g. `button: Optional[MouseButton]`), and serialize each with
+    `.to_json()` — so a raw dict / list-of-dicts / enum-string from `cdp_send`
+    blows up with "'X' object has no attribute 'to_json'". Each such class has a
+    `from_json`; this rebuilds the value (recursing Optional/Union and List[...])
+    using the param's annotation. Plain primitives pass through unchanged."""
     if annotation is None or value is None:
         return value
     origin = typing.get_origin(annotation)
@@ -34,10 +35,24 @@ def _coerce_value(value, annotation):
         elem = args[0] if args else None
         if elem is not None and hasattr(elem, "from_json"):
             return [
-                elem.from_json(item) if isinstance(item, dict) else item
+                elem.from_json(item)
+                if isinstance(item, (dict, str, int, float))
+                else item
                 for item in value
             ]
         return value
+    # A string param typed as a CDP enum (MouseButton, KeyEventType, …): build
+    # the enum so it serializes — a raw `"left"` would reach the binding as a str
+    # and fail on `.to_json()`. Also covers enums exposed via from_json only.
+    if (
+        isinstance(value, str)
+        and inspect.isclass(annotation)
+        and issubclass(annotation, enum.Enum)
+    ):
+        try:
+            return annotation.from_json(value)
+        except Exception:
+            return annotation(value)  # value-enum fallback; raises on a bad value
     if (
         isinstance(value, dict)
         and inspect.isclass(annotation)

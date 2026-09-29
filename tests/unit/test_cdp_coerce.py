@@ -65,3 +65,27 @@ def test_get_cdp_command_reaches_input_domain():
         {"type": "mouseWheel", "x": 1.0, "y": 2.0, "delta_x": 0.0, "delta_y": 6.0},
     )
     assert gen is not None  # a CDP command generator, not an exception
+
+
+def test_coerce_enum_string_to_enum():
+    # button="left" is typed as MouseButton (an enum) — a raw str reached the
+    # binding and failed on .to_json(); coerce it to the enum.
+    assert _coerce_value("left", cdp_input.MouseButton) is cdp_input.MouseButton.LEFT
+    assert (
+        _coerce_value("middle", cdp_input.MouseButton) is cdp_input.MouseButton.MIDDLE
+    )
+
+
+def test_get_cdp_command_builds_a_click_with_enum_button():
+    # a full mousePressed via cdp_send: type->type_, button "left" -> MouseButton.
+    gen = _get_cdp_command(
+        "Input.dispatchMouseEvent",
+        {
+            "type": "mousePressed",
+            "button": "left",
+            "x": 1.0,
+            "y": 2.0,
+            "click_count": 1,
+        },
+    )
+    assert gen is not None

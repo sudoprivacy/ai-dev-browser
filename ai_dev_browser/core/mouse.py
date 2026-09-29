@@ -6,6 +6,8 @@ the PNG. This makes screenshot coordinates directly usable for clicking
 without manual conversion.
 """
 
+import contextlib
+
 from ._tab import Tab
 
 from . import human
@@ -103,9 +105,11 @@ async def mouse_click(
         modifiers: Modifier keys bitmask (1=Alt, 2=Ctrl, 4=Meta, 8=Shift)
         double: If True, double click
         human_like: Use human-like timing (default: from config)
-        move: If True (default), move the cursor to the target before
-            clicking. Set False to press+release in place — fewer dispatched
-            events, more robust on heavy SPAs.
+        move: If True (default), move the cursor to the target before clicking.
+            The move is now **best-effort** — a slow or failed positioning move
+            (some Chrome builds run a single mouseMoved slower than its timeout)
+            is skipped and the press+release still fire, so a laggy move never
+            dooms the click. Set False to skip the move entirely (fewest events).
 
     Returns:
         True on success
@@ -132,18 +136,30 @@ async def mouse_click(
         else (config.use_gaussian_path or config.click_hold_enabled)
     )
 
+    # Position best-effort, then click IN PLACE. The pre-click mouseMoved is a
+    # realism/hover nicety, not the action — on some Chrome builds a single
+    # mouseMoved runs slower than its own timeout, and letting it raise doomed
+    # the whole click (which pushed callers onto the isTrusted=false click_by_*
+    # fallback — hiding exactly the trusted-input bugs mouse_click exists to
+    # surface). So a slow/failed positioning move is swallowed; the press+release
+    # (the essential, near-instant part) always fire.
+    if move:
+        with contextlib.suppress(Exception):
+            if use_human:
+                await human.mouse_move(tab, x, y)
+            else:
+                await tab.mouse_move(x, y, steps=1)
+
     if use_human:
         if double:
-            await human.mouse_double_click(tab, x, y, button=button, move_first=move)
+            await human.mouse_double_click(tab, x, y, button=button, move_first=False)
         else:
-            await human.mouse_click(tab, x, y, button=button, move_first=move)
+            await human.mouse_click(tab, x, y, button=button, move_first=False)
     else:
-        if move:
-            await tab.mouse_move(x, y, steps=1)
         await tab.mouse_click(x, y, button=button, modifiers=modifiers)
         if double:
             await tab.mouse_click(x, y, button=button, modifiers=modifiers)
-        human.set_last_mouse_pos(tab, x, y)
+    human.set_last_mouse_pos(tab, x, y)
     return True
 
 

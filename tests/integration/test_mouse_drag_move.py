@@ -72,6 +72,58 @@ async def test_drag_moves_hold_the_button(tab):
 
 
 @pytest.mark.asyncio
+async def test_click_survives_a_slow_or_failing_pre_move(tab, monkeypatch):
+    # A slow/timing-out positioning move must not doom the click — the press +
+    # release (the actual action) still fire. Simulate the move raising.
+
+    from ai_dev_browser.core import mouse as _mouse
+    from ai_dev_browser.core.mouse import mouse_click
+
+    async def boom(*a, **k):
+        raise TimeoutError("CDP command timed out after 5.0s: Input.dispatchMouseEvent")
+
+    # both the human and plain move paths raise; the click must still land
+    monkeypatch.setattr(_mouse.human, "mouse_move", boom)
+    monkeypatch.setattr(tab, "mouse_move", boom)
+    await tab.get(
+        "data:text/html,<body style='margin:0'>"
+        "<div id=t style='width:100vw;height:100vh' "
+        "onclick=\"document.title='HIT'\">x</div></body>"
+    )
+    await tab.sleep(0.2)
+    assert await mouse_click(tab, 40, 40, move=True) is True
+    assert await tab.evaluate("document.title") == "HIT", (
+        "click must fire despite the move failing"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cdp_send_dispatches_a_click_with_enum_button(tab):
+    # The raw escape hatch must send a click: button="left" (a str) is coerced to
+    # the MouseButton enum instead of failing on .to_json().
+    import json as _json
+
+    from ai_dev_browser.core.cdp import cdp_send
+
+    await tab.get(
+        "data:text/html,<body style='margin:0'>"
+        "<div id=t style='width:100vw;height:100vh' "
+        "onclick=\"document.title='RAW'\">x</div></body>"
+    )
+    await tab.sleep(0.2)
+    for etype in ("mousePressed", "mouseReleased"):
+        res = await cdp_send(
+            tab,
+            "Input.dispatchMouseEvent",
+            _json.dumps(
+                {"type": etype, "button": "left", "x": 40, "y": 40, "clickCount": 1}
+            ),
+        )
+        assert "error" not in res, res
+    assert await tab.evaluate("document.title") == "RAW"
+
+
+@pytest.mark.asyncio
 async def test_mouse_move_starts_from_last_position_not_origin(tab):
     await tab.mouse_move(400, 300, steps=8)
     await tab.evaluate("window.__mm=[]")
