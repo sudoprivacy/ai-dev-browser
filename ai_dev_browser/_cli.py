@@ -188,6 +188,19 @@ def _get_param_type(hint) -> type | Callable:
         non_none_args = [a for a in args if a is not type(None)]
         if len(non_none_args) == 1:
             return _get_param_type(non_none_args[0])
+        if set(non_none_args) == {bool, str}:
+            # bool | str represents a switch with named modes (e.g. headless
+            # True/False/new/old). Preserve mode strings but turn explicit
+            # boolean tokens into actual bools before invoking the core.
+            def bool_or_str(value: str):
+                lowered = value.lower()
+                if lowered in ("true", "1", "yes"):
+                    return True
+                if lowered in ("false", "0", "no"):
+                    return False
+                return value
+
+            return bool_or_str
     return str
 
 
@@ -273,6 +286,15 @@ def _generate_parser(
                     f"--{name.replace('_', '-')}",
                     action="store_true",
                     default=False,
+                    help=help_text,
+                )
+            elif param.default is None:
+                # A bool with default None delegates to core configuration.
+                # Do not turn omission into True (e.g. human_like=None).
+                parser.add_argument(
+                    f"--{name.replace('_', '-')}",
+                    action=argparse.BooleanOptionalAction,
+                    default=None,
                     help=help_text,
                 )
             else:
@@ -520,9 +542,9 @@ def _classify_error(message: str | None) -> tuple[str, bool]:
     if "timed out" in m or "timeout" in m:
         return "timeout", False
     # A transport-level "no target for <method>": the tab/target the command
-    # needed isn't attached. In extension mode the bridge is connected but no tab
-    # is attached (a recycled service worker, or browser_connect not run); in CDP
-    # mode the target was closed. Distinct code so the caller can branch, plus a
+    # needed wasn't resolved. In extension mode a missing page route can cause
+    # this even when discovery succeeds; in CDP mode the target may be closed.
+    # Distinct code so the caller can branch, plus a
     # dedicated hint below — the tool's own Failure hint is about the wrong thing.
     if "no target" in m:
         return "no_target", False
@@ -543,6 +565,9 @@ def _classify_error(message: str | None) -> tuple[str, bool]:
             "cannot parse",
             "unknown unit",
             "unknown preset",
+            "invalid cdp method",
+            "invalid cdp params",
+            "headless must be",
         )
     ):
         return "validation", False
@@ -554,10 +579,11 @@ def _classify_error(message: str | None) -> tuple[str, bool]:
 # what actually happened and how to recover, and OVERRIDES the tool hint.
 _NO_TARGET_HINT = (
     "The command had no tab/target to act on — nothing ran. In EXTENSION mode: "
-    "the bridge is connected but no tab is attached (the extension's service "
-    "worker may have been recycled, or browser_connect wasn't run) — re-run "
-    "`browser_connect --transport extension`, and reload the ai-dev-browser "
-    "extension in Chrome if that doesn't recover it. In CDP mode: the tab/target "
+    "check routing with `cdp_send --transport extension --method "
+    "AiDevBrowser.debugState`. After upgrading, restart the bridge with "
+    "`browser_disconnect` then "
+    "`browser_connect --transport extension` (this disconnects all extension "
+    "drivers); reload the extension if it still cannot attach. In CDP mode: the tab/target "
     "was closed — re-acquire it with `tab_list` / `browser_start`."
 )
 

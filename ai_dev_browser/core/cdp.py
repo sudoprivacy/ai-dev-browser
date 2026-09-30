@@ -3,6 +3,7 @@
 import enum
 import inspect
 import json
+import re
 import typing
 
 from ai_dev_browser import cdp as cdp_module
@@ -98,6 +99,8 @@ def _get_cdp_command(method: str, params: dict):
     Returns:
         CDP command generator
     """
+    if not re.fullmatch(r"[A-Za-z_]\w*\.[A-Za-z_]\w*", method):
+        raise ValueError("Invalid CDP method: must be Domain.command")
     domain, cmd = method.split(".")
     domain_snake = camel_to_snake(domain)
     cmd_snake = camel_to_snake(cmd)
@@ -110,10 +113,23 @@ def _get_cdp_command(method: str, params: dict):
         domain_snake = "input_"
 
     # Get the domain module (e.g., cdp.browser)
-    domain_mod = getattr(cdp_module, domain_snake)
+    domain_mod = getattr(cdp_module, domain_snake, None)
 
     # Get the command function (e.g., cdp.browser.get_version)
-    cmd_func = getattr(domain_mod, cmd_snake)
+    cmd_func = getattr(domain_mod, cmd_snake, None)
+    if cmd_func is None:
+        # New protocol methods and extension-specific commands may have no
+        # generated binding. Preserve their wire params exactly, including
+        # camelCase keys; the receiver validates the command. Only an absent
+        # binding uses this path, never a binding's parameter/runtime error.
+        def raw_command():
+            result = yield {"method": method, "params": params}
+            return result
+
+        return raw_command()
+
+    # Bound commands accept both CDP camelCase and Python snake_case keys.
+    params = {camel_to_snake(k): v for k, v in params.items()}
 
     # Reconcile params named after a Python keyword: the bindings suffix those
     # with `_` (CDP's `type` -> `type_`), so a verbatim `{"type": "mouseWheel"}`
@@ -201,6 +217,10 @@ async def cdp_send(
     `page_screenshot`, ...); they steer correct usage and shape the return.
     Returns `{result}` — whatever the CDP method returned, verbatim.
 
+    Methods without a bundled binding are sent directly, including extension
+    diagnostics such as `AiDevBrowser.debugState`. For these methods use the
+    protocol's exact parameter names (usually camelCase).
+
     Heads-up on session-scoped overrides: an effect like
     `Browser.setDownloadBehavior` or the `Emulation.*` overrides is bound to the
     CDP session, and adb opens a fresh session per tool call — so it will NOT
@@ -216,7 +236,8 @@ async def cdp_send(
         params: JSON string of parameters. Keys may be the CDP-native camelCase
             copied straight from the protocol docs (`deviceScaleFactor`) or the
             snake_case the Python bindings use (`device_scale_factor`) — both
-            are accepted.
+            are accepted for bundled bindings. Unbound methods pass keys through
+            unchanged, so use the receiver's exact names.
 
     Returns:
         dict with `result` (or `error`), plus a `warning` when the method's
@@ -226,7 +247,8 @@ async def cdp_send(
         The command errored. Common causes: an unknown `method` (must be
         `Domain.command`, e.g. `Page.navigate` — check the domain and command
         spelling); a parameter name that doesn't exist on that method (casing
-        is normalized, but the name must be real — check the CDP docs); or a
+        is normalized only for bundled bindings; unbound methods require exact
+        protocol names — check the CDP docs); or a
         value of the wrong type. The error text names the offending method or
         parameter — read it rather than guessing.
     """
@@ -234,11 +256,8 @@ async def cdp_send(
     parsed_params = {}
     if params:
         parsed_params = json.loads(params)
-
-    # The CDP docs (and everyone copying from them) use camelCase; the vendored
-    # bindings take snake_case kwargs. Normalize top-level keys so a verbatim
-    # `{"deviceScaleFactor": 1}` doesn't blow up as an unexpected-kwarg error.
-    parsed_params = {camel_to_snake(k): v for k, v in parsed_params.items()}
+    if not isinstance(parsed_params, dict):
+        raise ValueError("Invalid CDP params: must be a JSON object")
 
     # Create CDP command generator
     cdp_cmd = _get_cdp_command(method, parsed_params)

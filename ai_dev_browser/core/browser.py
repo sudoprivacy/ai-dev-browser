@@ -231,7 +231,8 @@ def browser_start(
             supported in headless mode" under the new mode). `None`
             falls back to the `AI_DEV_BROWSER_HEADLESS` env var:
             `1`/`true` → True, `new`/`old` → that literal mode, anything
-            else → False.
+            else → False. CLI: `--headless true` / `--headless false`,
+            or `--headless new` / `--headless old` (an explicit value is required).
         url: Initial URL to open (default: about:blank)
         profile: Named profile for a PERSISTENT session (login survives,
             reusable, per-profile isolated). Omit for the isolated ephemeral

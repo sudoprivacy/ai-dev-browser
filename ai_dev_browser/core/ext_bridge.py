@@ -42,11 +42,13 @@ logger = logging.getLogger(__name__)
 def _conn_path(ws) -> str:
     """The HTTP path the driver connected on (routes browser-level vs per-tab).
 
-    websockets>=11 exposes it at `ws.request.path`; fall back to `/` so a client
-    that omits a path is treated as browser-level.
+    The asyncio server exposes `ws.request.path`; the legacy server (the
+    default in websockets 13, which we also support) exposes `ws.path`.
+    Losing that path turns every page connection into a browser connection
+    and forwards tab=None, even though Target.getTargets still works.
     """
     req = getattr(ws, "request", None)
-    return getattr(req, "path", None) or "/"
+    return getattr(req, "path", None) or getattr(ws, "path", None) or "/"
 
 
 def _target_id_from_path(path: str) -> str | None:

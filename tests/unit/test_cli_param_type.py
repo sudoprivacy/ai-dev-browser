@@ -8,7 +8,9 @@ browser_stop, node_id-based tools).
 
 from typing import Literal, Union
 
-from ai_dev_browser._cli import _get_param_type
+import pytest
+
+from ai_dev_browser._cli import _generate_parser, _get_param_type
 
 
 def test_plain_types():
@@ -87,3 +89,32 @@ def test_optional_dict_returns_json_loads():
     import json
 
     assert _get_param_type(dict[str, str] | None) is json.loads
+
+
+@pytest.mark.parametrize("hint", [bool | str, str | bool | None, Union[bool, str]])
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("True", True),
+        ("false", False),
+        ("1", True),
+        ("0", False),
+        ("new", "new"),
+        ("old", "old"),
+        ("invalid", "invalid"),
+    ],
+)
+def test_boolean_or_named_mode(hint, value, expected):
+    parsed = _get_param_type(hint)(value)
+    assert parsed == expected
+    assert type(parsed) is type(expected)
+
+
+def test_omitted_boolean_preserves_none_default():
+    from ai_dev_browser.core.mouse import mouse_click
+
+    parser = _generate_parser(mouse_click)
+    base = ["--x", "1", "--y", "2", "--no-move"]
+    assert parser.parse_args(base).human_like is None
+    assert parser.parse_args(base + ["--human-like"]).human_like is True
+    assert parser.parse_args(base + ["--no-human-like"]).human_like is False
