@@ -306,8 +306,10 @@ For extension mode, extract the ZIP and load its directory in `chrome://extensio
 After upgrading, reload the extension and restart an already running bridge.
 
 Maintainers: run live browser acceptance and wait for CI on the release commit.
-Create an annotated `vX.Y.Z` tag whose message contains the release notes, then push
-that tag. The [publish workflow](.github/workflows/publish.yml) derives the Python
+Create an annotated `vX.Y.Z` tag with `git tag -a --cleanup=verbatim` and use the
+release notes as its message (`-F release-notes.txt`), then push that tag.
+`--cleanup=verbatim` preserves Markdown headings and shell comments in the notes.
+The [publish workflow](.github/workflows/publish.yml) derives the Python
 version from the tag, builds and validates both distributions, publishes to PyPI,
 and creates the GitHub Release with the matching assets and tag notes. Verify a
 fresh PyPI installation with the live recording workflow before closing a release.

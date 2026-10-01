@@ -115,6 +115,8 @@ jobs:
             websockets: "13.1"
           - os: windows-latest
             websockets: "locked"
+          - os: windows-latest
+            websockets: "latest"
     runs-on: ${{ matrix.os }}
     env:
       AI_DEV_BROWSER_STARTUP_TIMEOUT: "90"
@@ -123,8 +125,11 @@ jobs:
       - uses: astral-sh/setup-uv@v4
       - run: uv sync --extra dev
       - name: Exercise the supported legacy dependency
-        if: matrix.websockets != 'locked'
+        if: matrix.websockets == '13.1'
         run: uv pip install "websockets==${{ matrix.websockets }}"
+      - name: Exercise fresh PyPI dependency resolution
+        if: matrix.websockets == 'latest'
+        run: uv pip install --upgrade websockets Pillow deprecated
       # Chrome for Testing supports loading the actual bundled extension in a
       # fresh headless profile; no fake chrome.debugger or user login required.
       # v1's stable channel installs branded Chrome, which ignores --load-extension.

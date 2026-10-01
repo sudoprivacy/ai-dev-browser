@@ -1,9 +1,8 @@
 name: Publish release
 
-# Triggers on every `v*` tag push. The annotated tag is the
-# source of truth: setuptools-scm derives the version from it at build time,
-# source for the GitHub release notes too. Push only the intended release tag:
-# `git tag -a vX.Y.Z -F release-notes.txt && git push origin vX.Y.Z`.
+# An annotated v* tag supplies the version and GitHub release notes.
+# Preserve Markdown headings with --cleanup=verbatim and push only this tag:
+# `git tag -a --cleanup=verbatim vX.Y.Z -F release-notes.txt && git push origin vX.Y.Z`.
 on:
   push:
     tags:
@@ -87,4 +86,10 @@ jobs:
       - name: Publish tagged release and matching artifacts
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* release-assets/* --verify-tag --notes-from-tag --title "$GITHUB_REF_NAME"
+        run: |
+          # checkout can replace an annotated tag with its peeled commit when
+          # comparing it with github.sha. Restore the remote tag object so gh
+          # reads the release notes, rather than just the commit's subject.
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
+          gh release create "$GITHUB_REF_NAME" dist/* release-assets/* --verify-tag --notes-from-tag --title "$GITHUB_REF_NAME"

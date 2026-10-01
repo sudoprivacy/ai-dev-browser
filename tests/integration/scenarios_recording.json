@@ -229,10 +229,11 @@
             "assert (await live_extension.call(js_evaluate, expression='window.trusted'))['result'] == [True]",
             "await asyncio.sleep(.8)",
             "await live_extension.call(page_goto, url=second)",
-            "await asyncio.sleep(.3)",
             "saved = await page_record_stop(recording['recording_id'])",
-            "inspect_recording(saved, [(34,68,170),(34,119,68),(238,187,34)])"
-          ]
+            "colors = inspect_recording(saved, [(34,68,170),(34,119,68),(238,187,34)])",
+            "assert max(abs(a-b) for a,b in zip(colors[-1], (238,187,34))) <= 8, 'Final navigation frame missing from GIF'"
+          ],
+          "description": "Stop immediately after navigation; the saved final frame must show the destination page"
         },
         {
           "raw_code": [

@@ -280,6 +280,22 @@ async def _record(folder: Path, config: dict, partial: Path) -> dict:
                 latest_data, received = capture.latest
                 if received > last_received:
                     await asyncio.to_thread(gif.push, latest_data, time.monotonic())
+                # Navigation can finish before Chrome delivers its next screencast
+                # event. Capture the final viewport after stopping the stream so
+                # an immediate stop cannot silently save the previous page as the
+                # ending. _Gif fits this snapshot to the existing bounded canvas.
+                final = await capture.command(
+                    "Page.captureScreenshot",
+                    {
+                        "format": "png",
+                        "fromSurface": True,
+                        "captureBeyondViewport": False,
+                    },
+                )
+                for task in tasks:
+                    if task.done():
+                        task.result()
+                await asyncio.to_thread(gif.push, final["data"], time.monotonic())
                 await asyncio.to_thread(gif.finish, time.monotonic())
                 result = {
                     "saved": True,

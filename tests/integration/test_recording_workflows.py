@@ -3,7 +3,7 @@
 AUTO-GENERATED - DO NOT EDIT
 
 This file was auto-generated from SKILL.md by integration-test-generator.
-Generated: 2026-10-01 15:05:19
+Generated: 2026-10-01 15:30:49
 
 To modify test behavior:
   1. Update SKILL.md with better workflow examples
@@ -324,7 +324,7 @@ async def test_recording_real_extension_concurrent_commands(
 
     Data flow:
       1. inline code operation
-      2. inline code operation
+      2. Stop immediately after navigation; the saved final frame must show the destination page
       3. inline code operation
     """
     # Step 1: Execute operation
@@ -344,7 +344,7 @@ async def test_recording_real_extension_concurrent_commands(
     )
     assert recording["recording"]
 
-    # Step 2: Execute operation
+    # Step 2: Stop immediately after navigation; the saved final frame must show the destination page
     button = await live_extension.call(page_wait_element, selector="#open")
     assert (await live_extension.call(click_by_ref, ref=button["ref"]))["clicked"]
     assert (await live_extension.call(js_evaluate, expression="window.trusted"))[
@@ -352,9 +352,11 @@ async def test_recording_real_extension_concurrent_commands(
     ] == [True]
     await asyncio.sleep(0.8)
     await live_extension.call(page_goto, url=second)
-    await asyncio.sleep(0.3)
     saved = await page_record_stop(recording["recording_id"])
-    inspect_recording(saved, [(34, 68, 170), (34, 119, 68), (238, 187, 34)])
+    colors = inspect_recording(saved, [(34, 68, 170), (34, 119, 68), (238, 187, 34)])
+    assert max(abs(a - b) for a, b in zip(colors[-1], (238, 187, 34))) <= 8, (
+        "Final navigation frame missing from GIF"
+    )
 
     # Step 3: Execute operation
     interrupted = await live_extension.call(
