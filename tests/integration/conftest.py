@@ -21,12 +21,13 @@ from ai_dev_browser.core.extension import extension_dir
 
 
 @pytest.fixture
-def cli():
+def cli(tmp_path):
     """Every invocation is a fresh process, with stdout/stderr checked separately."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("AI_DEV_BROWSER_")}
     for name in ("AI_DEV_BROWSER_CHROME", "AI_DEV_BROWSER_STARTUP_TIMEOUT"):
         if name in os.environ:
             env[name] = os.environ[name]
+    env["AI_DEV_BROWSER_RECORDING_DIR"] = str(tmp_path / "recordings")
 
     def invoke(tool, *args, exit_code=0):
         command = [
@@ -51,6 +52,83 @@ def cli():
         return payload
 
     return invoke
+
+
+@pytest.fixture
+def recording_browser(cli):
+    result = cli("browser_start", "--headless", "True", "--temp", "--silent-stderr")
+    try:
+        yield result["port"]
+    finally:
+        cli("browser_stop", "--port", result["port"])
+
+
+@pytest.fixture
+def recording_page(tmp_path):
+    """A visible interaction, animation and navigation with trusted input evidence."""
+    first = tmp_path / "record-first.html"
+    second = tmp_path / "record-second.html"
+    second.write_text(
+        "<style>body{margin:0;background:#eebb22;font:36px sans-serif;padding:60px}</style>"
+        '<h1>Request submitted</h1><p id="done">Review complete</p>',
+        encoding="utf-8",
+    )
+    first.write_text(
+        """<!doctype html><meta charset="utf-8"><title>Recording acceptance</title>
+<style>body{margin:0;background:#2244aa;color:white;font:32px sans-serif;padding:60px}
+button,input,a{font:inherit;padding:12px}#panel{background:#227744;padding:20px}
+body.open{background:#227744;transition:background .6s}a{color:white}</style>
+<h1>New request</h1><button id="open">Open form</button>
+<section id="panel" hidden><label>Request name <input id="name"></label>
+<p id="preview">Enter a name</p><a id="next" href="record-second.html">Submit request</a></section>
+<script>window.trusted=[];document.querySelector('#open').onclick=e=>{
+trusted.push(e.isTrusted);document.body.classList.add('open');document.querySelector('#panel').hidden=false};
+document.querySelector('#name').oninput=e=>{trusted.push(e.isTrusted);document.querySelector('#preview').textContent=e.target.value};
+</script>""",
+        encoding="utf-8",
+    )
+    return first.as_uri(), second.as_uri()
+
+
+@pytest.fixture
+def inspect_recording():
+    """Decode every GIF frame: assert visible state order and real elapsed time."""
+    from PIL import Image
+
+    def inspect(result, expected_colors, minimum_duration=0):
+        path = Path(result["path"])
+        assert result["saved"] and path.stat().st_size == result["size_bytes"]
+        assert result["size_bytes"] <= 10_000_000
+        colors = []
+        duration = 0
+        with Image.open(path) as gif:
+            assert gif.format == "GIF" and gif.n_frames == result["frames"]
+            assert gif.size == (result["width"], result["height"])
+            assert gif.width <= 1280 and gif.height <= 720
+            for index in range(gif.n_frames):
+                gif.seek(index)
+                duration += gif.info.get("duration", 0)
+                frame = gif.convert("RGB")
+                # A resize/navigation can add letterboxing to the fixed canvas.
+                # The page's dominant background identifies its visible state;
+                # a corner pixel could be padding rather than page content.
+                pixel = max(frame.getcolors(frame.width * frame.height))[1]
+                colors.append(pixel)
+                frame.save(path.with_name(f"frame-{index:04d}.png"))
+        assert abs(duration / 1000 - result["duration_seconds"]) < 0.011
+        assert duration / 1000 >= minimum_duration, (duration, minimum_duration)
+        cursor = 0
+        for color in expected_colors:
+            while (
+                cursor < len(colors)
+                and max(abs(a - b) for a, b in zip(colors[cursor], color)) > 8
+            ):
+                cursor += 1
+            assert cursor < len(colors), (color, colors)
+            cursor += 1
+        return colors
+
+    return inspect
 
 
 @pytest.fixture(params=["True", "False", "new", "old"])

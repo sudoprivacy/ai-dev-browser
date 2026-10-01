@@ -9,6 +9,7 @@ A browser for AI to develop web automation — human-like automation that works 
 Two interaction modes:
 - **Accessibility tree** (`page_discover`): semantic element discovery with refs for clicking/typing
 - **Screenshots** (`page_screenshot` + `mouse_click --screenshot`): visual coordinate-based interaction with automatic scaling
+- **Interaction recordings** (`page_record_start` / `page_record_stop`): record a tab across CLI calls and save a shareable animated GIF
 
 ```bash
 # AI discovers elements
@@ -206,6 +207,58 @@ normally. Screenshots and `evidence.json` files stay under the selected
 
 Both workflow files are generated from the adjacent `scenarios_*.json` sources
 using `integration-test-generator`; edit the scenarios and regenerate the tests.
+
+### Record an interaction
+
+```bash
+python -m ai_dev_browser.tools.page_record_start --port 9222 --fps 10 --out output/before.gif
+# Continue with page_discover, click_by_ref, type_by_ref, page_goto, etc.
+python -m ai_dev_browser.tools.page_record_stop
+```
+
+Start returns a `recording_id` after the first frame arrives. Stop without an ID
+selects the single unfinished recording started in the current working directory.
+For concurrent recordings or a different directory, use
+`page_record_stop --recording-id <id>`. Stop works even if the browser has closed:
+an interrupted recording returns an error instead of a partial success.
+
+The recorder runs in a detached process, so CLI exit and Python client disconnect
+do not stop capture. The Python API uses the same names and arguments:
+`await page_record_start(tab, out="before.gif")`, then
+`await page_record_stop(recording_id)`. Use `--transport extension` on **start**
+to record through the real extension. Keep that tab visible; switching tabs does
+not switch the recording. After upgrading an already running bridge, restart it
+with `browser_disconnect` / `browser_connect --transport extension` and reload
+the extension to pick up concurrent event delivery and detach reporting.
+
+Output is a looping GIF of the viewport, scaled to fit 1280×720, without audio
+or the OS cursor. No ffmpeg installation is needed. Idle time is preserved;
+`--fps` caps frame sampling (1–30, default 10). GIF uses a 256-color palette per
+frame. The safety limit is 300 seconds (`--max-duration`, 1–600) and 10 MB:
+stop before the limit to save. Closing the tab, losing the extension, failing an
+ACK, exceeding a limit, or failing a file write invalidates the recording.
+Only successful stop publishes the final path; existing files are never replaced.
+Successful output includes frame count, duration, dimensions and file size.
+The file cap fits Feishu's [documented GIF preview limit](https://www.feishu.cn/hc/en-US/articles/360049067549-size-and-format-requirements-for-uploading-or-previewing-files).
+For busy pages that exceed it, lower `--fps` or record a shorter interaction.
+
+Recording state and diagnostic logs live in `~/.ai-dev-browser/recordings`
+(`AI_DEV_BROWSER_RECORDING_DIR` overrides this). The output directory honors
+`AI_DEV_BROWSER_OUTPUT_DIR`. A killed process may leave a hidden `.partial`
+file, which is not a completed recording.
+
+The generated [recording workflows](tests/integration/test_recording_workflows.py)
+exercise real CLI processes and the real extension, decode every GIF frame, and
+check the visible states in order, elapsed time, and interrupted recordings.
+They run in CI. To run locally and retain GIFs and decoded frames:
+
+```powershell
+$env:AI_DEV_BROWSER_TEST_EXTENSION_CHROME = 'C:\path\to\chrome-for-testing\chrome.exe'
+uv run python -m pytest -v -s tests/integration/test_recording_workflows.py --basetemp scratch/recording-acceptance
+```
+
+Edit `tests/integration/scenarios_recording.json` and regenerate with
+`integration-test-generator` when changing these scenarios.
 
 ## Human-like Behavior
 

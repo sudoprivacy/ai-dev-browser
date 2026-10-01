@@ -328,12 +328,15 @@ chrome.tabs.onRemoved.addListener((tabId) => forget(tabId));
 
 // Debugger detached out from under us (devtools opened on that tab, tab crash,
 // user cancelled the debugging banner) → forget it.
-chrome.debugger.onDetach.addListener((src) => {
+chrome.debugger.onDetach.addListener((src, reason) => {
+  if (ws && ws.readyState === 1 && src.tabId != null && autoTabs.has(src.tabId)) {
+    ws.send(JSON.stringify({ _event_tab: String(src.tabId), method: "Inspector.detached", params: { reason } }));
+  }
   if (src.tabId != null) forget(src.tabId);
 });
 
 // extension -> adb: relay CDP events, tagged with the tab they came from. The
-// bridge delivers each only to the driver holding that tab's connection, so a
+// bridge delivers each to the drivers holding that tab's connections, so a
 // followed-but-idle tab's events never pollute another tab's stream.
 chrome.debugger.onEvent.addListener((src, method, params) => {
   if (!ws || ws.readyState !== 1 || src.tabId == null) return;

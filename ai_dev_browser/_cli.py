@@ -607,6 +607,17 @@ def _failure_message(d: dict) -> str:
     return d.get("error") or d.get("reason") or d.get("message") or ""
 
 
+def _exception_failure(exc: Exception, hint: str | None) -> dict:
+    """Prefer explicit error categories over message inference when supplied."""
+    out = {"error": str(exc)}
+    for field in ("error_code", "retryable"):
+        if hasattr(exc, field):
+            out[field] = getattr(exc, field)
+    if hint:
+        out["hint"] = hint
+    return _augment_failure(out, str(exc))
+
+
 def _exit_code_for_result(result: Any) -> int:
     """Semantic exit code from a wrapped result. Non-zero only for a HARD failure
     — a top-level `error` string (an exception, or a bool-False tool). A
@@ -652,10 +663,7 @@ def wrap_core(core_func: Callable, result_key: str = "success") -> Callable:
             # Verbatim message — Python `repr(e)` and CLI stdout stay in
             # lockstep (cli-steering-engineering rule 7: never re-render error text
             # in tool files).
-            out: dict = {"error": str(e)}
-            if failure_hint:
-                out["hint"] = failure_hint
-            return _augment_failure(out, str(e))
+            return _exception_failure(e, failure_hint)
 
         if isinstance(result, bool):
             if result:
@@ -721,10 +729,7 @@ def wrap_core_sync(core_func: Callable, result_key: str = "success") -> Callable
         try:
             result = core_func(*args, **kwargs)
         except Exception as e:
-            out: dict = {"error": str(e)}
-            if failure_hint:
-                out["hint"] = failure_hint
-            return _augment_failure(out, str(e))
+            return _exception_failure(e, failure_hint)
 
         if isinstance(result, bool):
             if result:

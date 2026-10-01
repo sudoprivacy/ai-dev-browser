@@ -68,9 +68,17 @@ class _Bridge:
         # gid -> (driver_ws, original_id): where each in-flight command's
         # response must be delivered.
         self._pending: dict[int, tuple] = {}
-        # targetId -> driver_ws: the per-tab connection to deliver that tab's
-        # CDP events to.
-        self._tab_conns: dict[str, object] = {}
+        # A recorder and short-lived interaction calls share a tab. Each needs
+        # its own event stream; a new driver must not steal the recorder's ACKs.
+        self._tab_conns: dict[str, set] = {}
+
+    async def _tab_event(self, target_id, method, params):
+        payload = json.dumps({"method": method, "params": params})
+        connections = list(self._tab_conns.get(target_id, ()))
+        if connections:
+            await asyncio.gather(
+                *(conn.send(payload) for conn in connections), return_exceptions=True
+            )
 
     async def handler(self, ws):
         try:
@@ -113,21 +121,9 @@ class _Bridge:
                     except Exception:
                         pass
                 elif "_event_tab" in m:
-                    # A CDP event from a tab — deliver only to the driver holding
-                    # that tab's connection (keeps each Tab's event stream clean).
-                    conn = self._tab_conns.get(m["_event_tab"])
-                    if conn is not None:
-                        try:
-                            await conn.send(
-                                json.dumps(
-                                    {
-                                        "method": m.get("method"),
-                                        "params": m.get("params", {}),
-                                    }
-                                )
-                            )
-                        except Exception:
-                            pass
+                    await self._tab_event(
+                        m["_event_tab"], m.get("method"), m.get("params", {})
+                    )
                 elif "_hello" in m:
                     self.account = m.get("account")
         except websockets.exceptions.ConnectionClosed:
@@ -150,6 +146,12 @@ class _Bridge:
                     except Exception:
                         pass
                 self._pending.clear()
+                for target_id in list(self._tab_conns):
+                    await self._tab_event(
+                        target_id,
+                        "Inspector.detached",
+                        {"reason": "extension disconnected"},
+                    )
 
     # ------------------------------------------------------------------ drivers
     _LOGGED = (
@@ -175,7 +177,7 @@ class _Bridge:
     async def _driver(self, ws, path, first):
         target_id = _target_id_from_path(path)
         if target_id is not None:
-            self._tab_conns[target_id] = ws
+            self._tab_conns.setdefault(target_id, set()).add(ws)
         try:
             await self._forward(ws, target_id, first)
             async for raw in ws:
@@ -183,8 +185,11 @@ class _Bridge:
         except websockets.exceptions.ConnectionClosed:
             pass  # the adb CLI process exited — normal per-call lifecycle
         finally:
-            if target_id is not None and self._tab_conns.get(target_id) is ws:
-                del self._tab_conns[target_id]
+            if target_id is not None:
+                connections = self._tab_conns.get(target_id, set())
+                connections.discard(ws)
+                if not connections:
+                    self._tab_conns.pop(target_id, None)
 
     async def _forward(self, ws, target_id, raw):
         try:
@@ -204,6 +209,7 @@ class _Bridge:
                         "result": {
                             "extension_connected": self.extension is not None,
                             "account": self.account,
+                            "concurrent_events": True,
                         },
                     }
                 )

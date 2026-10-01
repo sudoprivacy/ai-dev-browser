@@ -68,6 +68,8 @@ TOOL_META = {
     "page_reload": {"result_key": "success"},
     "page_pdf": {"result_key": "path"},
     "page_screenshot": {"result_key": "path"},
+    "page_record_start": {"result_key": "recording"},
+    "page_record_stop": {"result_key": "saved"},
     "page_scroll": {"result_key": "scrolled"},
     "page_wait_ready": {"result_key": "ready"},
     "page_wait_url": {"result_key": "matched"},

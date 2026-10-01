@@ -14,6 +14,16 @@ from __future__ import annotations
 _SNIPPET_MAX = 120
 
 
+class RecordingError(Exception):
+    """A recording cannot be used as evidence; repeating stop cannot repair it."""
+
+    retryable = False
+
+    def __init__(self, message: str, error_code: str = "recording_failed"):
+        super().__init__(message)
+        self.error_code = error_code
+
+
 def js_snippet(expression: str | None) -> str | None:
     """Collapse an expression to a single-line, length-capped identifier."""
     if not expression:

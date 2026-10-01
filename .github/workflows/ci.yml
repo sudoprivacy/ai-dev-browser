@@ -88,6 +88,7 @@ jobs:
             tests/integration/test_cookies_extract_windows.py \
             tests/integration/test_cli_unicode_help.py \
             tests/integration/test_cli_extension_workflows.py \
+            tests/integration/test_recording_workflows.py \
             tests/integration/test_image_cap.py \
             tests/integration/test_scroll_embedded_target.py \
             tests/integration/test_press_key.py \
@@ -134,7 +135,7 @@ jobs:
       - name: Run the real extension on both WebSocket server implementations
         env:
           AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.chrome.outputs.chrome-path }}
-        run: uv run --no-sync python -m pytest -v tests/integration/test_cli_extension_workflows.py -k real_extension
+        run: uv run --no-sync python -m pytest -v tests/integration/test_cli_extension_workflows.py tests/integration/test_recording_workflows.py -k real_extension
 
   # ─────────────────────────────────────────────────────────────────────
   # CI-integration dogfood: prove the documented "consumer's CI" recipe

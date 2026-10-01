@@ -104,6 +104,7 @@ from .navigation import (
 
 # Page info
 from .page import page_html, page_info, page_pdf, js_evaluate, page_screenshot
+from .recording import page_record_start, page_record_stop
 
 # Port management
 from .port import (
@@ -121,7 +122,7 @@ from .text_match import MatchResult
 
 # Errors — exported so callers catch page-side JS failures by type instead of
 # string-matching a message.
-from .errors import JsEvaluationError
+from .errors import JsEvaluationError, RecordingError
 
 # Snapshot (AI-friendly accessibility tree) - only tool-facing function
 from .snapshot import page_discover
@@ -206,6 +207,7 @@ __all__ = [
     "MatchResult",
     # Errors
     "JsEvaluationError",
+    "RecordingError",
     # Snapshot
     "page_discover",
     # Tabs
@@ -219,6 +221,8 @@ __all__ = [
     "page_pdf",
     "js_evaluate",
     "page_screenshot",
+    "page_record_start",
+    "page_record_stop",
     # Mouse
     "mouse_move",
     "mouse_click",
