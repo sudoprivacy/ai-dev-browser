@@ -179,6 +179,34 @@ every commit. Start with
 for common `page_goto` → `click_by_*` / `find_by_*` → `page_screenshot`
 patterns.
 
+### Live browser acceptance
+
+The CLI and real extension regression workflows in
+[`test_cli_extension_workflows.py`](tests/integration/test_cli_extension_workflows.py)
+run in CI. Public-site acceptance is also available in
+[`test_public_web_workflows.py`](tests/integration/test_public_web_workflows.py):
+search Wikipedia through CLI subprocesses, then drive its language menu through
+the real extension and continue after restarting the extension worker.
+
+To run public-site acceptance locally (PowerShell):
+
+```powershell
+uv sync --extra dev
+$env:AI_DEV_BROWSER_LIVE_WEB = '1'
+$env:AI_DEV_BROWSER_TEST_EXTENSION_CHROME = 'C:\path\to\chrome-for-testing\chrome.exe'
+uv run python -m pytest -v -s tests/integration/test_public_web_workflows.py --basetemp scratch/public-web-acceptance
+```
+
+Use a Chrome for Testing or Chromium executable that supports loading unpacked
+extensions. The tests launch temporary browser profiles and close them afterward.
+No login or API key is needed. Public-site tests are opt-in because they depend
+on internet access and Wikipedia's current UI; once enabled, failures are reported
+normally. Screenshots and `evidence.json` files stay under the selected
+`--basetemp` directory for review (pytest clears that directory on each run).
+
+Both workflow files are generated from the adjacent `scenarios_*.json` sources
+using `integration-test-generator`; edit the scenarios and regenerate the tests.
+
 ## Human-like Behavior
 
 CDP-dispatched events produce `isTrusted=true`. Optional human-like features (all off by default, opt-in):

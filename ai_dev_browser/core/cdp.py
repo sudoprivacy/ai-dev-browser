@@ -55,10 +55,12 @@ def _coerce_value(value, annotation):
         except Exception:
             return annotation(value)  # value-enum fallback; raises on a bad value
     if (
-        isinstance(value, dict)
+        isinstance(value, (dict, str, int, float))
         and inspect.isclass(annotation)
         and hasattr(annotation, "from_json")
     ):
+        # Protocol identifiers such as TargetID and BackendNodeId wrap JSON
+        # scalars too; their bindings call .to_json() just like object params.
         return annotation.from_json(value)
     return value
 

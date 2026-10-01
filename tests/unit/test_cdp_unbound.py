@@ -21,6 +21,18 @@ def test_known_binding_error_does_not_fall_back_to_raw():
         _get_cdp_command("Runtime.evaluate", {"nonexistentParam": True})
 
 
+@pytest.mark.parametrize(
+    "method,params",
+    [
+        ("Target.activateTarget", {"targetId": "123"}),
+        ("DOM.describeNode", {"backendNodeId": 7}),
+    ],
+)
+def test_bound_scalar_identifiers_serialize(method, params):
+    command = _get_cdp_command(method, params)
+    assert next(command) == {"method": method, "params": params}
+
+
 @pytest.mark.parametrize("method", ["", "Runtime", "Runtime.", "A.B.C"])
 def test_invalid_method_is_validation_error(method):
     with pytest.raises(ValueError, match="Invalid CDP method"):

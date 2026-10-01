@@ -1,0 +1,163 @@
+{
+  "config": {
+    "imports": [
+      "# Source: tests/integration/scenarios_public_web.json (integration-test-generator)",
+      "import json",
+      "import asyncio",
+      "import time",
+      "from urllib.parse import urlparse",
+      "from ai_dev_browser.core import cdp_send, js_evaluate, mouse_click, page_goto, page_screenshot, page_wait_element",
+      "pytestmark = pytest.mark.skipif(os.environ.get('AI_DEV_BROWSER_LIVE_WEB') != '1', reason='Set AI_DEV_BROWSER_LIVE_WEB=1 to access public websites')"
+    ],
+    "call_style": "function",
+    "extract_style": "dict",
+    "required_env_vars": [
+      "AI_DEV_BROWSER_TEST_EXTENSION_CHROME"
+    ],
+    "smoke_test_assertions": [
+      "cdp_send is not None"
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "public_web_cli_search_and_read_article",
+      "title": "Use the CLI to search Wikipedia and open the matching article",
+      "workflow": "Launch -> open Wikipedia -> locate search -> type real keys -> click submit without movement -> wait for article -> inspect and capture",
+      "user_problem": "An agent must be able to use headless mode and no-move clicks on a public website through independent CLI processes, then verify the destination page.",
+      "fixtures": [
+        "cli",
+        "cli_browser",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "description": "Launch a fresh browser and open the public search page",
+          "raw_code": [
+            "port = cli_browser()",
+            "navigation = cli('page_goto', '--port', port, '--url', 'https://www.wikipedia.org/')",
+            "assert navigation['url'] == 'https://www.wikipedia.org/' and navigation['title'] == 'Wikipedia', navigation",
+            "search = cli('page_wait_element', '--port', port, '--selector', '#searchInput')",
+            "assert search['found'] and search['ref'], search"
+          ]
+        },
+        {
+          "description": "Type the query into the discovered search input using keyboard events",
+          "raw_code": [
+            "typed = cli('type_by_ref', '--port', port, '--ref', search['ref'], '--text', 'Google Chrome', '--clear', '--keystrokes')",
+            "assert typed['typed'] and typed['verified'] and typed['methods_tried'][0] == 'keys', typed",
+            "location = cli('js_evaluate', '--port', port, '--expression', \"(() => { const e=document.querySelector('button[type=submit]'); e.scrollIntoView({block:'center'}); const r=e.getBoundingClientRect(); const x=r.x+r.width/2,y=r.y+r.height/2; return {x,y,hit:e.contains(document.elementFromPoint(x,y)),query:document.getElementById('searchInput').value}; })()\")['result']",
+            "assert location['hit'] and location['query'] == 'Google Chrome', location"
+          ]
+        },
+        {
+          "description": "Submit with no-move and wait for the article to become visible",
+          "raw_code": [
+            "clicked = cli('mouse_click', '--port', port, '--x', location['x'], '--y', location['y'], '--no-move')",
+            "assert clicked == {'clicked': True}, clicked",
+            "article = cli('page_wait_element', '--port', port, '--selector', '#firstHeading', '--timeout', '45')",
+            "assert article['found'], article",
+            "deadline = time.monotonic() + 45",
+            "while True:",
+            "    state = cli('js_evaluate', '--port', port, '--expression', \"({url:location.href,title:document.title,ready:document.readyState,heading:document.getElementById('firstHeading')?.innerText,text:document.getElementById('mw-content-text')?.innerText.slice(0,400) || ''})\")['result']",
+            "    if state['ready'] == 'complete' and 'Chrome' in state['text']:",
+            "        break",
+            "    assert time.monotonic() < deadline, state",
+            "    time.sleep(0.2)",
+            "destination = urlparse(state['url'])",
+            "assert destination.hostname.endswith('.wikipedia.org') and destination.path == '/wiki/Google_Chrome', state",
+            "assert 'Google Chrome' in state['heading'] and 'Google Chrome' in state['title'] and 'Chrome' in state['text'], state"
+          ]
+        },
+        {
+          "description": "Save the observed article and screenshot for visual review",
+          "raw_code": [
+            "shot = cli('page_screenshot', '--port', port, '--path', str(tmp_path / 'wikipedia-article.png'))",
+            "assert Path(shot['path']).is_file() and Path(shot['path']).stat().st_size > 1000, shot",
+            "(tmp_path / 'evidence.json').write_text(json.dumps({'navigation': navigation, 'typed': typed, 'clicked': clicked, 'article': state, 'screenshot': shot}, ensure_ascii=False, indent=2), encoding='utf-8')"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "public_web_extension_menu_survives_worker_restart",
+      "title": "Use the real extension to expand a public site's menu and continue after worker restart",
+      "workflow": "Open Wikipedia -> scroll to language menu -> trusted click -> verify expansion -> restart worker -> reacquire button -> collapse -> inspect and capture",
+      "user_problem": "An extension driver must deliver trusted clicks to visible controls on a public site, and recover the same tab and page state after its worker restarts.",
+      "async": true,
+      "fixtures": [
+        "live_extension",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "description": "Open Wikipedia through the real extension and identify the owned tab",
+          "raw_code": [
+            "navigation = await live_extension.call(page_goto, url='https://www.wikipedia.org/')",
+            "assert navigation['url'] == 'https://www.wikipedia.org/' and navigation['title'] == 'Wikipedia', navigation",
+            "before = (await live_extension.call(cdp_send, method='AiDevBrowser.debugState'))['result']",
+            "assert before['mainTabId'] in before['attached'], before",
+            "# Activate only our isolated automation tab so Chrome advances UI animations.",
+            "await live_extension.call(cdp_send, method='Target.activateTarget', params=json.dumps({'targetId': str(before['mainTabId'])}))",
+            "assert (await live_extension.call(js_evaluate, expression='document.visibilityState'))['result'] == 'visible'",
+            "button = await live_extension.call(page_wait_element, selector='#js-lang-list-button')",
+            "assert button['found'], button"
+          ]
+        },
+        {
+          "description": "Scroll the control into view and confirm the click will hit it",
+          "raw_code": [
+            "locate = \"(() => { const e=document.getElementById('js-lang-list-button'); e.scrollIntoView({block:'center'}); const r=e.getBoundingClientRect(); const x=r.x+r.width/2,y=r.y+r.height/2; return {x,y,width:innerWidth,height:innerHeight,hit:e.contains(document.elementFromPoint(x,y)),expanded:e.getAttribute('aria-expanded')}; })()\"",
+            "await live_extension.call(js_evaluate, expression=\"(() => { window.acceptanceClicks=[]; document.getElementById('js-lang-list-button').addEventListener('click', e => window.acceptanceClicks.push(e.isTrusted)); })()\")",
+            "location = (await live_extension.call(js_evaluate, expression=locate))['result']",
+            "assert location['expanded'] == 'false' and location['hit'] and 0 < location['x'] < location['width'] and 0 < location['y'] < location['height'], location",
+            "assert await live_extension.call(mouse_click, x=location['x'], y=location['y'], move=False) is True",
+            "inspect_state = \"({url:location.href,title:document.title,expanded:document.getElementById('js-lang-list-button').getAttribute('aria-expanded'),clicks:window.acceptanceClicks})\"",
+            "expanded = (await live_extension.call(js_evaluate, expression=inspect_state))['result']",
+            "assert expanded['expanded'] == 'true' and expanded['clicks'] == [True], expanded",
+            "# The site keeps a 1000s visibility transition alive; wait for its visual size/transform transitions.",
+            "deadline = time.monotonic() + 10",
+            "while True:",
+            "    animations = (await live_extension.call(js_evaluate, expression=\"document.getAnimations().filter(a => a.playState === 'running' && a.transitionProperty !== 'visibility').length\"))['result']",
+            "    if animations == 0:",
+            "        break",
+            "    assert time.monotonic() < deadline, 'Menu animation did not settle'",
+            "    await asyncio.sleep(0.05)",
+            "shot = await live_extension.call(page_screenshot, path=str(tmp_path / 'wikipedia-expanded.png'))",
+            "assert Path(shot['path']).is_file() and Path(shot['path']).stat().st_size > 1000, shot"
+          ]
+        },
+        {
+          "description": "Restart the worker and verify the same tab and expanded page survive",
+          "raw_code": [
+            "await live_extension.restart_worker()",
+            "after = (await live_extension.call(cdp_send, method='AiDevBrowser.debugState'))['result']",
+            "assert after['mainTabId'] == before['mainTabId'] and after['autoTabs'] == before['autoTabs'] and after['mainTabId'] in after['attached'], (before, after)",
+            "recovered = (await live_extension.call(js_evaluate, expression=inspect_state))['result']",
+            "assert recovered == expanded, (expanded, recovered)"
+          ]
+        },
+        {
+          "description": "Reacquire the current coordinates and use another trusted click to collapse the menu",
+          "raw_code": [
+            "location = (await live_extension.call(js_evaluate, expression=locate))['result']",
+            "assert location['hit'] and location['expanded'] == 'true', location",
+            "assert await live_extension.call(mouse_click, x=location['x'], y=location['y'], move=False) is True",
+            "collapsed = (await live_extension.call(js_evaluate, expression=inspect_state))['result']",
+            "assert collapsed['expanded'] == 'false' and collapsed['clicks'] == [True, True] and collapsed['url'] == expanded['url'], collapsed",
+            "# The site keeps a 1000s visibility transition alive; wait for its visual size/transform transitions.",
+            "deadline = time.monotonic() + 10",
+            "while True:",
+            "    animations = (await live_extension.call(js_evaluate, expression=\"document.getAnimations().filter(a => a.playState === 'running' && a.transitionProperty !== 'visibility').length\"))['result']",
+            "    if animations == 0:",
+            "        break",
+            "    assert time.monotonic() < deadline, 'Menu animation did not settle'",
+            "    await asyncio.sleep(0.05)",
+            "shot = await live_extension.call(page_screenshot, path=str(tmp_path / 'wikipedia-collapsed.png'))",
+            "assert Path(shot['path']).is_file() and Path(shot['path']).stat().st_size > 1000, shot",
+            "(tmp_path / 'evidence.json').write_text(json.dumps({'before': before, 'expanded': expanded, 'afterRestart': after, 'collapsed': collapsed}, ensure_ascii=False, indent=2), encoding='utf-8')"
+          ]
+        }
+      ]
+    }
+  ]
+}
