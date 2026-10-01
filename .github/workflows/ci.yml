@@ -126,7 +126,8 @@ jobs:
         run: uv pip install "websockets==${{ matrix.websockets }}"
       # Chrome for Testing supports loading the actual bundled extension in a
       # fresh headless profile; no fake chrome.debugger or user login required.
-      - uses: browser-actions/setup-chrome@v1
+      # v1's stable channel installs branded Chrome, which ignores --load-extension.
+      - uses: browser-actions/setup-chrome@v2
         id: chrome
         with:
           chrome-version: stable
