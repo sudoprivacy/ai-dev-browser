@@ -222,6 +222,9 @@ async def page_screenshot(
     height, scale_factor, device_pixel_ratio}` — the path is the saved PNG
     you can read with vision.
 
+    For a GIF demo or before/after recording of an interaction, use
+    page_record_start before acting, then page_record_stop to save it.
+
     This is the escape hatch for **opaque / canvas UIs** with no readable DOM
     (e.g. an HTML5-canvas ERP console where `find_by_text` / xpath find
     nothing): screenshot → locate the target's IMAGE-pixel position yourself

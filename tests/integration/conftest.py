@@ -46,6 +46,9 @@ def cli(tmp_path):
             timeout=120,
         )
         assert result.stdout.strip(), (command, result.returncode, result.stderr)
+        if "--help" in args:
+            assert result.returncode == exit_code, (command, result.stderr)
+            return result.stdout
         payload = json.loads(result.stdout)
         print(f"CLI {tool}: exit={result.returncode} {payload}", flush=True)
         assert result.returncode == exit_code, (command, payload, result.stderr)

@@ -66,6 +66,18 @@ def _unwrap_optional(hint):
     return hint
 
 
+def _parse_docstring_summary(docstring: str) -> str:
+    """Keep decision-time guidance above Google-style reference sections."""
+    lines: list[str] = []
+    for line in inspect.cleandoc(docstring).splitlines():
+        if re.fullmatch(
+            r"(?:Args|Arguments|Returns|Yields|Raises|Failure|Examples?):", line
+        ):
+            break
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
 def _parse_docstring_args(docstring: str) -> dict[str, str]:
     """Extract arg descriptions from docstring Args section.
 
@@ -124,7 +136,7 @@ def _parse_docstring_failure(docstring: str) -> str | None:
     `Failure:` section (parallel to `Args:` / `Returns:`). This parser
     extracts it at wrap time; `wrap_core` then auto-injects it as the
     `hint` field on any failure return — SSOT with auto-split across
-    `--help` (full docstring, reference surface) and failure `hint`
+    `--help` (summary and per-option guidance) and failure `hint`
     (just this section, runtime steering surface).
 
     Rationale: guidance about "what to do if this tool fails" placed
@@ -215,7 +227,7 @@ def _generate_parser(
     arg_descriptions = _parse_docstring_args(func.__doc__ or "")
 
     parser = argparse.ArgumentParser(
-        description=description or func.__doc__,
+        description=description or _parse_docstring_summary(func.__doc__ or ""),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 

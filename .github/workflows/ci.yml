@@ -161,6 +161,10 @@ jobs:
           chrome-version: stable
       - uses: astral-sh/setup-uv@v4
       - run: uv sync
+      - name: Validate release artifacts
+        run: |
+          uv build
+          uv run python scripts/build_release_assets.py --dist dist --output release-assets
       - name: Verify CI-style chrome launch
         env:
           AI_DEV_BROWSER_CHROME: ${{ steps.chrome.outputs.chrome-path }}

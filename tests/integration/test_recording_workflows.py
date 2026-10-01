@@ -3,7 +3,7 @@
 AUTO-GENERATED - DO NOT EDIT
 
 This file was auto-generated from SKILL.md by integration-test-generator.
-Generated: 2026-10-01 14:04:54
+Generated: 2026-10-01 15:05:19
 
 To modify test behavior:
   1. Update SKILL.md with better workflow examples
@@ -49,6 +49,7 @@ from ai_dev_browser.core import (
     js_evaluate,
 )
 from ai_dev_browser.core.errors import RecordingError
+import ai_dev_browser.tools as tool_package
 
 # Integration guard: allow CI to opt-out with SKIP_INTEGRATION=1
 SKIP_INTEGRATION = os.environ.get("SKIP_INTEGRATION", "").lower() in (
@@ -76,12 +77,48 @@ def test_recording_cli_interaction_navigation_and_idle(
     User problem: Share a complete before-change workflow recorded across independent CLI processes, including time on a static page.
 
     Data flow:
-      1. inline code operation
+      1. Discover recording from the installed tool listing and screenshot help, then use its documented start/stop workflow
       2. inline code operation
       3. inline code operation
-      4. Play the saved GIF in Chrome and verify actual animated pixels, based on live acceptance
+      4. inline code operation
+      5. Play the saved GIF in Chrome and verify actual animated pixels, based on live acceptance
     """
-    # Step 1: Execute operation
+    # Step 1: Discover recording from the installed tool listing and screenshot help, then use its documented start/stop workflow
+    tool_dir = Path(tool_package.__file__).parent
+    assert (tool_dir / "page_record_start.py").is_file() and (
+        tool_dir / "page_record_stop.py"
+    ).is_file()
+    screenshot_help = cli("page_screenshot", "--help")
+    assert (
+        "page_record_start" in screenshot_help and "page_record_stop" in screenshot_help
+    )
+    start_help = cli("page_record_start", "--help")
+    stop_help = cli("page_record_stop", "--help")
+    assert (
+        "before/after recording" in start_help
+        and "recording_id" in start_help
+        and "page_record_stop" in start_help
+    )
+    assert (
+        "--fps" in start_help
+        and "--out" in start_help
+        and "--max-duration" in start_help
+    )
+    assert (
+        start_help.count("Maximum output frames per second") == 1
+        and "Args:" not in start_help
+        and "Failure:" not in start_help
+    )
+    assert (
+        "--recording-id" in stop_help
+        and "--port" not in stop_help
+        and "--transport" not in stop_help
+    )
+    (tmp_path / "tool-help.txt").write_text(
+        screenshot_help + start_help + stop_help, encoding="utf-8"
+    )
+
+    # Step 2: Execute operation
     port = recording_browser
     first, second = recording_page
     assert cli("page_goto", "--port", port, "--url", first)["success"]
@@ -90,7 +127,7 @@ def test_recording_cli_interaction_navigation_and_idle(
     assert recording["recording"] and not out.exists()
     began = time.monotonic()
 
-    # Step 2: Execute operation
+    # Step 3: Execute operation
     button = cli("page_wait_element", "--port", port, "--selector", "#open")
     assert cli("click_by_ref", "--port", port, "--ref", button["ref"])["clicked"]
     field = cli("page_wait_element", "--port", port, "--selector", "#name")
@@ -118,7 +155,7 @@ def test_recording_cli_interaction_navigation_and_idle(
         and all(state["trusted"][-16:])
     ), state
 
-    # Step 3: Execute operation
+    # Step 4: Execute operation
     assert cli("page_goto", "--port", port, "--url", second)["url"] == second
     time.sleep(1.2)
     assert not out.exists()
@@ -138,7 +175,7 @@ def test_recording_cli_interaction_navigation_and_idle(
         encoding="utf-8",
     )
 
-    # Step 4: Play the saved GIF in Chrome and verify actual animated pixels, based on live acceptance
+    # Step 5: Play the saved GIF in Chrome and verify actual animated pixels, based on live acceptance
     from PIL import Image, ImageChops
 
     assert cli("page_goto", "--port", port, "--url", Path(saved["path"]).as_uri())[

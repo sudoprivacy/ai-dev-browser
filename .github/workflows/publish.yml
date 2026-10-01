@@ -1,9 +1,9 @@
-name: Publish to PyPI
+name: Publish release
 
-# Triggers on every `v*` tag push (e.g. v0.5.3, v0.6.0). The tag is the
+# Triggers on every `v*` tag push. The annotated tag is the
 # source of truth: setuptools-scm derives the version from it at build time,
-# so no pyproject.toml edit is required — just `git tag vX.Y.Z && git push
-# --tags` and this workflow handles the rest.
+# source for the GitHub release notes too. Push only the intended release tag:
+# `git tag -a vX.Y.Z -F release-notes.txt && git push origin vX.Y.Z`.
 on:
   push:
     tags:
@@ -32,10 +32,18 @@ jobs:
       - name: Validate distributions
         run: python -m twine check dist/*
 
+      - name: Package the bundled extension and artifact checksums
+        run: python scripts/build_release_assets.py --dist dist --output release-assets
+
       - uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets/
 
   publish:
     name: Upload to PyPI
@@ -57,3 +65,26 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Publish GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets/
+      - name: Publish tagged release and matching artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* release-assets/* --verify-tag --notes-from-tag --title "$GITHUB_REF_NAME"

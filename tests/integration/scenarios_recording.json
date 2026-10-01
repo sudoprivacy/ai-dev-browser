@@ -6,7 +6,8 @@
       "import json",
       "import time",
       "from ai_dev_browser.core import cdp_send, click_by_ref, page_record_start, page_record_stop, page_goto, page_wait_element, js_evaluate",
-      "from ai_dev_browser.core.errors import RecordingError"
+      "from ai_dev_browser.core.errors import RecordingError",
+      "import ai_dev_browser.tools as tool_package"
     ],
     "call_style": "function",
     "extract_style": "dict",
@@ -31,6 +32,22 @@
       ],
       "async": false,
       "steps": [
+        {
+          "description": "Discover recording from the installed tool listing and screenshot help, then use its documented start/stop workflow",
+          "raw_code": [
+            "tool_dir = Path(tool_package.__file__).parent",
+            "assert (tool_dir / 'page_record_start.py').is_file() and (tool_dir / 'page_record_stop.py').is_file()",
+            "screenshot_help = cli('page_screenshot', '--help')",
+            "assert 'page_record_start' in screenshot_help and 'page_record_stop' in screenshot_help",
+            "start_help = cli('page_record_start', '--help')",
+            "stop_help = cli('page_record_stop', '--help')",
+            "assert 'before/after recording' in start_help and 'recording_id' in start_help and 'page_record_stop' in start_help",
+            "assert '--fps' in start_help and '--out' in start_help and '--max-duration' in start_help",
+            "assert start_help.count('Maximum output frames per second') == 1 and 'Args:' not in start_help and 'Failure:' not in start_help",
+            "assert '--recording-id' in stop_help and '--port' not in stop_help and '--transport' not in stop_help",
+            "(tmp_path / 'tool-help.txt').write_text(screenshot_help + start_help + stop_help, encoding='utf-8')"
+          ]
+        },
         {
           "raw_code": [
             "port = recording_browser",

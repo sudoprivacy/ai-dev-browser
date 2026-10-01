@@ -57,11 +57,12 @@ async def page_record_start(
     out: str | None = None,
     max_duration: float = 300,
 ) -> dict:
-    """Use when: you need a shareable GIF of a page interaction, including navigation.
+    """Use when: you need a GIF demo or before/after recording; returns recording_id for page_record_stop.
 
     Returns {recording_id, recording, path, ...} only after receiving the first
     frame. Capture continues after this command exits; use click/type/page_goto
-    normally, then page_record_stop. One recording per tab. Records this tab's
+    normally, including navigation, then page_record_stop. One recording per tab.
+    For a single still image, use page_screenshot. Records this tab's
     viewport (up to 1280x720), without audio; keep it visible in extension mode.
     Only a successful stop publishes the GIF. Do not close the tab before stop.
     Files are limited to 10 MB for sharing; lower fps or shorten the interaction

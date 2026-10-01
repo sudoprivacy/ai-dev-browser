@@ -6,7 +6,8 @@ A browser for AI to develop web automation — human-like automation that works 
 
 **ai-dev-browser is a browser that AI agents (Claude, GPT, etc.) use to see and interact with web pages** — similar to how [Claude in Chrome](https://claude.com/chrome) works, but headless-compatible and embeddable.
 
-Two interaction modes:
+Ways to inspect and capture pages:
+
 - **Accessibility tree** (`page_discover`): semantic element discovery with refs for clicking/typing
 - **Screenshots** (`page_screenshot` + `mouse_click --screenshot`): visual coordinate-based interaction with automatic scaling
 - **Interaction recordings** (`page_record_start` / `page_record_stop`): record a tab across CLI calls and save a shareable animated GIF
@@ -46,7 +47,7 @@ changes flow to both at once and can't drift. See
 [cli-steering-engineering](https://github.com/sudoprivacy/cli-steering-engineering) for the
 underlying decorator.
 
-Tools cover: navigation, element interaction, mouse, tabs, screenshots,
+Tools cover: navigation, element interaction, mouse, tabs, screenshots, recordings,
 cookies, storage, window management, dialogs, downloads, and raw CDP.
 To see the current list (count and names change — this README
 deliberately doesn't pin them):
@@ -57,8 +58,7 @@ ls ai_dev_browser/tools/
 
 **One file per CLI command, by design.** Each CLI command gets its own
 `tools/<name>.py` (e.g. `tools/click_by_text.py`, `tools/click_by_xpath.py`).
-This deviates from cli-steering-engineering's "domain-grouped subcommands" recommendation
-because our invocation is `python -m ai_dev_browser.tools.<name>` — one file
+Our invocation is `python -m ai_dev_browser.tools.<name>` — one file
 1:1 maps to one CLI path with no extra subcommand layer. The
 `<verb>_by_<spec>` family (`click_by_text`, `click_by_ref`, `click_by_html_id`,
 `click_by_xpath`) clusters alphabetically under `ls`, so domain navigation is
@@ -80,7 +80,7 @@ sort together in `ls tools/` and tab completion:
 | Domain      | Examples                                            |
 |-------------|-----------------------------------------------------|
 | `browser_*` | `browser_start`, `browser_stop`, `browser_list`     |
-| `page_*`    | `page_goto`, `page_reload`, `page_screenshot`, `page_discover`, `page_scroll`, `page_wait_ready`, `page_wait_url`, `page_wait_element`, `page_info`, `page_html`, `page_emulate_focus` |
+| `page_*`    | `page_goto`, `page_reload`, `page_screenshot`, `page_record_start`, `page_record_stop`, `page_discover`, `page_scroll`, `page_wait_ready`, `page_wait_url`, `page_wait_element`, `page_info`, `page_html`, `page_emulate_focus` |
 | `tab_*`     | `tab_new`, `tab_close`, `tab_list`, `tab_switch`    |
 | `cookies_*` | `cookies_extract_live`, `cookies_extract_offline`, `cookies_import`, `cookies_save`, `cookies_load` |
 | `storage_*` | `storage_get`, `storage_set`                        |
@@ -143,8 +143,8 @@ can stay conventional.
 
 ```bash
 pip install ai-dev-browser
-# or pin a specific version
-pip install "ai-dev-browser>=0.5,<0.6"
+# or upgrade an existing installation
+pip install --upgrade ai-dev-browser
 # or with uv
 uv add ai-dev-browser
 ```
@@ -155,11 +155,10 @@ Want the unreleased `master` or a specific commit?
 pip install "ai-dev-browser @ git+https://github.com/sudoprivacy/ai-dev-browser.git@master"
 ```
 
-### Discovery (no hand-written example to drift)
+### Discover tools
 
-The source IS the documentation — README intentionally does not
-duplicate function signatures or runnable workflows, so it can't
-rot when things get renamed. Instead:
+Core docstrings supply CLI help, including parameter types, defaults and
+usage guidance. Start with the file listing and read the relevant tool's help:
 
 ```bash
 # What tools exist
@@ -170,6 +169,10 @@ ls ai_dev_browser/tools/
 python -m ai_dev_browser.tools.page_discover --help
 python -m ai_dev_browser.tools.click_by_text --help
 python -m ai_dev_browser.tools.browser_start --help
+
+# Share a GIF demo or before/after recording of a workflow
+python -m ai_dev_browser.tools.page_record_start --help
+python -m ai_dev_browser.tools.page_record_stop --help
 ```
 
 For runnable end-to-end workflows, the integration tests in
@@ -290,7 +293,24 @@ Default: click offset randomization (free, always on). Everything else is opt-in
 | `AI_DEV_BROWSER_PORT` | Default CDP port (skips auto-detection) |
 | `AI_DEV_BROWSER_HEADLESS` | Default headless mode (`1`/`true`) |
 | `AI_DEV_BROWSER_REDIRECT` | Block direct CLI, print redirect message |
-| `AI_DEV_BROWSER_OUTPUT_DIR` | Default directory for `page_screenshot` (overrides `./screenshots/`). Consumers like sudowork set this to inject a persistent output path so LLMs don't need to learn host-specific conventions. |
+| `AI_DEV_BROWSER_OUTPUT_DIR` | Default directory for screenshots and recordings (overrides `./output/`). Consumers like sudowork can set a persistent output path. |
+| `AI_DEV_BROWSER_RECORDING_DIR` | Recording state and worker logs (default `~/.ai-dev-browser/recordings`). |
+
+## Releases
+
+Published versions are available on [PyPI](https://pypi.org/project/ai-dev-browser/)
+and [GitHub Releases](https://github.com/sudoprivacy/ai-dev-browser/releases).
+Each GitHub release includes the same wheel and source distribution sent to PyPI,
+the bundled Chrome extension as an unpackable ZIP, and `SHA256SUMS`.
+For extension mode, extract the ZIP and load its directory in `chrome://extensions`.
+After upgrading, reload the extension and restart an already running bridge.
+
+Maintainers: run live browser acceptance and wait for CI on the release commit.
+Create an annotated `vX.Y.Z` tag whose message contains the release notes, then push
+that tag. The [publish workflow](.github/workflows/publish.yml) derives the Python
+version from the tag, builds and validates both distributions, publishes to PyPI,
+and creates the GitHub Release with the matching assets and tag notes. Verify a
+fresh PyPI installation with the live recording workflow before closing a release.
 
 ## License
 
