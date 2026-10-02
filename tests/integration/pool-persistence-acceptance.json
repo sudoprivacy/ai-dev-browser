@@ -1,0 +1,111 @@
+{
+  "date": "2026-10-02",
+  "scope": "Python BrowserPool typed-result persistence, with the real Grok consumer",
+  "adb_base": "https://github.com/sudoprivacy/ai-dev-browser/tree/c349d347251779357136685b6a698e3d2c59ce6d",
+  "grok_commit": "https://github.com/sudoprivacy/grok-web-connector/tree/44033c2dbc6b34d83c31b3183fc7f6c0ae7a7463",
+  "platform": "Windows, Python 3.13, Chrome 154.0.8037.92",
+  "live_script": "scripts/live_grok_pool_persistence.py",
+  "script_sha256": "c9d9c86f4a19876756239fad55dd0781bc09c700e39a41d1d041d593ea15d7c7",
+  "command": "python scripts/live_grok_pool_persistence.py --output scratch/grok-pool",
+  "prerequisites": [
+    "Install this checkout and grok-web-connector in the same environment",
+    "Existing valid Grok cookie config",
+    "At least one favorite with created_at; empty accounts fail acceptance"
+  ],
+  "scenario": {
+    "problem": "Successful typed API results must survive checkpointing and restart without repeating completed work.",
+    "steps": [
+      "Start two isolated Chrome workers",
+      "Read favorites with both workers",
+      "Save completed results and one held pending job",
+      "Close and reopen the pool with the same profiles and checkpoint",
+      "Recover only the pending job, preserve completed results, and close owned Chrome instances"
+    ],
+    "auth": "Existing real local credentials; read-only favorites requests",
+    "data_retention": "Temporary credential copies, account result checkpoints, and owned profiles removed; only counts and sanitized errors retained"
+  },
+  "before_fix": {
+    "regression": "Failed: UUID is not JSON serializable",
+    "live_run": "e317de2e28",
+    "live_error": "TypeError: Object of type datetime is not JSON serializable",
+    "failure_point": "pool shutdown -> save_state -> json.dump"
+  },
+  "accepted_live_run": {
+    "id": "adb-pool-live-809990b2eef530a4",
+    "result": {
+      "status": "passed",
+      "scope": "Real Grok BrowserWorkerPool with the Python browser backend",
+      "operation": "read favorites, save pending/completed jobs, reopen and recover",
+      "rounds": [
+        {
+          "workers": 2,
+          "successful_reads": 2,
+          "row_counts": [
+            1,
+            1
+          ],
+          "pending_before_shutdown": 1
+        },
+        {
+          "workers": 2,
+          "successful_recovered_reads": 1,
+          "completed_results_retained": 2
+        }
+      ],
+      "stage": "read_round_2",
+      "final_completed_jobs": 3,
+      "ports_closed": true,
+      "elapsed_seconds": 22.7
+    }
+  },
+  "other_attempts": [
+    {
+      "id": "93a935f27c",
+      "status": "failed",
+      "reason": "Baseline JSON serialization TypeError"
+    },
+    {
+      "id": "5f3e3229dc",
+      "status": "failed",
+      "reason": "Cleanup file lock masked the baseline failure; temporary files later removed"
+    },
+    {
+      "id": "adb-pool-live-12535a38c9ff43e5",
+      "status": "passed",
+      "limitation": "Earlier harness did not explicitly require a timestamped favorite"
+    },
+    {
+      "id": "adb-pool-live-2b165604eb33100f",
+      "status": "failed",
+      "reason": "Round 1 typed reads passed; round 2 failed connecting to Chrome with GrokAPIError. Added sanitized cause-chain diagnostics; next complete run passed without lifecycle retries or changed profiles.",
+      "follow_up": "Intermittent Chrome connection failure remains unisolated; do not infer general lifecycle reliability from the accepted persistence run."
+    },
+    {
+      "id": "adb-pool-live-bb1ef79d3a9388e9",
+      "status": "passed",
+      "note": "Instrumented diagnostic run, 34 seconds"
+    }
+  ],
+  "automated_regression": {
+    "file": "tests/integration/test_pool_model_persistence.py",
+    "method": "Real Pydantic models and production scheduler/state persistence with an in-process fixture client; this test is not browser E2E.",
+    "assertions": [
+      "datetime, UUID, and Decimal retain their JSON values",
+      "None omission remains unchanged",
+      "Completed jobs survive shutdown and are not replayed",
+      "Held pending work runs after recovery and final checkpoint has no pending jobs"
+    ],
+    "local_result": "126 passed: tests/unit plus the new persistence regression",
+    "ci": ".github/workflows/ci.yml runs the regression on Ubuntu, macOS, and Windows"
+  },
+  "steering_review": {
+    "reference": "https://github.com/sudoprivacy/cli-steering-engineering/blob/5f1491743b1c70c639fc5d6933fd0800b407bda1/SKILL.md",
+    "finding": "Rule 5 requires JSON-serializable results. Pydantic JSON mode enforces that existing pool contract at the source; no tool names, arguments, or discovery text changed.",
+    "model_test": "No new tool-choice claim is made by this SDK persistence change."
+  },
+  "limits": [
+    "This repairs the Python baseline; it does not migrate Grok to Rust or decide the SDK bridge architecture.",
+    "Real authenticated Grok acceptance is local and explicit; hosted CI uses the credential-free regression.",
+    "No release, default backend switch, or repository archival."
+  ]
+}

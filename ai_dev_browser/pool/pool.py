@@ -806,8 +806,10 @@ class BrowserPool(Generic[ClientT]):
         """Convert result to JSON-serializable format."""
         # Pydantic models
         if hasattr(result, "model_dump"):
+            # Checkpoints use JSON. Python mode retains values such as datetime,
+            # UUID and Decimal, so a successful consumer job can break shutdown.
             return result.model_dump(
-                mode="python", exclude_none=True, exclude_unset=False
+                mode="json", exclude_none=True, exclude_unset=False
             )
 
         # List of results
