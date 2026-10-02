@@ -36,6 +36,7 @@ dependencies = [
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
+    "pydantic>=2.0",  # Real typed-result checkpoint regression
 ]
 fuzzy = [
     "rapidfuzz>=3.0",  # Fast C-based Levenshtein for fuzzy_find/fuzzy_click
