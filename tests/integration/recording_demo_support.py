@@ -5,7 +5,7 @@ import json
 import math
 import statistics
 
-from PIL import Image
+from PIL import Image, ImageChops, ImageFilter
 
 
 def make_page(folder):
@@ -47,7 +47,7 @@ def js(cli, port, expression, *flags):
     ]
 
 
-def decode(saved, output, click=None, viewport=None):
+def decode(saved, output, click=None, viewport=None, anchor=None):
     """Inspect actual GIF frames, including output pixels unrelated to the DOM."""
     frames = []
     with Image.open(saved["path"]) as gif:
@@ -88,7 +88,48 @@ def decode(saved, output, click=None, viewport=None):
     cx = (frames[0].width - viewport[0] * scale) / 2 + click[0] * scale
     cy = (frames[0].height - viewport[1] * scale) / 2 + click[1] * scale
     radii = []
+    centers = []
     for index, frame in enumerate(frames):
+        if anchor is not None:
+            # Observe the fixture's static track in the actual page pixels.
+            # Chrome can change screencast size while switching tabs; the final
+            # viewport is not the coordinate transform for every earlier frame.
+            landmarks = []
+            for color in ((249, 115, 22), (209, 213, 219)):
+                masks = [
+                    channel.point(
+                        [255 if abs(value - target) < 10 else 0 for value in range(256)]
+                    )
+                    for channel, target in zip(frame.split(), color)
+                ]
+                landmarks.append(
+                    ImageChops.multiply(
+                        masks[0], ImageChops.multiply(masks[1], masks[2])
+                    )
+                )
+            # Palette/subpixel text fringes can have the same orange hue. Require
+            # a solid patch before locating the calibration rectangle.
+            knob = landmarks[0].filter(ImageFilter.MinFilter(5)).getbbox()
+            assert knob is not None, ("Page landmark missing from GIF", index)
+            row = (knob[1] + knob[3]) // 2
+            region = (max(0, knob[0] - 5), row, frame.width, row + 1)
+            local = ImageChops.lighter(*landmarks).crop(region).getbbox()
+            assert local is not None, ("Page landmark missing from GIF", index)
+            bounds = (
+                local[0] + region[0],
+                knob[1],
+                local[2] + region[0],
+                knob[3],
+            )
+            # The long edge minimizes rounding error; GIF fitting is uniform.
+            sx = sy = (bounds[2] - bounds[0]) / anchor[2]
+            cx = (bounds[0] + bounds[2]) / 2 + (
+                click[0] - anchor[0] - anchor[2] / 2
+            ) * sx
+            cy = (bounds[1] + bounds[3]) / 2 + (
+                click[1] - anchor[1] - anchor[3] / 2
+            ) * sy
+        centers.append([cx, cy])
         distances = []
         # Left of the cursor and pressed halo: a growing ring must be visible,
         # not merely blue glyph fringes, the arrow, or a stationary press cue.
@@ -111,7 +152,15 @@ def decode(saved, output, click=None, viewport=None):
         for later in radii[i + 1 :]
     ), ("No expanding click ring at acknowledged click coordinates", (cx, cy), radii)
     (output / "click-ring-evidence.json").write_text(
-        json.dumps({"center": [cx, cy], "radii": radii}), encoding="utf-8"
+        json.dumps(
+            {
+                "center": [cx, cy],
+                "frame_centers": centers,
+                "anchor": anchor,
+                "radii": radii,
+            }
+        ),
+        encoding="utf-8",
     )
     samples = sorted(
         {
@@ -340,6 +389,13 @@ def run_recording_lifecycle(cli, port, folder):
     """Demo affects only its recorded target, and ordinary input resumes on stop."""
     first, _ = make_page(folder)
     cli("page_goto", "--port", port, "--url", first)
+    anchor = js(
+        cli,
+        port,
+        "(()=>{const r=document.querySelector('#track').getBoundingClientRect();return [r.x,r.y,r.width,r.height]})()",
+        "--tab-url",
+        first,
+    )
     recording = cli("page_record_start", "--port", port, "--out", folder / "scoped.gif")
     try:
         other_folder = folder / "other-tab"
@@ -399,7 +455,7 @@ def run_recording_lifecycle(cli, port, folder):
             js(cli, port, "document.querySelector('#name').value", "--tab-url", first)
             == "After stop"
         )
-        decode(saved, folder)
+        decode(saved, folder, anchor=anchor)
     finally:
         cli("page_record_stop", "--recording-id", recording["recording_id"])
 
