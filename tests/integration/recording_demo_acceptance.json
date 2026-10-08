@@ -31,7 +31,8 @@
     "scenarios": "tests/integration/scenarios_recording_demo.json",
     "artifacts": "CI retains actual GIFs, sampled decoded frames and evidence JSON for 7 days.",
     "paid_models": "Opt-in scripts/live_recording_steering.py, run locally with real API credentials before commit.",
-    "release_assets": "Release validation requires core/_demo.py inside the wheel, along with the existing recorder and generated recording tools."
+    "release_assets": "Release validation requires core/_demo.py inside the wheel, along with the existing recorder and generated recording tools.",
+    "extension_visual_precondition": "The shared real-extension fixture activates only its owned automation tab and asserts document.visibilityState=visible before visual acceptance. A post-merge Windows/latest run timed out in the older screenshot workflow while all recording tests passed; the original fixture created a hidden tab. Activation is centralized for screenshot and recording journeys. Six local real-extension checks passed after this adjustment."
   },
   "live_checks": {
     "real_cli": "Trusted movement restored across fresh CLI processes; single trusted click; paced prefix input events; held-button drag; resize; navigation; final cursor pixels; screenshot excludes the output overlay.",

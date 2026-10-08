@@ -13,7 +13,7 @@ import sys
 import pytest
 
 from ai_dev_browser.cdp import runtime, service_worker, target as cdp_target
-from ai_dev_browser.core import connect_browser, get_active_tab
+from ai_dev_browser.core import cdp_send, connect_browser, get_active_tab, js_evaluate
 from ai_dev_browser.core.browser import browser_start, browser_stop
 from ai_dev_browser.core.connection import BrowserClient
 from ai_dev_browser.core.ext_bridge import _Bridge
@@ -310,7 +310,23 @@ async def live_extension(request, tmp_path, monkeypatch):
         )
         assert "error" not in chrome, chrome
         await _until(lambda: bridge.extension is not None, "extension did not connect")
-        yield _LiveExtension(port, chrome["port"], bridge)
+        extension = _LiveExtension(port, chrome["port"], bridge)
+        # The extension creates its automation tab in the background. Visual
+        # acceptance needs an actually visible renderer: hidden Chrome tabs
+        # can stall captureScreenshot on Windows. Activate only our owned tab.
+        state = (await extension.call(cdp_send, method="AiDevBrowser.debugState"))[
+            "result"
+        ]
+        await extension.call(
+            cdp_send,
+            method="Target.activateTarget",
+            params=json.dumps({"targetId": str(state["mainTabId"])}),
+        )
+        visible = await extension.call(
+            js_evaluate, expression="document.visibilityState"
+        )
+        assert visible["result"] == "visible", visible
+        yield extension
     finally:
         if chrome and "port" in chrome:
             await asyncio.to_thread(browser_stop, port=chrome["port"])

@@ -3,7 +3,7 @@
 AUTO-GENERATED - DO NOT EDIT
 
 This file was auto-generated from SKILL.md by integration-test-generator.
-Generated: 2026-10-01 15:30:49
+Generated: 2026-10-08 13:41:05
 
 To modify test behavior:
   1. Update SKILL.md with better workflow examples
@@ -40,7 +40,6 @@ import asyncio
 import json
 import time
 from ai_dev_browser.core import (
-    cdp_send,
     click_by_ref,
     page_record_start,
     page_record_stop,
@@ -331,14 +330,6 @@ async def test_recording_real_extension_concurrent_commands(
     monkeypatch.setenv("AI_DEV_BROWSER_RECORDING_DIR", str(tmp_path / "recordings"))
     first, second = recording_page
     await live_extension.call(page_goto, url=first)
-    info = (await live_extension.call(cdp_send, method="AiDevBrowser.debugState"))[
-        "result"
-    ]
-    await live_extension.call(
-        cdp_send,
-        method="Target.activateTarget",
-        params=json.dumps({"targetId": str(info["mainTabId"])}),
-    )
     recording = await live_extension.call(
         page_record_start, out=str(tmp_path / "extension.gif")
     )
