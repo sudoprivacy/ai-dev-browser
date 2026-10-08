@@ -293,14 +293,6 @@ async def run_extension_demo(extension, folder):
 
     first, _ = make_page(folder)
     await extension.call(core.page_goto, url=first)
-    info = (await extension.call(core.cdp_send, method="AiDevBrowser.debugState"))[
-        "result"
-    ]
-    await extension.call(
-        core.cdp_send,
-        method="Target.activateTarget",
-        params=json.dumps({"targetId": str(info["mainTabId"])}),
-    )
     recording = await extension.call(
         core.page_record_start, out=str(folder / "extension.gif")
     )

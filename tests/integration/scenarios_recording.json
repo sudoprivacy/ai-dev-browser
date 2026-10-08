@@ -5,7 +5,7 @@
       "import asyncio",
       "import json",
       "import time",
-      "from ai_dev_browser.core import cdp_send, click_by_ref, page_record_start, page_record_stop, page_goto, page_wait_element, js_evaluate",
+      "from ai_dev_browser.core import click_by_ref, page_record_start, page_record_stop, page_goto, page_wait_element, js_evaluate",
       "from ai_dev_browser.core.errors import RecordingError",
       "import ai_dev_browser.tools as tool_package"
     ],
@@ -216,8 +216,6 @@
             "monkeypatch.setenv('AI_DEV_BROWSER_RECORDING_DIR', str(tmp_path / 'recordings'))",
             "first, second = recording_page",
             "await live_extension.call(page_goto, url=first)",
-            "info = (await live_extension.call(cdp_send, method='AiDevBrowser.debugState'))['result']",
-            "await live_extension.call(cdp_send, method='Target.activateTarget', params=json.dumps({'targetId': str(info['mainTabId'])}))",
             "recording = await live_extension.call(page_record_start, out=str(tmp_path / 'extension.gif'))",
             "assert recording['recording']"
           ]
