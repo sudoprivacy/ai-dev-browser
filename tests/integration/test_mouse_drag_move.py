@@ -16,7 +16,7 @@ import contextlib
 
 import pytest
 
-from ai_dev_browser.core import connect_browser, get_active_tab
+from ai_dev_browser.core import connect_browser, get_active_tab, page_wait_element
 from ai_dev_browser.core.browser import browser_start, browser_stop
 
 _PAGE = """<!doctype html><meta charset=utf-8><body style="margin:0">
@@ -48,7 +48,8 @@ async def tab():
         await the_tab.get(
             "data:text/html;base64," + base64.b64encode(_PAGE.encode()).decode()
         )
-        await the_tab.sleep(0.3)
+        ready = await page_wait_element(the_tab, selector="#pad", timeout=15)
+        assert ready["found"], ready
         yield the_tab
     finally:
         if browser is not None:
@@ -71,30 +72,18 @@ async def test_drag_moves_hold_the_button(tab):
     assert "ok" in cap, cap
 
 
-@pytest.mark.asyncio
-async def test_click_survives_a_slow_or_failing_pre_move(tab, monkeypatch):
-    # A slow/timing-out positioning move must not doom the click — the press +
-    # release (the actual action) still fire. Simulate the move raising.
-
-    from ai_dev_browser.core import mouse as _mouse
-    from ai_dev_browser.core.mouse import mouse_click
-
-    async def boom(*a, **k):
-        raise TimeoutError("CDP command timed out after 5.0s: Input.dispatchMouseEvent")
-
-    # both the human and plain move paths raise; the click must still land
-    monkeypatch.setattr(_mouse.human, "mouse_move", boom)
-    monkeypatch.setattr(tab, "mouse_move", boom)
-    # Use the already loaded page and register before dispatch. A CDP ACK can
-    # arrive before the renderer runs the click handler on a loaded CI host.
+async def _observe_click(tab, title):
+    """Register on the ready page before dispatching the one real action."""
     await tab.evaluate(
         """window.__clicks=[];
 document.getElementById('pad').addEventListener('click', e=>{
-  document.title='HIT';
+  document.title=TITLE;
   window.__clicks.push({trusted:e.isTrusted,x:e.clientX,y:e.clientY});
-}); true;"""
+}); true;""".replace("TITLE", repr(title))
     )
-    assert await mouse_click(tab, 40, 40, move=True) is True
+
+
+async def _assert_trusted_click(tab, title):
     state = await tab.evaluate(
         """new Promise(resolve=>{
 const deadline=performance.now()+2000;
@@ -106,9 +95,25 @@ function check(){
         await_promise=True,
     )
     assert state == {
-        "title": "HIT",
+        "title": title,
         "clicks": [{"trusted": True, "x": 40, "y": 40}],
-    }, ("a single trusted click must land despite the move failing", state)
+    }, ("a single trusted click must land", state)
+
+
+@pytest.mark.asyncio
+async def test_click_survives_a_slow_or_failing_pre_move(tab, monkeypatch):
+    # A positioning failure must leave the actual press/release usable.
+    from ai_dev_browser.core import mouse as _mouse
+    from ai_dev_browser.core.mouse import mouse_click
+
+    async def boom(*a, **k):
+        raise TimeoutError("CDP command timed out after 5.0s: Input.dispatchMouseEvent")
+
+    monkeypatch.setattr(_mouse.human, "mouse_move", boom)
+    monkeypatch.setattr(tab, "mouse_move", boom)
+    await _observe_click(tab, "HIT")
+    assert await mouse_click(tab, 40, 40, move=True) is True
+    await _assert_trusted_click(tab, "HIT")
 
 
 @pytest.mark.asyncio
@@ -119,12 +124,7 @@ async def test_cdp_send_dispatches_a_click_with_enum_button(tab):
 
     from ai_dev_browser.core.cdp import cdp_send
 
-    await tab.get(
-        "data:text/html,<body style='margin:0'>"
-        "<div id=t style='width:100vw;height:100vh' "
-        "onclick=\"document.title='RAW'\">x</div></body>"
-    )
-    await tab.sleep(0.2)
+    await _observe_click(tab, "RAW")
     for etype in ("mousePressed", "mouseReleased"):
         res = await cdp_send(
             tab,
@@ -134,7 +134,7 @@ async def test_cdp_send_dispatches_a_click_with_enum_button(tab):
             ),
         )
         assert "error" not in res, res
-    assert await tab.evaluate("document.title") == "RAW"
+    await _assert_trusted_click(tab, "RAW")
 
 
 @pytest.mark.asyncio

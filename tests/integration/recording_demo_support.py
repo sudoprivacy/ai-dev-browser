@@ -5,7 +5,7 @@ import json
 import math
 import statistics
 
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageFilter
 
 
 def make_page(folder):
@@ -107,18 +107,20 @@ def decode(saved, output, click=None, viewport=None, anchor=None):
                         masks[0], ImageChops.multiply(masks[1], masks[2])
                     )
                 )
-            knob = landmarks[0].getbbox()
+            # Palette/subpixel text fringes can have the same orange hue. Require
+            # a solid patch before locating the calibration rectangle.
+            knob = landmarks[0].filter(ImageFilter.MinFilter(5)).getbbox()
             assert knob is not None, ("Page landmark missing from GIF", index)
             row = (knob[1] + knob[3]) // 2
             region = (max(0, knob[0] - 5), row, frame.width, row + 1)
             local = ImageChops.lighter(*landmarks).crop(region).getbbox()
+            assert local is not None, ("Page landmark missing from GIF", index)
             bounds = (
                 local[0] + region[0],
                 knob[1],
                 local[2] + region[0],
                 knob[3],
             )
-            assert bounds is not None, ("Page landmark missing from GIF", index)
             # The long edge minimizes rounding error; GIF fitting is uniform.
             sx = sy = (bounds[2] - bounds[0]) / anchor[2]
             cx = (bounds[0] + bounds[2]) / 2 + (
