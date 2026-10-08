@@ -210,7 +210,7 @@ class Tab:
 
             viewport_session = session(self, demo_only=False)
         if command["method"].startswith("Input."):
-            from ._demo import TYPE_SECONDS, session
+            from ._demo import CLICK_HOLD_SECONDS, TYPE_SECONDS, session
 
             demo = session(self)
             if demo and command["method"] == "Input.dispatchMouseEvent":
@@ -236,7 +236,11 @@ class Tab:
                     pointer = demo.pointer()
                     if pointer and pointer.get("held"):
                         await asyncio.sleep(
-                            max(0, 0.10 - (time.monotonic() - pointer["time"]))
+                            max(
+                                0,
+                                CLICK_HOLD_SECONDS
+                                - (time.monotonic() - pointer["time"]),
+                            )
                         )
             elif (
                 demo

@@ -19,6 +19,7 @@ from PIL import Image, ImageDraw
 from .errors import RecordingError
 
 CLICK_SECONDS = 0.55
+CLICK_HOLD_SECONDS = 0.18
 TYPE_SECONDS = 0.11
 
 

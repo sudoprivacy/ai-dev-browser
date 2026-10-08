@@ -2,6 +2,8 @@
 
 import itertools
 import json
+import math
+import statistics
 
 from PIL import Image
 
@@ -45,7 +47,7 @@ def js(cli, port, expression, *flags):
     ]
 
 
-def decode(saved, output):
+def decode(saved, output, click=None, viewport=None):
     """Inspect actual GIF frames, including output pixels unrelated to the DOM."""
     frames = []
     with Image.open(saved["path"]) as gif:
@@ -59,13 +61,66 @@ def decode(saved, output):
         sum(
             count
             for count, color in frame.getcolors(frame.width * frame.height)
-            if max(abs(a - b) for a, b in zip(color, (37, 99, 235))) < 12
+            if color[2] > 180 and color[2] - color[0] > 45 and color[2] - color[1] > 25
         )
         for frame in frames
     ]
-    assert max(blue_counts) > 50, "GIF has no visible click/button feedback"
+    assert max(blue_counts) > 50, "GIF has no visible blue feedback"
+    if click is None:
+        folders = [
+            output / "recordings" / saved["recording_id"],
+            output.parent / "recordings" / saved["recording_id"],
+        ]
+        recording = next(
+            folder for folder in folders if (folder / "viewport.json").is_file()
+        )
+        viewport = json.loads((recording / "viewport.json").read_text())
+        released = [
+            json.loads(line)
+            for path in (recording / "events").glob("*.jsonl")
+            for line in path.read_text().splitlines()
+            if json.loads(line)["type"] == "mouseReleased"
+        ]
+        event = max(released, key=lambda event: event["time"])
+        click = event["x"], event["y"]
+        viewport = viewport["width"], viewport["height"]
+    scale = min(frames[0].width / viewport[0], frames[0].height / viewport[1])
+    cx = (frames[0].width - viewport[0] * scale) / 2 + click[0] * scale
+    cy = (frames[0].height - viewport[1] * scale) / 2 + click[1] * scale
+    radii = []
+    for index, frame in enumerate(frames):
+        distances = []
+        # Left of the cursor and pressed halo: a growing ring must be visible,
+        # not merely blue glyph fringes, the arrow, or a stationary press cue.
+        for y in range(max(0, round(cy - 40)), min(frame.height, round(cy + 41))):
+            for x in range(max(0, round(cx - 40)), min(frame.width, round(cx - 10))):
+                color = frame.getpixel((x, y))
+                baseline = frames[0].getpixel((x, y))
+                if (
+                    color[2] > 180
+                    and color[2] - color[0] > 45
+                    and color[2] - color[1] > 25
+                    and max(abs(a - b) for a, b in zip(color, baseline)) >= 20
+                ):
+                    distances.append(math.dist((x, y), (cx, cy)))
+        if len(distances) >= 8:
+            radii.append((index, statistics.median(distances)))
+    assert any(
+        later[1] - earlier[1] > 3
+        for i, earlier in enumerate(radii)
+        for later in radii[i + 1 :]
+    ), ("No expanding click ring at acknowledged click coordinates", (cx, cy), radii)
+    (output / "click-ring-evidence.json").write_text(
+        json.dumps({"center": [cx, cy], "radii": radii}), encoding="utf-8"
+    )
     samples = sorted(
-        {0, blue_counts.index(max(blue_counts)), len(frames) // 2, len(frames) - 1}
+        {
+            0,
+            blue_counts.index(max(blue_counts)),
+            radii[-1][0],
+            len(frames) // 2,
+            len(frames) - 1,
+        }
     )
     for index in samples:
         frames[index].save(output / f"demo-frame-{index:04d}.png")

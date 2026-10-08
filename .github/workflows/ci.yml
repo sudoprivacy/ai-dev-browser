@@ -167,6 +167,7 @@ jobs:
             extension-results/**/extension.gif
             extension-results/**/demo-frame-*.png
             extension-results/**/extension-evidence.json
+            extension-results/**/click-ring-evidence.json
 
   # ─────────────────────────────────────────────────────────────────────
   # CI-integration dogfood: prove the documented "consumer's CI" recipe
