@@ -6,29 +6,61 @@ import asyncio
 import base64
 import logging
 import pathlib
+import time
 import typing
 from typing import Any, Generator
 
 from ai_dev_browser.cdp import (
     browser as cdp_browser,
+)
+from ai_dev_browser.cdp import (
     dom,
     dom_storage,
-    emulation as cdp_emulation,
-    input_ as cdp_input,
     page,
     runtime,
+)
+from ai_dev_browser.cdp import (
+    emulation as cdp_emulation,
+)
+from ai_dev_browser.cdp import (
+    input_ as cdp_input,
+)
+from ai_dev_browser.cdp import (
     target as cdp_target,
 )
 
 from ._element import Element, create, filter_recurse
 from ._js import unwrap
 from ._transport import (
+    MOUSE_EVENT_TIMEOUT,
     CDPConnection,
     CommandTimeout,
-    MOUSE_EVENT_TIMEOUT,
     ProtocolException,
 )
 from .errors import js_snippet
+
+
+def _resume_command(command, generator):
+    """Inspect a CDP request while preserving its original typed response parser."""
+    response = yield command
+    while True:
+        try:
+            command = generator.send(response)
+        except StopIteration as done:
+            return done.value
+        response = yield command
+
+
+def _viewport_command(width, height, device_scale_factor=1):
+    return cdp_emulation.set_device_metrics_override(
+        width=width,
+        height=height,
+        device_scale_factor=device_scale_factor,
+        mobile=False,
+        screen_width=width,
+        screen_height=height,
+    )
+
 
 if typing.TYPE_CHECKING:
     from .connection import BrowserClient
@@ -167,10 +199,67 @@ class Tab:
                 to be a target-loss artifact rather than a slow command.
         """
         await self._ensure_connected()
+        command = next(cdp_obj)
+        cdp_obj = _resume_command(command, cdp_obj)
+        demo = None
+        point = None
+        params = command.get("params", {})
+        viewport_session = None
+        if command["method"] == "Emulation.setDeviceMetricsOverride":
+            from ._demo import session
+
+            viewport_session = session(self, demo_only=False)
+        if command["method"].startswith("Input."):
+            from ._demo import CLICK_HOLD_SECONDS, TYPE_SECONDS, session
+
+            demo = session(self)
+            if demo and command["method"] == "Input.dispatchMouseEvent":
+                if session_id:
+                    frame_id = next(
+                        (
+                            key
+                            for key, value in self._frame_sessions.items()
+                            if value == session_id
+                        ),
+                        None,
+                    )
+                    if frame_id is None:
+                        raise ValueError(
+                            "Demo input needs a frame session resolved by this tab"
+                        )
+                    backend_id, _ = await self.send(
+                        dom.get_frame_owner(page.FrameId(frame_id))
+                    )
+                    box = await self.send(dom.get_box_model(backend_node_id=backend_id))
+                    point = (params["x"] + box.content[0], params["y"] + box.content[1])
+                if params.get("type") == "mouseReleased":
+                    pointer = demo.pointer()
+                    if pointer and pointer.get("held"):
+                        await asyncio.sleep(
+                            max(
+                                0,
+                                CLICK_HOLD_SECONDS
+                                - (time.monotonic() - pointer["time"]),
+                            )
+                        )
+            elif (
+                demo
+                and command["method"] == "Input.dispatchKeyEvent"
+                and params.get("text")
+                and params.get("type") in ("char", "keyDown")
+            ):
+                await asyncio.sleep(TYPE_SECONDS)
+        issued = time.monotonic()
         try:
-            return await self._connection.send(
+            result = await self._connection.send(
                 cdp_obj, _is_update=_is_update, timeout=timeout, session_id=session_id
             )
+            if demo and command["method"] == "Input.dispatchMouseEvent":
+                demo.record(params, issued, point)
+                self._mouse_x, self._mouse_y = point or (params["x"], params["y"])
+            if viewport_session:
+                viewport_session.publish("viewport.json", params)
+            return result
         except Exception as e:
             if not retry_on_timeout:
                 raise
@@ -527,8 +616,25 @@ class Tab:
     # Mouse / Input
     # =========================================================================
 
+    async def mouse_position(self):
+        """Restore recording-scoped position across independent input clients."""
+        from ._demo import session
+
+        demo = session(self)
+        pointer = demo.pointer() if demo else None
+        if pointer:
+            self._mouse_x, self._mouse_y = pointer["x"], pointer["y"]
+        return self._mouse_x, self._mouse_y
+
     async def mouse_move(self, x: float, y: float, steps: int = 10):
         """Move mouse to coordinates with intermediate steps."""
+        from ._demo import session
+
+        if session(self):
+            from . import human
+
+            await human.mouse_move(self, x, y, use_gaussian=True)
+            return
         if steps <= 1:
             await self.send(
                 cdp_input.dispatch_mouse_event("mouseMoved", x=x, y=y),
@@ -557,11 +663,22 @@ class Tab:
         button: str = "left",
         modifiers: int = 0,
         session_id: str | None = None,
+        move_first: bool = True,
     ):
         """Click at coordinates. With `session_id`, the events are dispatched on
         that flat session — for a cross-origin iframe (OOPIF) the coordinates are
         then the frame's own viewport coordinates, so a caller that located the
         target inside the frame clicks it without translating to top-level."""
+        from ._demo import session
+
+        if move_first and not session_id and session(self):
+            start = await self.mouse_position()
+            if abs(start[0] - x) + abs(start[1] - y) > 1:
+                try:
+                    await self.mouse_move(x, y)
+                except (CommandTimeout, TimeoutError):
+                    # A presentation move must not prevent the actual click.
+                    logger.debug("Demo positioning move timed out; clicking in place")
         btn = cdp_input.MouseButton(button)
         await self.send(
             cdp_input.dispatch_mouse_event(
@@ -601,6 +718,12 @@ class Tab:
         )
 
         btn = cdp_input.MouseButton("left")
+        from ._demo import move_duration, session
+
+        demo = session(self)
+        if demo:
+            await self.mouse_move(sx, sy)
+        duration = move_duration((sx, sy), (dx, dy)) if demo else 0
         await self.send(
             cdp_input.dispatch_mouse_event(
                 "mousePressed", x=sx, y=sy, button=btn, click_count=1
@@ -621,6 +744,8 @@ class Tab:
                 cdp_input.dispatch_mouse_event("mouseMoved", x=ix, y=iy, buttons=1),
                 timeout=MOUSE_EVENT_TIMEOUT,
             )
+            if duration:
+                await asyncio.sleep(duration / steps)
         await self.send(
             cdp_input.dispatch_mouse_event(
                 "mouseReleased", x=dx, y=dy, button=btn, click_count=1
@@ -775,16 +900,7 @@ class Tab:
         Independent of the OS window and the underlying display size — this is
         the only viewport lever that works headless and on a small display.
         """
-        await self.send(
-            cdp_emulation.set_device_metrics_override(
-                width=width,
-                height=height,
-                device_scale_factor=1,
-                mobile=False,
-                screen_width=width,
-                screen_height=height,
-            )
-        )
+        await self.send(_viewport_command(width, height))
 
     async def _set_window_state(self, state: str):
         window_id, _ = await self.get_window()

@@ -1,0 +1,121 @@
+{
+  "config": {
+    "imports": [
+      "from tests.integration.recording_demo_support import run_demo_journey, run_opt_out, run_extension_demo, run_recording_lifecycle, run_failed_movement"
+    ],
+    "call_style": "function",
+    "extract_style": "dict",
+    "required_env_vars": [],
+    "smoke_test_assertions": [
+      "callable(run_demo_journey)",
+      "callable(run_opt_out)",
+      "callable(run_extension_demo)",
+      "callable(run_recording_lifecycle)",
+      "callable(run_failed_movement)"
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "recording_demo_cli_journey",
+      "title": "Record -> move across CLI -> click -> type -> drag -> resize -> submit -> decode visible cursor and click feedback",
+      "workflow": "Record -> move across CLI -> click -> type -> drag -> resize -> submit -> decode visible cursor and click feedback",
+      "user_problem": "Share an understandable recording of actual browser actions, with an explicit page-only opt out.",
+      "fixtures": [
+        "cli",
+        "recording_browser",
+        "tmp_path"
+      ],
+      "async": false,
+      "steps": [
+        {
+          "description": "Run real browser input across independently invoked CLI tools and inspect the saved GIF",
+          "raw_code": [
+            "run_demo_journey(cli, recording_browser, tmp_path)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "recording_demo_opt_out",
+      "title": "Record page-only -> interact at ordinary speed -> save without cursor graphics",
+      "workflow": "Record page-only -> interact at ordinary speed -> save without cursor graphics",
+      "user_problem": "Share an understandable recording of actual browser actions, with an explicit page-only opt out.",
+      "fixtures": [
+        "cli",
+        "recording_browser",
+        "tmp_path"
+      ],
+      "async": false,
+      "steps": [
+        {
+          "description": "Run real browser input across independently invoked CLI tools and inspect the saved GIF",
+          "raw_code": [
+            "run_opt_out(cli, recording_browser, tmp_path)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "recording_demo_real_extension",
+      "title": "Record through the bundled extension -> restore cursor across SDK connections -> trusted click -> paced typing -> inspect GIF feedback",
+      "workflow": "Connect extension -> record -> move -> click -> type -> stop -> decode GIF",
+      "user_problem": "The normal-browser extension must produce the same understandable demo as direct CDP automation.",
+      "fixtures": [
+        "live_extension",
+        "tmp_path",
+        "monkeypatch"
+      ],
+      "async": true,
+      "steps": [
+        {
+          "description": "Use an isolated real bundled extension and inspect actual input events and GIF pixels",
+          "raw_code": [
+            "monkeypatch.setenv(\"AI_DEV_BROWSER_RECORDING_DIR\", str(tmp_path / \"recordings\"))",
+            "await run_extension_demo(live_extension, tmp_path)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "recording_demo_lifecycle",
+      "title": "Record one tab -> ordinary input on another tab -> paced input on recorded tab -> stop -> ordinary input restored",
+      "workflow": "Record -> open another tab -> fill -> return -> fill -> stop -> fill again",
+      "user_problem": "Demo pacing must not spread to other tabs or remain active after recording finishes.",
+      "fixtures": [
+        "cli",
+        "recording_browser",
+        "tmp_path"
+      ],
+      "async": false,
+      "steps": [
+        {
+          "description": "Run the recording lifecycle in real independent CLI processes",
+          "raw_code": [
+            "run_recording_lifecycle(cli, recording_browser, tmp_path)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "recording_demo_positioning_failure",
+      "title": "Record -> inject optional movement timeout -> trusted click still opens form -> save GIF feedback",
+      "workflow": "Open -> record -> movement fault -> click -> inspect trusted DOM event -> stop -> decode GIF",
+      "user_problem": "Demo graphics and movement must preserve the existing guarantee that a slow optional positioning move does not doom a click.",
+      "fixtures": [
+        "recording_browser",
+        "tmp_path",
+        "monkeypatch"
+      ],
+      "async": true,
+      "steps": [
+        {
+          "description": "Inject only the optional actuator failure; send the actual trusted click to Chrome and inspect the resulting page and GIF",
+          "raw_code": [
+            "monkeypatch.setenv(\"AI_DEV_BROWSER_RECORDING_DIR\", str(tmp_path / \"recordings\"))",
+            "await run_failed_movement(recording_browser, tmp_path, monkeypatch)"
+          ]
+        }
+      ]
+    }
+  ]
+}

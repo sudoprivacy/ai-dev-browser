@@ -234,14 +234,28 @@ not switch the recording. After upgrading an already running bridge, restart it
 with `browser_disconnect` / `browser_connect --transport extension` and reload
 the extension to pick up concurrent event delivery and detach reporting.
 
-Output is a looping GIF of the viewport, scaled to fit 1280×720, without audio
-or the OS cursor. No ffmpeg installation is needed. Idle time is preserved;
+Demo is enabled by default: a visible cursor follows adb input, a short trail
+shows movement, pressing a button changes the cursor, and releasing it draws
+a fading click ring. Existing mouse/click/type/drag core functions perform the
+actual actions with readable timing. Cursor position persists across CLI calls
+and navigation. The recorder holds the viewport between calls and follows
+`window_set`; resizing fits subsequent frames into the initial GIF canvas.
+Graphics are composited into the GIF; page screenshots and the page DOM remain
+ordinary browser output. These cues represent acknowledged adb input; page JS
+and native OS input are outside that scope. To record page-only output with
+ordinary input timing, pass `page_record_start --no-demo` (Python: `demo=False`).
+Explicit `mouse_click --no-move` still skips positioning, and a failed optional
+positioning move still lets the actual click proceed.
+
+Output is a looping GIF of the viewport, scaled to fit 1280×720, without audio.
+No ffmpeg installation is needed. Idle time is preserved;
 `--fps` caps frame sampling (1–30, default 10). GIF uses a 256-color palette per
 frame. The safety limit is 300 seconds (`--max-duration`, 1–600) and 10 MB:
 stop before the limit to save. Closing the tab, losing the extension, failing an
 ACK, exceeding a limit, or failing a file write invalidates the recording.
 Only successful stop publishes the final path; existing files are never replaced.
-Successful output includes frame count, duration, dimensions and file size.
+Successful output includes frame count, duration, dimensions, file size and `demo`.
+Changed regions are encoded independently to keep cursor animation small.
 The file cap fits Feishu's [documented GIF preview limit](https://www.feishu.cn/hc/en-US/articles/360049067549-size-and-format-requirements-for-uploading-or-previewing-files).
 For busy pages that exceed it, lower `--fps` or record a shorter interaction.
 
@@ -263,9 +277,33 @@ uv run python -m pytest -v -s tests/integration/test_recording_workflows.py --ba
 Edit `tests/integration/scenarios_recording.json` and regenerate with
 `integration-test-generator` when changing these scenarios.
 
+The [demo workflows](tests/integration/test_recording_demo.py) also verify trusted
+input, cursor continuity between separate CLI processes, readable typing,
+dragging, resizing, navigation, GIF pixels, page-only capture and recording scope.
+They run on all three CI platforms and on the real bundled extension.
+Run them locally with the same Chrome for Testing environment variable:
+
+```powershell
+uv run python -m pytest -v -s tests/integration/test_recording_demo.py --basetemp scratch/demo-acceptance
+```
+
+Their source is `tests/integration/scenarios_recording_demo.json`; regenerate with
+the same `integration-test-generator`. The paid [live steering test](scripts/live_recording_steering.py)
+uses an authenticated Claude CLI and a real browser. It tests tool discovery,
+default demo recording, output-conflict recovery and completion from the saved
+result. It runs locally with real provider credentials before changes are committed:
+
+```powershell
+uv run python scripts/live_recording_steering.py --output scratch/demo-model-acceptance
+```
+
+The runner saves model choices and GIF evidence, excludes credentials from its
+report, and fails if the model cannot finish. The [acceptance record](tests/integration/recording_demo_acceptance.json)
+summarizes the CLI steering audit and the live checks performed for this feature.
+
 ## Human-like Behavior
 
-CDP-dispatched events produce `isTrusted=true`. Optional human-like features (all off by default, opt-in):
+CDP-dispatched events produce `isTrusted=true`. Outside demo recordings, optional human-like timing features are off by default:
 
 ```python
 from ai_dev_browser.core import human

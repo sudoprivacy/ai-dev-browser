@@ -74,7 +74,7 @@ jobs:
       - name: E2E regression tests
         shell: bash
         run: |
-          uv run python -m pytest -v \
+          uv run python -m pytest -v --basetemp test-results \
             tests/unit/ \
             tests/integration/test_ci_integration.py \
             tests/integration/test_config_resolvers.py \
@@ -90,6 +90,7 @@ jobs:
             tests/integration/test_cli_unicode_help.py \
             tests/integration/test_cli_extension_workflows.py \
             tests/integration/test_recording_workflows.py \
+            tests/integration/test_recording_demo.py \
             tests/integration/test_image_cap.py \
             tests/integration/test_scroll_embedded_target.py \
             tests/integration/test_press_key.py \
@@ -105,6 +106,19 @@ jobs:
             tests/integration/test_tab_close.py \
             tests/integration/test_mouse_drag_move.py \
             tests/integration/test_page_wait_element.py
+
+      - name: Retain recording demo evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recording-demo-${{ matrix.os }}
+          retention-days: 7
+          path: |
+            test-results/**/demo.gif
+            test-results/**/plain.gif
+            test-results/**/scoped.gif
+            test-results/**/demo-frame-*.png
+            test-results/**/*-evidence.json
 
   extension-live:
     name: Real extension (${{ matrix.os }}, websockets ${{ matrix.websockets }})
@@ -141,7 +155,19 @@ jobs:
       - name: Run the real extension on both WebSocket server implementations
         env:
           AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.chrome.outputs.chrome-path }}
-        run: uv run --no-sync python -m pytest -v tests/integration/test_cli_extension_workflows.py tests/integration/test_recording_workflows.py -k real_extension
+        run: uv run --no-sync python -m pytest -v tests/integration/test_cli_extension_workflows.py tests/integration/test_recording_workflows.py tests/integration/test_recording_demo.py -k real_extension --basetemp extension-results
+
+      - name: Retain extension recording evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recording-extension-${{ matrix.os }}-${{ matrix.websockets }}
+          retention-days: 7
+          path: |
+            extension-results/**/extension.gif
+            extension-results/**/demo-frame-*.png
+            extension-results/**/extension-evidence.json
+            extension-results/**/click-ring-evidence.json
 
   # ─────────────────────────────────────────────────────────────────────
   # CI-integration dogfood: prove the documented "consumer's CI" recipe

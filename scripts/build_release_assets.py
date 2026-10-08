@@ -35,6 +35,7 @@ def build_assets(dist: Path, output: Path) -> None:
         for name in (
             "core/recording.py",
             "core/_recorder.py",
+            "core/_demo.py",
             "tools/page_record_start.py",
             "tools/page_record_stop.py",
         ):

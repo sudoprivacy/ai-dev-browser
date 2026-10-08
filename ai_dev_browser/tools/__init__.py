@@ -11,4 +11,6 @@ Discovery:
 To share a GIF demo or before/after recording, call page_record_start,
 perform the interaction with the usual tools, then page_record_stop.
 Capture continues across CLI calls; stop returns the completed file path.
+Recording defaults to a visible cursor, click feedback and readable input timing.
+Use the ordinary click/type/move tools; no extra presentation tools are needed.
 """
