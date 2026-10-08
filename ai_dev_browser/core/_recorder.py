@@ -4,20 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from contextlib import ExitStack, contextmanager, suppress
 import hashlib
 import io
 import json
 import os
-from pathlib import Path
 import sys
 import time
+from contextlib import ExitStack, contextmanager, suppress
+from pathlib import Path
 
-from PIL import GifImagePlugin, Image, ImageOps
 import websockets
+from PIL import GifImagePlugin, Image, ImageChops, ImageOps
 
+from ._demo import Overlay, index_path
 from .errors import RecordingError
-from .recording import _write_json
+from .recording import _read_json, _write_json
 
 MAX_GIF_BYTES = 10_000_000  # Fits Feishu's documented 10 MB GIF preview limit.
 
@@ -69,19 +70,31 @@ class _Gif:
         self.start = 0.0
         self.ticks = 0
         self.frames = 0
+        self.previous = None
 
-    def push(self, data: str, timestamp: float):
-        with Image.open(io.BytesIO(base64.b64decode(data, validate=True))) as source:
-            frame = source.convert("RGB")
+    def push(self, data, timestamp: float):
+        if isinstance(data, Image.Image):
+            frame = data.convert("RGB")
+        else:
+            with Image.open(
+                io.BytesIO(base64.b64decode(data, validate=True))
+            ) as source:
+                frame = source.convert("RGB")
         if self.size is None:
             self.size = frame.size
             self.start = timestamp
         if frame.size != self.size:
             # Keep a fixed GIF canvas when a window is resized during capture.
             frame = ImageOps.pad(frame, self.size, color="white")
-        frame = frame.quantize(colors=256)
+        if (
+            self.pending is not None
+            and ImageChops.difference(frame, self.pending).getbbox() is None
+        ):
+            return  # Hold an identical frame for its real elapsed duration.
         if self.pending is None:
-            header, _ = GifImagePlugin.getheader(frame, info={"loop": 0})
+            header, _ = GifImagePlugin.getheader(
+                frame.quantize(colors=256), info={"loop": 0}
+            )
             for block in header:
                 self.handle.write(block)
         else:
@@ -90,8 +103,19 @@ class _Gif:
 
     def _flush(self, timestamp: float):
         ticks = max(self.ticks + 1, round((timestamp - self.start) * 100))
+        bounds = (
+            (0, 0, *self.pending.size)
+            if self.previous is None
+            else ImageChops.difference(self.pending, self.previous).getbbox()
+        )
+        if bounds is None:
+            bounds = (0, 0, 1, 1)
+        # Only encode changed pixels. A moving cursor on a static page must
+        # not consume the 10 MB budget by repeatedly encoding the whole page.
+        encoded = self.pending.crop(bounds).quantize(colors=256)
         for block in GifImagePlugin.getdata(
-            self.pending,
+            encoded,
+            offset=bounds[:2],
             duration=(ticks - self.ticks) * 10,
             include_color_table=True,
             disposal=1,
@@ -99,6 +123,7 @@ class _Gif:
             self.handle.write(block)
         self.ticks = ticks
         self.frames += 1
+        self.previous = self.pending
         if self.handle.tell() + 1 > MAX_GIF_BYTES:  # Reserve the GIF trailer.
             raise RecordingError(
                 "Recording exceeded the 10 MB GIF sharing limit; use a lower fps "
@@ -122,6 +147,7 @@ class _Capture:
         self.frames: asyncio.Queue = asyncio.Queue(maxsize=16)
         self.latest = None
         self.started = asyncio.Event()
+        self.metadata = {}
 
     async def command(self, method, params=None):
         self.sequence += 1
@@ -132,7 +158,12 @@ class _Capture:
             await self.ws.send(
                 json.dumps({"id": mid, "method": method, "params": params or {}})
             )
-            return await asyncio.wait_for(future, 5)
+            try:
+                return await asyncio.wait_for(future, 5)
+            except asyncio.TimeoutError as exc:
+                raise RecordingError(
+                    f"Capture command timed out after 5s: {method}"
+                ) from exc
         finally:
             self.pending.pop(mid, None)
 
@@ -173,6 +204,7 @@ class _Capture:
                     "Page.screencastFrameAck", {"sessionId": params["sessionId"]}
                 )
                 self.latest = (params["data"], received)
+                self.metadata = params.get("metadata", {})
                 self.started.set()
             finally:
                 self.frames.task_done()
@@ -187,6 +219,8 @@ async def _record(folder: Path, config: dict, partial: Path) -> dict:
         consumer = asyncio.create_task(capture.consume())
         tasks = [receiver, consumer]
         screencast_started = False
+        demo_index = None
+        overlay = Overlay(folder) if config.get("demo", True) else None
         try:
             if config.get("extension"):
                 status = await capture.command("_bridge.status")
@@ -197,6 +231,8 @@ async def _record(folder: Path, config: dict, partial: Path) -> dict:
                         "conflict",
                     )
             await capture.command("Page.enable")
+            viewport = _read_json(folder / "viewport.json")
+            await capture.command("Emulation.setDeviceMetricsOverride", viewport)
             await capture.command(
                 "Page.startScreencast",
                 {
@@ -222,10 +258,25 @@ async def _record(folder: Path, config: dict, partial: Path) -> dict:
             finally:
                 ready.cancel()
                 await asyncio.gather(ready, return_exceptions=True)
+            if overlay:
+                (folder / "events").mkdir()
+            demo_index = index_path(config["url"], config["tab_id"])
+            _write_json(demo_index, {"folder": str(folder)})
+
+            def render(data, timestamp, metadata=None):
+                if overlay is None:
+                    return data
+                with Image.open(
+                    io.BytesIO(base64.b64decode(data, validate=True))
+                ) as source:
+                    return overlay.render(
+                        source, timestamp, metadata or capture.metadata
+                    )
+
             with partial.open("xb") as output:
                 gif = _Gif(output)
                 data, started = capture.latest
-                await asyncio.to_thread(gif.push, data, started)
+                await asyncio.to_thread(gif.push, render(data, started), started)
                 last_frame = started
                 last_received = started
                 last_health = 0.0
@@ -239,14 +290,28 @@ async def _record(folder: Path, config: dict, partial: Path) -> dict:
                         if task.done():
                             task.result()
                     now = time.monotonic()
+                    requested_viewport = _read_json(folder / "viewport.json")
+                    if requested_viewport != viewport:
+                        await capture.command(
+                            "Emulation.setDeviceMetricsOverride", requested_viewport
+                        )
+                        viewport = requested_viewport
                     if now - started >= config["max_duration"]:
                         raise RecordingError(
                             "Recording reached max_duration before stop; no GIF published"
                         )
-                    if now - last_health >= 2:
+                    if now - last_health >= 0.2:
                         # Quiet pages legitimately emit no frames. Probe the target
                         # separately so a detached extension cannot look like idle.
-                        await capture.command("Page.getLayoutMetrics")
+                        metrics = await capture.command("Page.getLayoutMetrics")
+                        actual = metrics["cssLayoutViewport"]
+                        if (actual["clientWidth"], actual["clientHeight"]) != (
+                            viewport["width"],
+                            viewport["height"],
+                        ):
+                            await capture.command(
+                                "Emulation.setDeviceMetricsOverride", viewport
+                            )
                         last_health = now
                     if now - last_state >= 0.5:
                         _write_json(
@@ -255,17 +320,19 @@ async def _record(folder: Path, config: dict, partial: Path) -> dict:
                                 "status": "recording",
                                 "heartbeat": time.time(),
                                 "pid": os.getpid(),
+                                "demo": config.get("demo", True),
                             },
                         )
                         last_state = now
-                    if (folder / "stop").exists():
+                    if (folder / "stop").exists() and (
+                        not overlay or not overlay.animating(now)
+                    ):
                         break
                     latest_data, received = capture.latest
                     if (
-                        received > last_received
-                        and now - last_frame >= 1 / config["fps"]
-                    ):
-                        await asyncio.to_thread(gif.push, latest_data, now)
+                        received > last_received or overlay is not None
+                    ) and now - last_frame >= 1 / config["fps"]:
+                        await asyncio.to_thread(gif.push, render(latest_data, now), now)
                         last_frame = now
                         last_received = received
                     await asyncio.sleep(0.02)
@@ -279,11 +346,19 @@ async def _record(folder: Path, config: dict, partial: Path) -> dict:
                         task.result()
                 latest_data, received = capture.latest
                 if received > last_received:
-                    await asyncio.to_thread(gif.push, latest_data, time.monotonic())
+                    stamp = time.monotonic()
+                    await asyncio.to_thread(gif.push, render(latest_data, stamp), stamp)
                 # Navigation can finish before Chrome delivers its next screencast
                 # event. Capture the final viewport after stopping the stream so
                 # an immediate stop cannot silently save the previous page as the
                 # ending. _Gif fits this snapshot to the existing bounded canvas.
+                await capture.command("Emulation.setDeviceMetricsOverride", viewport)
+                metrics = await capture.command("Page.getLayoutMetrics")
+                layout = metrics["cssLayoutViewport"]
+                final_metadata = {
+                    "deviceWidth": layout["clientWidth"],
+                    "pageScaleFactor": metrics["cssVisualViewport"]["scale"],
+                }
                 final = await capture.command(
                     "Page.captureScreenshot",
                     {
@@ -295,7 +370,10 @@ async def _record(folder: Path, config: dict, partial: Path) -> dict:
                 for task in tasks:
                     if task.done():
                         task.result()
-                await asyncio.to_thread(gif.push, final["data"], time.monotonic())
+                stamp = time.monotonic()
+                await asyncio.to_thread(
+                    gif.push, render(final["data"], stamp, final_metadata), stamp
+                )
                 await asyncio.to_thread(gif.finish, time.monotonic())
                 result = {
                     "saved": True,
@@ -307,9 +385,12 @@ async def _record(folder: Path, config: dict, partial: Path) -> dict:
                     "width": gif.size[0],
                     "height": gif.size[1],
                     "fps": config["fps"],
+                    "demo": config.get("demo", True),
                 }
             return result
         finally:
+            if demo_index is not None:
+                demo_index.unlink(missing_ok=True)
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)

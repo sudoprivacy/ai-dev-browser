@@ -1,0 +1,107 @@
+{
+  "date": "2026-10-08",
+  "base_commit": "d233d40",
+  "scope": "Default viewer-friendly GIF recording in ai-dev-browser; sudohand migration remains parked.",
+  "skills": {
+    "cli_steering": "C:/Users/songym/cursor-projects/document-ai/.claude/skills/cli-steering-engineering/SKILL.md",
+    "integration_test_generator": "C:/Users/songym/cursor-projects/document-ai/.claude/skills/integration-test-generator/SKILL.md"
+  },
+  "audit": {
+    "naming": "Existing page_record_start/page_record_stop core functions and generated tool filenames remain identical.",
+    "parameters": "demo=True is defined once in core; --no-demo is derived by wrap_core. out, fps, max_duration and recording_id are preserved.",
+    "discovery": "Core opening paragraph selects recording for a GIF and screenshot for a still image. It exposes default cursor/click/timing, --out, and --recording-id. tools/__init__.py and screenshot help lead to recording.",
+    "returns": "CLI and SDK share the core result. Start returns recording_id and demo after the first frame; stop returns saved path, byte size, dimensions and duration. Successful stop is the completion signal.",
+    "failures": "Validation=exit 2; existing output conflict=exit 5 and retryable=false; interrupted capture is never published. Real model recovery preserved the conflicting file.",
+    "composition": "61 generated tools, zero new commands. Existing human mouse path, trusted CDP input, verified typing, viewport command and recording JSON persistence are reused.",
+    "model_findings": "With names and opening summaries, the model selected the correct recording tools. It initially guessed --path; explicit --out/--recording-id guidance fixed recording parameters. Existing click/type parameters still required error recovery or --help in the paid live runs; this audit does not claim zero parameter guesses.",
+    "multi_tab_targeting": "Use the existing --tab-url parameter to select another tab explicitly; recording remains pinned to its original target."
+  },
+  "regression_protection": {
+    "workflow": ".github/workflows/ci.yml",
+    "direct_cdp_platforms": [
+      "ubuntu-latest",
+      "macos-latest",
+      "windows-latest"
+    ],
+    "real_extension_matrix": [
+      "Linux websockets 13.1",
+      "Windows locked dependencies",
+      "Windows latest dependencies"
+    ],
+    "scenarios": "tests/integration/scenarios_recording_demo.json",
+    "artifacts": "CI retains actual GIFs, sampled decoded frames and evidence JSON for 7 days.",
+    "paid_models": "Opt-in scripts/live_recording_steering.py, run locally with real API credentials before commit."
+  },
+  "live_checks": {
+    "real_cli": "Trusted movement restored across fresh CLI processes; single trusted click; paced prefix input events; held-button drag; resize; navigation; final cursor pixels; screenshot excludes the output overlay.",
+    "opt_out": "--no-demo returns demo=false, uses ordinary insertText, and saves page-only pixels.",
+    "extension": "Real bundled extension through both legacy and asyncio WebSocket servers; separate SDK connections; trusted movement/click/typing; decoded GIF feedback.",
+    "scope": "Other tab uses ordinary insertText during recording; recorded tab uses human typing; ordinary typing resumes after stop.",
+    "gif_playback": "Opened the actual saved GIF in an adb-driven Chrome tab; inspected 8 browser screenshots over a complete loop and decoded click/ending frames. Local deliverable: output/recording-demo/demo.gif.",
+    "encoding": "A 60-frame moving pointer fixture is under 20 KB and erases previous pointer positions. The improved Gaussian path settles at its target across 20 seeds.",
+    "bugs_fixed_from_live_runs": [
+      "Mean-shifted Gaussian noise caused overshoot and a final jump; use zero-mean tapered noise.",
+      "Chrome removes transient CLI viewport overrides; the recorder holds the requested viewport and follows window_set.",
+      "Post-screenshot layout metrics could report another viewport; resolve final-frame coordinates before capture."
+    ]
+  },
+  "paid_live_reports": [
+    {
+      "evidence": "scratch/demo-model-live-5/model-steering.json",
+      "status": "passed",
+      "model_requests": 7,
+      "scenarios": [
+        {
+          "name": "recover output conflict",
+          "models": [
+            "claude-opus-4-8"
+          ],
+          "calls": [
+            "page_record_start",
+            "click_by_html_id",
+            "click_by_html_id",
+            "type_by_text",
+            "page_record_stop"
+          ],
+          "saved": {
+            "size_bytes": 117339,
+            "frames": 46,
+            "duration_seconds": 39.98,
+            "width": 1213,
+            "height": 720,
+            "demo": true
+          }
+        }
+      ]
+    },
+    {
+      "evidence": "scratch/demo-model-live-6/model-steering.json",
+      "status": "passed",
+      "model_requests": 7,
+      "scenarios": [
+        {
+          "name": "discover default demo",
+          "models": [
+            "claude-opus-4-8"
+          ],
+          "calls": [
+            "page_record_start",
+            "click_by_html_id",
+            "click_by_html_id",
+            "type_by_text",
+            "type_by_text",
+            "page_record_stop"
+          ],
+          "saved": {
+            "size_bytes": 144720,
+            "frames": 42,
+            "duration_seconds": 38.77,
+            "width": 1213,
+            "height": 720,
+            "demo": true
+          }
+        }
+      ]
+    }
+  ]
+}

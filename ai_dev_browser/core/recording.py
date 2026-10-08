@@ -5,14 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
 import time
 import uuid
+from pathlib import Path
 
-from ._tab import Tab
+from ._tab import Tab, _viewport_command
 from .config import DEFAULT_BASE_DIR, resolve_output_dir
 from .errors import RecordingError
 
@@ -24,24 +24,27 @@ def _state_root() -> Path:
 
 
 def _write_json(path: Path, value: dict):
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(value), encoding="utf-8")
-    # Windows can briefly deny opens/renames while a file is delete-pending
-    # (including antivirus scanning). Retry that specific OS sharing race.
-    for attempt in range(100):
-        try:
-            temporary.replace(path)
-            break
-        except PermissionError:
-            if attempt == 99:
-                raise
-            time.sleep(0.01)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(json.dumps(value), encoding="utf-8")
+        # Each writer owns its temporary file. Windows can briefly deny a
+        # rename while readers or antivirus hold the destination open.
+        for attempt in range(100):
+            try:
+                temporary.replace(path)
+                break
+            except PermissionError:
+                if attempt == 99:
+                    raise
+                time.sleep(0.01)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
-def _read_state(folder: Path) -> dict:
+def _read_json(path: Path) -> dict:
     for attempt in range(100):
         try:
-            return json.loads((folder / "state.json").read_text(encoding="utf-8"))
+            return json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return {}
         except PermissionError:
@@ -51,17 +54,30 @@ def _read_state(folder: Path) -> dict:
     return {}
 
 
+def _read_state(folder: Path) -> dict:
+    return _read_json(folder / "state.json")
+
+
 async def page_record_start(
     tab: Tab,
     fps: int = 10,
     out: str | None = None,
     max_duration: float = 300,
+    demo: bool = True,
 ) -> dict:
-    """Use when: you need a GIF demo or before/after recording; returns recording_id for page_record_stop.
+    """Use when: you need a viewer-friendly GIF demo or before/after recording; returns recording_id for page_record_stop.
 
     Returns {recording_id, recording, path, ...} only after receiving the first
     frame. Capture continues after this command exits; use click/type/page_goto
     normally, including navigation, then page_record_stop. One recording per tab.
+    Demo is on by default: visible cursor, short trail, button feedback and
+    readable mouse/typing timing for adb input on the recorded tab, across CLI
+    calls. Existing click/type/move/drag functions do the actual interaction.
+    Choose the destination with out (CLI --out), then stop with recording_id
+    (CLI --recording-id). Stop returns the completed GIF path.
+    Pass demo=False for the original page-only capture and ordinary input speed.
+    Graphics are added to the GIF, and do not appear in page screenshots.
+    Raw page JS and OS input are not represented as adb mouse events.
     For a single still image, use page_screenshot. Records this tab's
     viewport (up to 1280x720), without audio; keep it visible in extension mode.
     Only a successful stop publishes the GIF. Do not close the tab before stop.
@@ -76,6 +92,8 @@ async def page_record_start(
             honors AI_DEV_BROWSER_OUTPUT_DIR. Existing files are never replaced.
         max_duration: Safety limit in seconds, 1 to 600 (default 300).
             Reaching it fails the recording; stop before the limit to save.
+        demo: Show cursor/click feedback and pace adb input while recording
+            this tab (default True). Other tabs keep their normal input timing.
 
     Failure:
         Fix the reported cause and start a new recording. Keep the tab visible
@@ -86,6 +104,8 @@ async def page_record_start(
         raise RecordingError("fps must be an integer from 1 to 30", "validation")
     if not 1 <= max_duration <= 600:
         raise RecordingError("max_duration must be from 1 to 600 seconds", "validation")
+    if not isinstance(demo, bool):
+        raise RecordingError("demo must be True or False", "validation")
     recording_id = uuid.uuid4().hex
     path = (
         Path(out).expanduser()
@@ -99,6 +119,13 @@ async def page_record_start(
     path.parent.mkdir(parents=True, exist_ok=True)
     folder = _state_root().resolve() / recording_id
     folder.mkdir(parents=True, mode=0o700)
+    viewport = await tab.evaluate(
+        "({width:innerWidth,height:innerHeight,dpr:devicePixelRatio})"
+    )
+    viewport_request = next(
+        _viewport_command(viewport["width"], viewport["height"], viewport["dpr"])
+    )
+    _write_json(folder / "viewport.json", viewport_request["params"])
     config = {
         "recording_id": recording_id,
         "url": tab._connection.websocket_url,
@@ -108,6 +135,7 @@ async def page_record_start(
         "fps": fps,
         "max_duration": max_duration,
         "extension": tab.browser.transport == "extension",
+        "demo": demo,
     }
     _write_json(folder / "config.json", config)
     kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL}
@@ -137,6 +165,7 @@ async def page_record_start(
                     "tab_id": config["tab_id"],
                     "fps": fps,
                     "max_duration": max_duration,
+                    "demo": demo,
                 }
             if state.get("status") == "failed":
                 raise RecordingError(

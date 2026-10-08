@@ -4,15 +4,13 @@ import asyncio
 import json
 import logging
 
-from ai_dev_browser.cdp import dom
+from ai_dev_browser.cdp import dom, page
 from ai_dev_browser.cdp import input_ as cdp_input
-from ai_dev_browser.cdp import page
 
 from . import human
 from ._element import Element
 from ._ref import node_id_of, parse_ref
 from ._tab import Tab
-
 from .snapshot import _get_snapshot
 
 logger = logging.getLogger(__name__)
@@ -924,6 +922,10 @@ async def _fill_verified(
     `{typed, verified, method, methods_tried}` — `typed` reflects reality (False
     if the field stayed empty). Always targets value===text (clears first), so
     verification is meaningful."""
+    from ._demo import session
+
+    if prefer is None and session(tab):
+        prefer = "human"
     order = ["insertText", "keys", "native"]
     if prefer == "keys":
         order = ["keys", "insertText", "native"]

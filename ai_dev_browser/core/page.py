@@ -224,6 +224,7 @@ async def page_screenshot(
 
     For a GIF demo or before/after recording of an interaction, use
     page_record_start before acting, then page_record_stop to save it.
+    Recording defaults to a visible cursor, click feedback and readable input timing.
 
     This is the escape hatch for **opaque / canvas UIs** with no readable DOM
     (e.g. an HTML5-canvas ERP console where `find_by_text` / xpath find

@@ -10,10 +10,10 @@ import random
 from dataclasses import dataclass
 
 from ai_dev_browser import cdp
+
 from ._element import Element
 from ._tab import Tab
 from ._transport import MOUSE_EVENT_TIMEOUT
-
 
 # Optional: use oxymouse if available
 try:
@@ -75,9 +75,6 @@ class HumanConfig:
 # Global config
 _config = HumanConfig()
 
-# Track last mouse position per tab (keyed by tab's target_id)
-_last_mouse_pos: dict[str, tuple[float, float]] = {}
-
 
 def configure(**kwargs) -> HumanConfig:
     """Configure human-like behavior globally.
@@ -101,15 +98,6 @@ def get_config() -> HumanConfig:
     return _config
 
 
-def _get_tab_id(tab: Tab) -> str:
-    """Get unique identifier for a tab."""
-    try:
-        return str(tab.target.target_id)
-    except AttributeError:
-        # Fallback to object id
-        return str(id(tab))
-
-
 def _get_mouse_button(button: str) -> cdp.input_.MouseButton:
     """Convert button string to CDP MouseButton enum."""
     button_map = {
@@ -123,14 +111,12 @@ def _get_mouse_button(button: str) -> cdp.input_.MouseButton:
 
 def get_last_mouse_pos(tab: Tab) -> tuple[float, float]:
     """Get last known mouse position for a tab."""
-    tab_id = _get_tab_id(tab)
-    return _last_mouse_pos.get(tab_id, (0, 0))
+    return getattr(tab, "_mouse_x", 0), getattr(tab, "_mouse_y", 0)
 
 
 def set_last_mouse_pos(tab: Tab, x: float, y: float) -> None:
     """Set last known mouse position for a tab."""
-    tab_id = _get_tab_id(tab)
-    _last_mouse_pos[tab_id] = (x, y)
+    tab._mouse_x, tab._mouse_y = x, y
 
 
 # =============================================================================
@@ -231,23 +217,28 @@ def generate_gaussian_path(
     # Morph to fit path scale
     dx = end_x - start_x
     dy = end_y - start_y
-    human_mean_x, human_std_x = dx / 2, max(abs(dx) / 6, 5)
-    human_mean_y, human_std_y = dy / 2, max(abs(dy) / 6, 5)
-
-    morphed_x = _morph_distribution(smooth_x, human_mean_x, human_std_x)
-    morphed_y = _morph_distribution(smooth_y, human_mean_y, human_std_y)
+    distance = math.hypot(dx, dy)
+    amplitude = min(12, distance * 0.04) * randomness
+    morphed_x = _morph_distribution(smooth_x, 0, amplitude)
+    morphed_y = _morph_distribution(smooth_y, 0, amplitude)
 
     # Generate Bezier base curve with random control point
-    control_x = random.uniform(min(start_x, end_x), max(start_x, end_x))
-    control_y = random.uniform(min(start_y, end_y), max(start_y, end_y))
+    progress = random.uniform(0.35, 0.65)
+    bend = random.uniform(-0.10, 0.10) * randomness
+    control_x = start_x + dx * progress - dy * bend
+    control_y = start_y + dy * progress + dx * bend
 
     # Combine Bezier + noise
     path = []
     for i in range(num_points):
         t = i / (num_points - 1) if num_points > 1 else 1.0
+        t = t * t * (3 - 2 * t)  # Accelerate and settle smoothly.
         bx = _bezier_quadratic(start_x, control_x, end_x, t)
         by = _bezier_quadratic(start_y, control_y, end_y, t)
-        path.append((int(bx + morphed_x[i]), int(by + morphed_y[i])))
+        taper = math.sin(math.pi * t)
+        path.append(
+            (round(bx + morphed_x[i] * taper), round(by + morphed_y[i] * taper))
+        )
 
     # Ensure exact start and end
     path[0] = (start_x, start_y)
@@ -321,23 +312,34 @@ async def mouse_move(
     """
     # Get starting position from last known or default
     if from_x is None or from_y is None:
-        last_pos = get_last_mouse_pos(tab)
+        last_pos = (
+            (await tab.mouse_position())
+            if hasattr(tab, "mouse_position")
+            else get_last_mouse_pos(tab)
+        )
         from_x = from_x if from_x is not None else last_pos[0]
         from_y = from_y if from_y is not None else last_pos[1]
 
     # Determine whether to use gaussian
+    from ._demo import move_duration, session
+
+    demo = session(tab)
     if use_gaussian is None:
-        use_gaussian = _config.use_gaussian_path
+        use_gaussian = bool(demo) or _config.use_gaussian_path
 
     if use_gaussian:
         # Calculate duration with variance
         if duration is None:
-            base = _config.mouse_duration
+            base = (
+                move_duration((from_x, from_y), (x, y))
+                if demo
+                else _config.mouse_duration
+            )
             variance = _config.mouse_duration_variance
             duration = base * random.uniform(1 - variance, 1 + variance)
 
         # Generate path
-        if _HAS_OXYMOUSE:
+        if _HAS_OXYMOUSE and not demo:
             mouse = OxyMouse(algorithm="gaussian")
             path = mouse.generate_coordinates(
                 from_x=int(from_x), from_y=int(from_y), to_x=int(x), to_y=int(y)
@@ -503,7 +505,13 @@ async def type_text(
         await element.apply("(elem) => elem.focus()")
 
     # Determine whether to use human-like delays
-    use_delays = humanize if humanize is not None else _config.type_humanize
+    from ._demo import session
+
+    # Demo timing is applied once at the shared input boundary, so callers
+    # using per-character keys and callers using this function stay consistent.
+    use_delays = (
+        humanize if humanize is not None else _config.type_humanize
+    ) and not session(tab)
 
     for char in text:
         # Simulate typo if enabled (only when humanizing)
