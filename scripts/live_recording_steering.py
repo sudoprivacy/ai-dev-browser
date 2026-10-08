@@ -1,7 +1,8 @@
 """Paid live CLI steering acceptance: real model choices, real browser, real GIF.
 
-The text-only model sees installed tool names and first-line summaries, and can
-request the real CLI help. The runner executes
+The text-only model sees installed tool names (and, in the original scenarios,
+first-line summaries), and can request real CLI help. Cold scenarios use natural
+tasks without API names, HTML IDs or prescribed recording steps. The runner executes
 its choices only in an isolated fixture. Credentials are inherited, never saved.
 """
 
@@ -13,7 +14,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
+
+from PIL import Image
 
 from ai_dev_browser import core
 from ai_dev_browser.core.browser import browser_start, browser_stop
@@ -28,14 +32,26 @@ JSON object: {"tool":"name","args":["--flag","value"]}, {"help":"name"}, or
 {"done":true,"summary":"outcome"}. A runner executes the call and supplies --port.
 Use the actual installed tool listing and help, and rely on returned completion
 state. Do not invent parameters or repeat completed actions."""
-ALLOWED = {
-    "page_record_start",
-    "page_record_stop",
+READ_ONLY = {
+    "browser_connect",
+    "browser_list",
+    "tab_list",
+    "page_info",
     "page_screenshot",
     "page_discover",
+    "find_by_text",
+    "find_by_html_id",
+    "find_by_xpath",
+    "page_html",
+    "js_evaluate",
+}
+ALLOWED = READ_ONLY | {
+    "page_record_start",
+    "page_record_stop",
     "click_by_html_id",
     "click_by_ref",
     "click_by_text",
+    "click_by_xpath",
     "type_by_text",
     "type_by_ref",
 }
@@ -63,22 +79,37 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument(
-        "--scenario", choices=["default", "recovery", "both"], default="both"
+        "--scenario",
+        choices=["default", "recovery", "both", "cold"],
+        default="both",
+        help="cold: names-only discovery for natural demo and page-only tasks",
     )
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     executable = shutil.which("claude")
     assert executable, "Claude CLI is required; live model acceptance did not run"
-    functions = [tool["name"] for tool in _discover_tools()]
+    tool_metadata = {tool["name"]: tool for tool in _discover_tools()}
+    functions = list(tool_metadata)
+    cold = args.scenario == "cold"
     catalog = "\n".join(
-        f"{name}: {inspect.getdoc(getattr(core, name)).splitlines()[0]}"
+        name
+        if cold
+        else f"{name}: {inspect.getdoc(getattr(core, name)).splitlines()[0]}"
         for name in sorted(functions)
     )
-    report = {"status": "failed", "scenarios": [], "model_requests": 0}
+    report = {
+        "status": "failed",
+        "scenarios": [],
+        "model_requests": 0,
+        "catalog": "names" if cold else "names and first-line summaries",
+        "tool_count": len(functions),
+    }
     env = dict(
         os.environ,
         AI_DEV_BROWSER_RECORDING_DIR=str(output / "recordings"),
+        AI_DEV_BROWSER_TRANSPORT="cdp",
+        AI_DEV_BROWSER_TAB_URL="",
         PYTHONUTF8="1",
     )
     result = browser_start(headless=True, temp=True, reuse="none", silent_stderr=True)
@@ -87,7 +118,10 @@ def main():
 
     def call(tool, flags, supply_port=True):
         command = [sys.executable, "-m", f"ai_dev_browser.tools.{tool}"]
-        if supply_port and tool != "page_record_stop":
+        if supply_port and (
+            tool_metadata[tool]["requires_tab"]
+            or "port" in inspect.signature(getattr(core, tool)).parameters
+        ):
             command += ["--port", str(port)]
         run = subprocess.run(
             command + flags,
@@ -108,13 +142,17 @@ def main():
 
     try:
         with tempfile.TemporaryDirectory(prefix="adb-recording-model-") as context:
-            for name, recover in (
-                ("discover default demo", False),
-                ("recover output conflict", True),
+            for mode, name, recover, demo in (
+                ("default", "discover default demo", False, True),
+                ("recovery", "recover output conflict", True, True),
+                ("cold-demo", "cold discovery of viewer demo", False, True),
+                ("cold-plain", "cold discovery of page-only recording", False, False),
             ):
-                if args.scenario != "both" and recover != (args.scenario == "recovery"):
+                if cold != mode.startswith("cold-"):
                     continue
-                folder = output / ("recovery" if recover else "default")
+                if not cold and args.scenario != "both" and args.scenario != mode:
+                    continue
+                folder = output / mode
                 folder.mkdir()
                 first, _ = make_page(folder)
                 assert call("page_goto", ["--url", first])["exit_code"] == 0
@@ -141,12 +179,32 @@ def main():
                     "with Model demo, then finish and save the recording. Leave the form open. "
                     "Use the normal recording defaults and report completion from the saved result."
                 )
-                entry = {"name": name, "turns": [], "calls": []}
+                if cold:
+                    task = (
+                        f"Create a shareable GIF at {destination} showing this webpage's "
+                        "Open form button being used and Model demo being entered in the "
+                        "Request name field. The browser is already showing the form. "
+                        "Leave the filled form open. "
+                        + (
+                            "Make the mouse actions and typing easy for a human viewer to follow."
+                            if demo
+                            else "Capture only the webpage: no drawn cursor or click graphics, "
+                            "and keep input at its ordinary speed."
+                        )
+                    )
+                entry = {
+                    "name": name,
+                    "task": task,
+                    "turns": [],
+                    "calls": [],
+                    "history": history,
+                }
                 report["scenarios"].append(entry)
+                began = time.monotonic()
                 started = None
                 saved = None
                 failures = 0
-                for _ in range(12):
+                for _ in range(18 if cold else 12):
                     prompt = (
                         SYSTEM
                         + "\nInstalled tools/help:\n"
@@ -209,19 +267,44 @@ def main():
                         assert saved and started, (
                             "Model declared completion before saving"
                         )
-                        assert saved["demo"] and Path(saved["path"]).is_file()
+                        assert saved["demo"] is demo and Path(saved["path"]).is_file()
                         actual = call(
                             "js_evaluate",
-                            ["--expression", "document.querySelector('#name').value"],
+                            [
+                                "--expression",
+                                "({value:document.querySelector('#name').value,clicks,inputs})",
+                            ],
                         )
-                        assert actual["result"]["result"] == "Model demo", actual
-                        decode(saved, folder)
+                        state = actual["result"]["result"]
+                        assert state["value"] == "Model demo", actual
+                        assert any(
+                            e["id"] == "open" and e["trusted"] for e in state["clicks"]
+                        ), state
+                        inputs = [
+                            e for e in state["inputs"] if e["value"] and e["trusted"]
+                        ]
+                        assert inputs and inputs[-1]["value"] == "Model demo", state
+                        if demo:
+                            assert len(inputs) >= len("Model demo"), inputs
+                            assert all(
+                                b["t"] - a["t"] >= 75
+                                for a, b in zip(inputs, inputs[1:])
+                            ), inputs
+                            decode(saved, folder)
+                        else:
+                            assert len(inputs) == 1, inputs
+                            with Image.open(saved["path"]) as gif:
+                                assert gif.n_frames == saved["frames"] > 1
+                                for index in range(gif.n_frames):
+                                    gif.seek(index)
+                                    gif.load()
+                        entry["page_state"] = state
                         entry["status"] = "passed"
                         if recover:
                             assert conflict.read_bytes() == b"preserve existing file"
                         break
                     tool = choice.get("tool") or choice.get("help")
-                    assert tool in ALLOWED, choice
+                    assert tool in (functions if "help" in choice else ALLOWED), choice
                     if "help" in choice:
                         help_text = subprocess.check_output(
                             [
@@ -244,17 +327,27 @@ def main():
                         in {
                             "--port",
                             "--tab-url",
-                            "--transport",
                             "--profile",
-                            "--no-demo",
                         }
                         for flag in flags
                     ), choice
-                    if not entry["calls"]:
+                    for index, flag in enumerate(flags):
+                        if flag.split("=")[0] == "--transport":
+                            transport = (
+                                flag.split("=", 1)[1]
+                                if "=" in flag
+                                else flags[index + 1]
+                                if index + 1 < len(flags)
+                                else None
+                            )
+                            assert transport == "cdp", choice
+                    if cold and started is None:
+                        assert tool in READ_ONLY or tool == "page_record_start", choice
+                    elif not entry["calls"]:
                         assert tool == "page_record_start", choice
                     actual = call(tool, flags)
                     entry["calls"].append(tool)
-                    assert len(entry["calls"]) <= 8, (
+                    assert len(entry["calls"]) <= (10 if cold else 8), (
                         "Unnecessary calls or repeated actions"
                     )
                     history.append({**choice, **actual})
@@ -272,6 +365,7 @@ def main():
                     raise AssertionError("Model did not finish")
                 assert entry["calls"][-1] == "page_record_stop", entry
                 entry["saved"] = saved
+                entry["duration_seconds"] = round(time.monotonic() - began, 2)
         report["status"] = "passed"
     finally:
         # The recorder is detached; finalize any owned active fixture before

@@ -159,5 +159,120 @@
         }
       ]
     }
-  ]
+  ],
+  "repeat_steering_audit": {
+    "date": "2026-10-08",
+    "base_commit": "a75bbea",
+    "baseline_tag": "v0.52.0",
+    "baseline_version": "0.52.0",
+    "scope": "Recording discovery, default demo, opt out, composition, parameters and recovery; HTTP mapping does not apply.",
+    "checklist": {
+      "rules_1_2_naming": "61 existing public tools. Core names and generated filenames agree; page_record_start/stop remain grouped.",
+      "rules_3_4_parameters_docs": "Signatures, defaults, choices and docstrings remain authoritative. demo=True yields --no-demo. Generated wrappers contain no duplicated declarations.",
+      "rule_4a_selection": "Recording/screenshot distinction, demo default and recording lifecycle are in the opening paragraph. HTML ID and field/value flags now appear in the primary interaction tools first lines.",
+      "rules_5_5a_results": "Start confirms first-frame capture and returns recording_id; stop confirms the complete GIF with saved/path/size/dimensions. Typing already returns verified.",
+      "rules_5b_7_errors": "Failure hints come from core docstrings. Actual validation=2 and not_found=4 probes include error_code, retryable=false and hint. Actual output conflict=5 is recovered without overwriting the existing file.",
+      "rule_6_primitives": "Real trusted clicks, paced prefix inputs, ordinary bulk input and saved GIF frames are observed; default-demo click-ring pixels are decoded.",
+      "rules_8_9_10_organization": "Both recording functions are async and generated through wrap_core. Stop needs no browser handle. Demo helpers stay private.",
+      "rule_11_composition": "Recording brackets CDP capture across normal trusted interactions. No additional user-facing presentation commands."
+    },
+    "findings_and_changes": [
+      "Earlier guided tasks prescribed recording and an HTML ID. Added natural tasks and names-only discovery, with no inherited session or project context.",
+      "Initial cold trials were stopped by harness restrictions on legitimate browser_list/browser_connect probes. Allow diagnostic reads and owned CDP connection; derive port injection from the existing registry/signature.",
+      "Repeated --id guesses despite selecting click_by_html_id correctly: front-load html_id / --html-id in its core first line.",
+      "A later recovery trial guessed --value and reversed the field/text roles. Front-load name / --name versus text / --text in type_by_text."
+    ],
+    "retained_failed_trials": [
+      "scratch/demo-audit-cold-20261008-1/model-steering.json",
+      "scratch/demo-audit-cold-20261008-2/model-steering.json",
+      "scratch/demo-audit-recovery-20261008/model-steering.json",
+      "scratch/demo-audit-recovery-parameter-20261008/model-steering.json"
+    ],
+    "cold_discovery": {
+      "evidence": "scratch/demo-audit-cold-20261008-3/model-steering.json",
+      "requests": 15,
+      "cases": [
+        {
+          "name": "cold discovery of viewer demo",
+          "task": "Create a shareable GIF at C:\\Users\\songym\\cursor-projects\\ai-dev-browser\\scratch\\demo-audit-cold-20261008-3\\cold-demo\\model.gif showing this webpage's Open form button being used and Model demo being entered in the Request name field. The browser is already showing the form. Leave the filled form open. Make the mouse actions and typing easy for a human viewer to follow.",
+          "models": [
+            "claude-opus-4-8"
+          ],
+          "calls": [
+            "page_record_start",
+            "click_by_text",
+            "type_by_text",
+            "page_record_stop"
+          ],
+          "help_requests": 2,
+          "unexpected_cli_failures": 0,
+          "duration_seconds": 70.09,
+          "demo": true,
+          "gif": {
+            "size_bytes": 119169,
+            "frames": 56,
+            "duration_seconds": 38.4,
+            "width": 1213,
+            "height": 720
+          }
+        },
+        {
+          "name": "cold discovery of page-only recording",
+          "task": "Create a shareable GIF at C:\\Users\\songym\\cursor-projects\\ai-dev-browser\\scratch\\demo-audit-cold-20261008-3\\cold-plain\\model.gif showing this webpage's Open form button being used and Model demo being entered in the Request name field. The browser is already showing the form. Leave the filled form open. Capture only the webpage: no drawn cursor or click graphics, and keep input at its ordinary speed.",
+          "models": [
+            "claude-opus-4-8"
+          ],
+          "calls": [
+            "page_record_start",
+            "click_by_text",
+            "type_by_text",
+            "page_record_stop"
+          ],
+          "help_requests": 3,
+          "unexpected_cli_failures": 0,
+          "duration_seconds": 98.96,
+          "demo": false,
+          "gif": {
+            "size_bytes": 81476,
+            "frames": 60,
+            "duration_seconds": 60.96,
+            "width": 1213,
+            "height": 720
+          }
+        }
+      ]
+    },
+    "final_recovery": {
+      "evidence": "scratch/demo-audit-recovery-final-20261008/model-steering.json",
+      "requests": 5,
+      "cases": [
+        {
+          "name": "recover output conflict",
+          "task": "Create a GIF for a human viewer at C:\\Users\\songym\\cursor-projects\\ai-dev-browser\\scratch\\demo-audit-recovery-final-20261008\\recovery\\model.gif. The browser is on a local form. Start recording, click the known HTML id open, fill the field labeled Request name with Model demo, then finish and save the recording. Leave the form open. Use the normal recording defaults and report completion from the saved result.",
+          "models": [
+            "claude-opus-4-8"
+          ],
+          "calls": [
+            "page_record_start",
+            "click_by_html_id",
+            "type_by_text",
+            "page_record_stop"
+          ],
+          "help_requests": 0,
+          "unexpected_cli_failures": 0,
+          "duration_seconds": 51.71,
+          "demo": true,
+          "gif": {
+            "size_bytes": 82987,
+            "frames": 48,
+            "duration_seconds": 28.09,
+            "width": 1213,
+            "height": 720
+          }
+        }
+      ]
+    },
+    "cli_contract_checks": "51 passed: docstring arguments, parser types, error envelopes and recording contracts.",
+    "limits": "One actual model on two controlled natural tasks and one conflict-recovery task; the audit records measured behavior, not a guarantee for every model or website."
+  }
 }

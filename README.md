@@ -352,6 +352,15 @@ version from the tag, builds and validates both distributions, publishes to PyPI
 and creates the GitHub Release with the matching assets and tag notes. Verify a
 fresh PyPI installation with the live recording workflow before closing a release.
 
+For paid LLM steering acceptance, run
+`python scripts/live_recording_steering.py --scenario cold --output scratch/recording-cold`.
+It uses the Claude CLI with real API credentials from its configured provider or
+`ANTHROPIC_API_KEY` (and optional `ANTHROPIC_BASE_URL` / `ANTHROPIC_MODEL`). The model
+gets only the installed tool names and natural tasks, with actual CLI help available
+on request. Both default demo and page-only recording must produce real GIFs and
+trusted browser input. Reports retain model choices, CLI results and decoded GIF
+evidence. The existing `--scenario recovery` checks an actual output-file conflict.
+
 ## License
 
 AGPL-3.0

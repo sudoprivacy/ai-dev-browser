@@ -1234,8 +1234,8 @@ async def type_by_text(
     enter: bool = False,
     keystrokes: bool = False,
 ) -> dict:
-    """Use when: you know an input's visible label / placeholder / accessible
-    name (e.g. "Email", "Search…"). Locates by AX name + types. Returns
+    """Use when: you know the field label or placeholder; name (--name) locates it, text (--text) fills it; returns {typed, verified, method}.
+    Locates by accessible name and types. Returns
     `{typed, verified, method, name}` (plus `entered` when `enter=True`) —
     `verified` already confirms the value landed, so don't re-read to check.
 
@@ -1794,7 +1794,7 @@ async def _trusted_click(
 
 
 async def click_by_html_id(tab: Tab, html_id: str) -> dict:
-    """Use when: you know the html `id` of the element you want clicked.
+    """Use when: you know the element's html_id (CLI --html-id); returns {clicked, navigated, url_after}.
     Atomic locate+click in one call, cross-frame (same-origin). Scrolls the
     target into view and fires a **trusted** CDP mouse click (not
     `el.click()`), so trusted-event-gated controls actually respond.
