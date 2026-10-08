@@ -156,9 +156,13 @@ async def mouse_click(
         else:
             await human.mouse_click(tab, x, y, button=button, move_first=False)
     else:
-        await tab.mouse_click(x, y, button=button, modifiers=modifiers)
+        await tab.mouse_click(
+            x, y, button=button, modifiers=modifiers, move_first=False
+        )
         if double:
-            await tab.mouse_click(x, y, button=button, modifiers=modifiers)
+            await tab.mouse_click(
+                x, y, button=button, modifiers=modifiers, move_first=False
+            )
     human.set_last_mouse_pos(tab, x, y)
     return True
 

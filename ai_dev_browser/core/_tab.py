@@ -232,14 +232,6 @@ class Tab:
                     )
                     box = await self.send(dom.get_box_model(backend_node_id=backend_id))
                     point = (params["x"] + box.content[0], params["y"] + box.content[1])
-                elif params.get("type") == "mousePressed":
-                    # All click paths reuse the existing human actuator, including
-                    # raw coordinates and callers that directly dispatch input.
-                    from . import human
-
-                    start = await self.mouse_position()
-                    if abs(start[0] - params["x"]) + abs(start[1] - params["y"]) > 1:
-                        await human.mouse_move(self, params["x"], params["y"])
                 if params.get("type") == "mouseReleased":
                     pointer = demo.pointer()
                     if pointer and pointer.get("held"):
@@ -667,11 +659,22 @@ class Tab:
         button: str = "left",
         modifiers: int = 0,
         session_id: str | None = None,
+        move_first: bool = True,
     ):
         """Click at coordinates. With `session_id`, the events are dispatched on
         that flat session — for a cross-origin iframe (OOPIF) the coordinates are
         then the frame's own viewport coordinates, so a caller that located the
         target inside the frame clicks it without translating to top-level."""
+        from ._demo import session
+
+        if move_first and not session_id and session(self):
+            start = await self.mouse_position()
+            if abs(start[0] - x) + abs(start[1] - y) > 1:
+                try:
+                    await self.mouse_move(x, y)
+                except (CommandTimeout, TimeoutError):
+                    # A presentation move must not prevent the actual click.
+                    logger.debug("Demo positioning move timed out; clicking in place")
         btn = cdp_input.MouseButton(button)
         await self.send(
             cdp_input.dispatch_mouse_event(

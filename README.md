@@ -244,6 +244,8 @@ Graphics are composited into the GIF; page screenshots and the page DOM remain
 ordinary browser output. These cues represent acknowledged adb input; page JS
 and native OS input are outside that scope. To record page-only output with
 ordinary input timing, pass `page_record_start --no-demo` (Python: `demo=False`).
+Explicit `mouse_click --no-move` still skips positioning, and a failed optional
+positioning move still lets the actual click proceed.
 
 Output is a looping GIF of the viewport, scaled to fit 1280×720, without audio.
 No ffmpeg installation is needed. Idle time is preserved;

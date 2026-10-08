@@ -3,7 +3,7 @@
 AUTO-GENERATED - DO NOT EDIT
 
 This file was auto-generated from SKILL.md by integration-test-generator.
-Generated: 2026-10-08 12:17:29
+Generated: 2026-10-08 12:39:19
 
 To modify test behavior:
   1. Update SKILL.md with better workflow examples
@@ -11,7 +11,7 @@ To modify test behavior:
 
 Manual edits will be lost when regenerated!
 
-Coverage: 4/4 real workflows (100%)
+Coverage: 5/5 real workflows (100%)
 Identified using AI scenario recognition with complete code generation
 
 Coverage Report:
@@ -19,6 +19,7 @@ Coverage Report:
   ✅ Record page-only -> interact at ordinary speed -> save without cursor graphics
   ✅ Connect extension -> record -> move -> click -> type -> stop -> decode GIF
   ✅ Record -> open another tab -> fill -> return -> fill -> stop -> fill again
+  ✅ Open -> record -> movement fault -> click -> inspect trusted DOM event -> stop -> decode GIF
 
 Uncovered workflows: None
 """
@@ -32,9 +33,10 @@ import pytest
 # Skill-specific imports
 from tests.integration.recording_demo_support import (
     run_demo_journey,
-    run_extension_demo,
     run_opt_out,
+    run_extension_demo,
     run_recording_lifecycle,
+    run_failed_movement,
 )
 
 # Integration guard: allow CI to opt-out with SKIP_INTEGRATION=1
@@ -113,6 +115,24 @@ def test_recording_demo_lifecycle(cli, recording_browser, tmp_path):
     run_recording_lifecycle(cli, recording_browser, tmp_path)
 
 
+async def test_recording_demo_positioning_failure(
+    recording_browser, tmp_path, monkeypatch
+):
+    """
+    Real scenario: Record -> inject optional movement timeout -> trusted click still opens form -> save GIF feedback
+
+    Workflow: Open -> record -> movement fault -> click -> inspect trusted DOM event -> stop -> decode GIF
+
+    User problem: Demo graphics and movement must preserve the existing guarantee that a slow optional positioning move does not doom a click.
+
+    Data flow:
+      1. Inject only the optional actuator failure; send the actual trusted click to Chrome and inspect the resulting page and GIF
+    """
+    # Step 1: Inject only the optional actuator failure; send the actual trusted click to Chrome and inspect the resulting page and GIF
+    monkeypatch.setenv("AI_DEV_BROWSER_RECORDING_DIR", str(tmp_path / "recordings"))
+    await run_failed_movement(recording_browser, tmp_path, monkeypatch)
+
+
 # Smoke test - can import without errors
 def test_imports_work():
     """Verify all imports are valid"""
@@ -120,3 +140,4 @@ def test_imports_work():
     assert callable(run_opt_out)
     assert callable(run_extension_demo)
     assert callable(run_recording_lifecycle)
+    assert callable(run_failed_movement)

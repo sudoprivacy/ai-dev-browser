@@ -1,7 +1,7 @@
 {
   "config": {
     "imports": [
-      "from tests.integration.recording_demo_support import run_demo_journey, run_opt_out, run_extension_demo, run_recording_lifecycle"
+      "from tests.integration.recording_demo_support import run_demo_journey, run_opt_out, run_extension_demo, run_recording_lifecycle, run_failed_movement"
     ],
     "call_style": "function",
     "extract_style": "dict",
@@ -10,7 +10,8 @@
       "callable(run_demo_journey)",
       "callable(run_opt_out)",
       "callable(run_extension_demo)",
-      "callable(run_recording_lifecycle)"
+      "callable(run_recording_lifecycle)",
+      "callable(run_failed_movement)"
     ]
   },
   "scenarios": [
@@ -91,6 +92,27 @@
           "description": "Run the recording lifecycle in real independent CLI processes",
           "raw_code": [
             "run_recording_lifecycle(cli, recording_browser, tmp_path)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "recording_demo_positioning_failure",
+      "title": "Record -> inject optional movement timeout -> trusted click still opens form -> save GIF feedback",
+      "workflow": "Open -> record -> movement fault -> click -> inspect trusted DOM event -> stop -> decode GIF",
+      "user_problem": "Demo graphics and movement must preserve the existing guarantee that a slow optional positioning move does not doom a click.",
+      "fixtures": [
+        "recording_browser",
+        "tmp_path",
+        "monkeypatch"
+      ],
+      "async": true,
+      "steps": [
+        {
+          "description": "Inject only the optional actuator failure; send the actual trusted click to Chrome and inspect the resulting page and GIF",
+          "raw_code": [
+            "monkeypatch.setenv(\"AI_DEV_BROWSER_RECORDING_DIR\", str(tmp_path / \"recordings\"))",
+            "await run_failed_movement(recording_browser, tmp_path, monkeypatch)"
           ]
         }
       ]

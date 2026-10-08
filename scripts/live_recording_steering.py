@@ -1,6 +1,7 @@
 """Paid live CLI steering acceptance: real model choices, real browser, real GIF.
 
-The text-only model sees installed tool names and core help. The runner executes
+The text-only model sees installed tool names and first-line summaries, and can
+request the real CLI help. The runner executes
 its choices only in an isolated fixture. Credentials are inherited, never saved.
 """
 
@@ -40,6 +41,24 @@ ALLOWED = {
 }
 
 
+def parse_choice(value):
+    """Accept one choice with optional prose; reject missing/ambiguous choices."""
+    decoder = json.JSONDecoder()
+    choices = []
+    offset = 0
+    while (start := value.find("{", offset)) >= 0:
+        try:
+            candidate, consumed = decoder.raw_decode(value[start:])
+        except json.JSONDecodeError:
+            offset = start + 1
+            continue
+        if isinstance(candidate, dict) and candidate.keys() & {"tool", "help", "done"}:
+            choices.append(candidate)
+        offset = start + consumed
+    assert len(choices) == 1, "Model returned no single unambiguous JSON choice"
+    return choices[0]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
@@ -53,7 +72,7 @@ def main():
     assert executable, "Claude CLI is required; live model acceptance did not run"
     functions = [tool["name"] for tool in _discover_tools()]
     catalog = "\n".join(
-        f"{name}: {inspect.getdoc(getattr(core, name)).split('Args:')[0]}"
+        f"{name}: {inspect.getdoc(getattr(core, name)).splitlines()[0]}"
         for name in sorted(functions)
     )
     report = {"status": "failed", "scenarios": [], "model_requests": 0}
@@ -162,26 +181,25 @@ def main():
                         check=False,
                     )
                     report["model_requests"] += 1
-                    assert request.returncode == 0, (
-                        f"Model request failed: {request.stderr[:1000]}"
-                    )
                     response = json.loads(request.stdout)
+                    if request.returncode != 0:
+                        entry["request_failure"] = {
+                            "exit_code": request.returncode,
+                            "subtype": response.get("subtype"),
+                            "errors": response.get("errors"),
+                            "result": response.get("result"),
+                        }
+                        raise AssertionError(
+                            f"Model request failed: {entry['request_failure']}"
+                        )
                     assert not response.get("is_error") and not response.get(
                         "tool_uses"
                     ), response.get("result")
-                    text = response["result"].strip()
-                    if text.startswith("```"):
-                        text = "\n".join(text.splitlines()[1:-1])
-                    try:
-                        choice = json.loads(text)
-                    except json.JSONDecodeError as exc:
-                        entry["invalid_response"] = text
-                        raise AssertionError(
-                            "Model did not return a JSON choice"
-                        ) from exc
+                    choice = parse_choice(response["result"])
                     entry["turns"].append(
                         {
                             "choice": choice,
+                            "model_text": response["result"],
                             "models": list(response.get("modelUsage", {})),
                             "usage": response.get("usage"),
                         }

@@ -87,6 +87,16 @@ def run_demo_journey(cli, port, folder):
         assert moved[-1]["x"] == 400 and moved[-1]["y"] == 100
         assert moved[-1]["t"] - moved[0]["t"] >= 300
         assert all(event["trusted"] for event in moved)
+        js(cli, port, "moves=[];true")
+        assert cli("mouse_click", "--port", port, "--x", 500, "--y", 180, "--no-move")[
+            "clicked"
+        ]
+        skipped = js(cli, port, "({moves,click:clicks.at(-1)})")
+        # Chrome may deliver one positioning event with its press. An explicit
+        # --no-move must not produce the demo's interpolated move sequence.
+        assert len(skipped["moves"]) <= 1, skipped
+        assert skipped["click"]["x"] == 500 and skipped["click"]["y"] == 180
+        assert skipped["click"]["trusted"] is True
         opened = cli("click_by_html_id", "--port", port, "--html-id", "open")
         assert opened["clicked"] and js(
             cli, port, "!document.querySelector('#panel').hidden"
@@ -305,12 +315,17 @@ def run_recording_lifecycle(cli, port, folder):
         tabs = cli("tab_list", "--port", port)["tabs"]
         recorded_index = next(tab["id"] for tab in tabs if tab["url"] == first)
         cli("tab_switch", "--port", port, "--tab-id", recorded_index)
-        assert js(cli, port, "document.querySelector('#name').value") == ""
-        cli("click_by_html_id", "--port", port, "--html-id", "open")
+        assert (
+            js(cli, port, "document.querySelector('#name').value", "--tab-url", first)
+            == ""
+        )
+        cli("click_by_html_id", "--port", port, "--tab-url", first, "--html-id", "open")
         paced = cli(
             "type_by_text",
             "--port",
             port,
+            "--tab-url",
+            first,
             "--name",
             "Request name",
             "--text",
@@ -322,6 +337,8 @@ def run_recording_lifecycle(cli, port, folder):
             "type_by_text",
             "--port",
             port,
+            "--tab-url",
+            first,
             "--name",
             "Request name",
             "--text",
@@ -331,7 +348,45 @@ def run_recording_lifecycle(cli, port, folder):
         assert (
             ordinary_after["verified"] and ordinary_after["method"] == "insertText"
         ), ordinary_after
-        assert js(cli, port, "document.querySelector('#name').value") == "After stop"
+        assert (
+            js(cli, port, "document.querySelector('#name').value", "--tab-url", first)
+            == "After stop"
+        )
         decode(saved, folder)
     finally:
         cli("page_record_stop", "--recording-id", recording["recording_id"])
+
+
+async def run_failed_movement(port, folder, monkeypatch):
+    """A failed optional positioning move must leave the real trusted click usable."""
+    from ai_dev_browser import core
+    from ai_dev_browser.core import human
+
+    first, _ = make_page(folder)
+    browser = await core.connect_browser(port=port)
+    recording = None
+    try:
+        tab = await core.get_active_tab(browser)
+        await core.page_goto(tab, url=first)
+        recording = await core.page_record_start(
+            tab, out=str(folder / "failed-move.gif")
+        )
+        attempts = []
+
+        async def failed_move(*args, **kwargs):
+            attempts.append(True)
+            raise TimeoutError("Injected positioning timeout")
+
+        monkeypatch.setattr(human, "mouse_move", failed_move)
+        assert await core.mouse_click(tab, x=117, y=216) is True
+        state = await tab.evaluate(
+            "({clicks,opened:!document.querySelector('#panel').hidden})"
+        )
+        assert len(attempts) == 1 and state["opened"], state
+        assert len(state["clicks"]) == 1 and state["clicks"][0]["trusted"], state
+        saved = await core.page_record_stop(recording["recording_id"])
+        decode(saved, folder)
+    finally:
+        if recording:
+            await core.page_record_stop(recording["recording_id"])
+        await browser.close()
