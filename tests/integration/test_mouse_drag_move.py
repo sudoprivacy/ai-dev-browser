@@ -85,16 +85,30 @@ async def test_click_survives_a_slow_or_failing_pre_move(tab, monkeypatch):
     # both the human and plain move paths raise; the click must still land
     monkeypatch.setattr(_mouse.human, "mouse_move", boom)
     monkeypatch.setattr(tab, "mouse_move", boom)
-    await tab.get(
-        "data:text/html,<body style='margin:0'>"
-        "<div id=t style='width:100vw;height:100vh' "
-        "onclick=\"document.title='HIT'\">x</div></body>"
+    # Use the already loaded page and register before dispatch. A CDP ACK can
+    # arrive before the renderer runs the click handler on a loaded CI host.
+    await tab.evaluate(
+        """window.__clicks=[];
+document.getElementById('pad').addEventListener('click', e=>{
+  document.title='HIT';
+  window.__clicks.push({trusted:e.isTrusted,x:e.clientX,y:e.clientY});
+}); true;"""
     )
-    await tab.sleep(0.2)
     assert await mouse_click(tab, 40, 40, move=True) is True
-    assert await tab.evaluate("document.title") == "HIT", (
-        "click must fire despite the move failing"
+    state = await tab.evaluate(
+        """new Promise(resolve=>{
+const deadline=performance.now()+2000;
+function check(){
+  if(window.__clicks.length || performance.now()>=deadline){
+    resolve({title:document.title,clicks:window.__clicks});
+  } else setTimeout(check,20);
+} check(); })""",
+        await_promise=True,
     )
+    assert state == {
+        "title": "HIT",
+        "clicks": [{"trusted": True, "x": 40, "y": 40}],
+    }, ("a single trusted click must land despite the move failing", state)
 
 
 @pytest.mark.asyncio
