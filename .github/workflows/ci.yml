@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-24.04, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     env:
       # Loaded GitHub runners (esp. Windows: Defender scan + first-run profile
@@ -128,7 +128,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-24.04, windows-latest]
     runs-on: ${{ matrix.os }}
     env:
       AI_DEV_BROWSER_STARTUP_TIMEOUT: "90"
@@ -171,7 +171,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             websockets: "13.1"
           - os: windows-latest
             websockets: "locked"
@@ -231,7 +231,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   ci-integration:
     name: Dogfood the consumer CI recipe
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: browser-actions/setup-chrome@v1
