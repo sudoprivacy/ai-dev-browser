@@ -34,6 +34,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+remote = [
+    "aiohttp>=3.10",  # Async CDP page views; host authentication stays outside.
+]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
@@ -62,7 +65,7 @@ include = ["ai_dev_browser*"]
 # --load-extension, so it can't be auto-activated). Path is resolved at runtime
 # by core/extension.py::extension_dir().
 [tool.setuptools.package-data]
-ai_dev_browser = ["extension/*"]
+ai_dev_browser = ["extension/*", "remote/*.js"]
 
 [tool.ruff]
 # Both copies of the vendored CDP protocol module: the generated one inside the

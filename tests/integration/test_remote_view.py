@@ -1,0 +1,399 @@
+"""Real Chrome workflows for the shared page viewer, with no model mocks."""
+
+import asyncio
+import base64
+import json
+import os
+from importlib.resources import files
+from io import BytesIO
+
+import aiohttp
+import pytest
+from aiohttp import web
+from PIL import Image
+
+from ai_dev_browser.core.browser import browser_start, browser_stop
+from ai_dev_browser.remote.cdp import CDP
+from ai_dev_browser.remote.page import PageView
+
+
+async def wait_for(operation, predicate, timeout=15):
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        value = await operation()
+        if predicate(value):
+            return value
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError(f"Browser state did not arrive: {value!r}")
+        await asyncio.sleep(0.05)
+
+
+@pytest.fixture
+async def remote_site():
+    receipts = []
+    target = None
+    view = PageView()
+    lock = asyncio.Lock()
+    sockets = set()
+    fixture = """<!doctype html><meta charset="utf-8">
+    <style>body{margin:0;background:#eee}input,button{display:block;margin:24px;width:220px;height:40px}</style>
+    <input id="name"><button id="submit">Submit once</button><pre id="receipt"></pre>
+    <script>document.cookie='profile=isolated; SameSite=Lax';
+    let press=null;submit.onmousedown=event=>{press={buttons:event.buttons,trusted:event.isTrusted}};
+    submit.onclick=async event=>{
+      const response=await fetch('/receipt',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:document.querySelector('#name').value,trusted:event.isTrusted,press})});
+      document.querySelector('#receipt').textContent=JSON.stringify(await response.json());
+    };</script>"""
+
+    async def page(request):
+        return web.Response(text=fixture, content_type="text/html")
+
+    async def receipt(request):
+        value = await request.json()
+        value["cookie"] = request.cookies.get("profile")
+        value["sequence"] = len(receipts) + 1
+        receipts.append(value)
+        return web.json_response(value)
+
+    async def viewer(request):
+        return web.Response(
+            text="""<!doctype html><meta charset="utf-8">
+        <img id="screen" tabindex="0" style="display:block;width:240px;border:0;touch-action:none">
+        <input id="entry"><button id="insert">Insert text</button>
+        <script type="module">
+        import {PageSurface} from '/page-view.js';
+        const ws=new WebSocket(location.origin.replace('http','ws')+'/view');
+        const surface=new PageSurface(document.querySelector('#screen'), value=>ws.send(JSON.stringify(value)));
+        ws.onopen=()=>ws.send(JSON.stringify({token:'fixture-controller'}));
+        ws.onmessage=event=>{const value=JSON.parse(event.data);surface.frame(value);};
+        document.querySelector('#insert').onclick=()=>{
+          surface.send({kind:'text',text:document.querySelector('#entry').value});
+          document.querySelector('#entry').value='';
+        };
+        window.disconnect=()=>ws.close();window.surface=surface;
+        </script>""",
+            content_type="text/html",
+        )
+
+    async def asset(request):
+        return web.Response(
+            text=files("ai_dev_browser.remote").joinpath("page_view.js").read_text(),
+            content_type="text/javascript",
+        )
+
+    async def socket(request):
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        first = await ws.receive_json()
+        if first != {"token": "fixture-controller"}:
+            await ws.close(code=1008)
+            return ws
+        sockets.add(ws)
+
+        async def frames():
+            while not ws.closed:
+                async with lock:
+                    data = await view.capture(target)
+                await ws.send_json({"data": data, "width": 480, "height": 850})
+                await asyncio.sleep(0.1)
+
+        pending = asyncio.create_task(frames())
+        try:
+            async for message in ws:
+                if message.type != aiohttp.WSMsgType.TEXT:
+                    break
+                async with lock:
+                    await view.input(
+                        target, json.loads(message.data), width=480, height=850
+                    )
+        finally:
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+            sockets.discard(ws)
+        return ws
+
+    app = web.Application()
+    app.add_routes(
+        [
+            web.get("/", page),
+            web.post("/receipt", receipt),
+            web.get("/viewer", viewer),
+            web.get("/view", socket),
+            web.get("/page-view.js", asset),
+        ]
+    )
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
+
+    def bind(page):
+        nonlocal target
+        target = page
+
+    try:
+        yield url, receipts, bind, view
+    finally:
+        await asyncio.gather(*(ws.close() for ws in tuple(sockets)))
+        await runner.cleanup()
+
+
+async def connect_page(http, port):
+    async with http.get(f"http://127.0.0.1:{port}/json/list") as response:
+        targets = await response.json()
+    target = next(t for t in targets if t["type"] == "page")
+    cdp = CDP(await http.ws_connect(target["webSocketDebuggerUrl"]))
+    await cdp.call("Page.enable")
+    await cdp.call("Page.bringToFront")
+    return cdp, target["id"]
+
+
+@pytest.mark.parametrize("headless", [True, False])
+async def test_remote_surface_submission_and_same_profile_reconnect(
+    remote_site, tmp_path, headless
+):
+    """Real scenario: View -> scaled trusted input -> Unicode receipt -> reconnect.
+
+    The viewer and target are separate real Chrome processes. The public JS
+    surface maps local pointer/keyboard input to the target's existing tab.
+    Only a single server-confirmed submission counts as success.
+    """
+    url, receipts, bind, view = remote_site
+    browsers, connections = [], []
+    async with aiohttp.ClientSession() as http:
+        try:
+            for mode in (headless, True):
+                result = await asyncio.to_thread(
+                    browser_start,
+                    headless=mode,
+                    temp=True,
+                    extra_args=["--no-sandbox"]
+                    if hasattr(os, "geteuid") and os.geteuid() == 0
+                    else None,
+                )
+                assert "error" not in result, result
+                browsers.append(result)
+            target, target_id = await connect_page(http, browsers[0]["port"])
+            client, _ = await connect_page(http, browsers[1]["port"])
+            connections.extend((target, client))
+            bind(target)
+            await client.call(
+                "Emulation.setDeviceMetricsOverride",
+                {"width": 900, "height": 1000, "deviceScaleFactor": 1, "mobile": False},
+            )
+            await target.call(
+                "Emulation.setDeviceMetricsOverride",
+                {"width": 480, "height": 850, "deviceScaleFactor": 1, "mobile": False},
+            )
+            await target.call("Page.navigate", {"url": url})
+            await wait_for(
+                lambda: target.js("!!document.querySelector('#submit')"), bool
+            )
+            await client.call("Page.navigate", {"url": url + "/viewer"})
+            await wait_for(
+                lambda: client.js("document.querySelector('#screen')?.naturalWidth"),
+                bool,
+            )
+            image = Image.open(BytesIO(base64.b64decode(view.last_frame)))
+            assert image.size == (480, 850)
+            image.save(tmp_path / "remote-view.jpg")
+
+            # Pointer positions come from the viewer's scaled image.
+            box = await client.js(
+                "(()=>{const r=document.querySelector('#screen').getBoundingClientRect();return {x:r.x,y:r.y}})()"
+            )
+            for y in (44,):
+                await client.call(
+                    "Input.dispatchMouseEvent",
+                    {"type": "mouseMoved", "x": box["x"] + 60, "y": box["y"] + y / 2},
+                )
+                for phase in ("mousePressed", "mouseReleased"):
+                    await client.call(
+                        "Input.dispatchMouseEvent",
+                        {
+                            "type": phase,
+                            "x": box["x"] + 60,
+                            "y": box["y"] + y / 2,
+                            "button": "left",
+                            "buttons": 1 if phase == "mousePressed" else 0,
+                            "clickCount": 1,
+                        },
+                    )
+            await wait_for(
+                lambda: target.js("document.activeElement.id"), lambda v: v == "name"
+            )
+            # Type into the real viewer UI, then use its explicit text control.
+            for selector in ("#entry", "#insert"):
+                point = await client.js(
+                    "(()=>{const r=document.querySelector("
+                    + json.dumps(selector)
+                    + ").getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()"
+                )
+                await client.call(
+                    "Input.dispatchMouseEvent", {"type": "mouseMoved", **point}
+                )
+                for phase in ("mousePressed", "mouseReleased"):
+                    await client.call(
+                        "Input.dispatchMouseEvent",
+                        {
+                            "type": phase,
+                            **point,
+                            "button": "left",
+                            "buttons": 1 if phase == "mousePressed" else 0,
+                            "clickCount": 1,
+                        },
+                    )
+                if selector == "#entry":
+                    await wait_for(
+                        lambda: client.js("document.activeElement.id"),
+                        lambda v: v == "entry",
+                    )
+                    await client.call("Input.insertText", {"text": "同一会话 ✓"})
+                    assert (
+                        await client.js("document.querySelector('#entry').value")
+                        == "同一会话 ✓"
+                    )
+            await wait_for(
+                lambda: target.js("document.querySelector('#name').value"),
+                lambda v: v == "同一会话 ✓",
+            )
+            await client.call(
+                "Input.dispatchMouseEvent",
+                {"type": "mouseMoved", "x": box["x"] + 60, "y": box["y"] + 106 / 2},
+            )
+            for phase in ("mousePressed", "mouseReleased"):
+                await client.call(
+                    "Input.dispatchMouseEvent",
+                    {
+                        "type": phase,
+                        "x": box["x"] + 60,
+                        "y": box["y"] + 106 / 2,
+                        "button": "left",
+                        "buttons": 1 if phase == "mousePressed" else 0,
+                        "clickCount": 1,
+                    },
+                )
+            await wait_for(
+                lambda: target.js("document.querySelector('#receipt').textContent"),
+                lambda v: "sequence" in v,
+            )
+            assert receipts == [
+                {
+                    "name": "同一会话 ✓",
+                    "trusted": True,
+                    "press": {"buttons": 1, "trusted": True},
+                    "cookie": "isolated",
+                    "sequence": 1,
+                }
+            ]
+            for event in (
+                {"kind": "click", "x": None, "y": 10},
+                {"kind": "wheel", "x": 10, "y": 10, "dy": "invalid"},
+                {"kind": "key", "key": []},
+                {"kind": "text", "text": "\x00"},
+            ):
+                assert not await view.input(target, event, width=480, height=850)
+            assert (
+                await target.js("document.querySelector('#name').value") == "同一会话 ✓"
+            )
+
+            # Closing UI/socket connections preserves Chrome, target and profile.
+            await client.js("disconnect()")
+            await target.close()
+            replacement, current_id = await connect_page(http, browsers[0]["port"])
+            connections.append(replacement)
+            bind(replacement)
+            assert current_id == target_id
+            assert "同一会话" in await replacement.js(
+                "document.querySelector('#receipt').textContent"
+            )
+            assert "profile=isolated" in await replacement.js("document.cookie")
+            await client.call("Page.reload")
+            await wait_for(
+                lambda: client.js("document.querySelector('#screen')?.naturalWidth"),
+                bool,
+            )
+            await replacement.call("Page.reload")
+            await wait_for(
+                lambda: replacement.js(
+                    "document.readyState==='complete' && !!document.querySelector('#name')"
+                ),
+                bool,
+            )
+            await view.input(
+                replacement, {"kind": "click", "x": 40, "y": 40}, width=480, height=850
+            )
+            await wait_for(
+                lambda: replacement.js(
+                    "({id:document.activeElement.id,focus:document.hasFocus(),state:document.readyState,rect:document.querySelector('#name').getBoundingClientRect().toJSON()})"
+                ),
+                lambda v: v["id"] == "name",
+            )
+            await view.input(
+                replacement,
+                {"kind": "text", "text": "AI continues"},
+                width=480,
+                height=850,
+            )
+            assert (
+                await replacement.js("document.querySelector('#name').value")
+                == "AI continues"
+            )
+            assert len(receipts) == 1  # No replay on reconnect, reload or hand-back.
+        finally:
+            await asyncio.gather(
+                *(c.close() for c in connections), return_exceptions=True
+            )
+            for browser in browsers:
+                await asyncio.to_thread(browser_stop, port=browser["port"])
+
+
+async def test_remote_page_real_extension(remote_site, live_extension, tmp_path):
+    """Extension -> same tab pixels -> trusted input -> profile cookie -> receipt."""
+    url, receipts, _, view = remote_site
+    async with aiohttp.ClientSession() as http:
+        browser = CDP(
+            await http.ws_connect(
+                f"http://127.0.0.1:{live_extension.port}/devtools/browser"
+            )
+        )
+        try:
+            state = await browser.call("AiDevBrowser.debugState")
+        finally:
+            await browser.close()
+        page = CDP(
+            await http.ws_connect(
+                f"http://127.0.0.1:{live_extension.port}/devtools/page/{state['mainTabId']}"
+            )
+        )
+        try:
+            await page.call("Page.navigate", {"url": url})
+            await wait_for(lambda: page.js("!!document.querySelector('#name')"), bool)
+            data = await view.capture(page)
+            assert Image.open(BytesIO(base64.b64decode(data))).width > 0
+            await view.input(
+                page, {"kind": "click", "x": 40, "y": 40}, width=480, height=850
+            )
+            await view.input(
+                page, {"kind": "text", "text": "extension 同页"}, width=480, height=850
+            )
+            await view.input(
+                page, {"kind": "click", "x": 40, "y": 110}, width=480, height=850
+            )
+            await wait_for(
+                lambda: page.js("document.querySelector('#receipt').textContent"),
+                lambda v: "sequence" in v,
+            )
+            assert receipts == [
+                {
+                    "name": "extension 同页",
+                    "trusted": True,
+                    "press": {"buttons": 1, "trusted": True},
+                    "cookie": "isolated",
+                    "sequence": 1,
+                }
+            ]
+        finally:
+            await page.close()
