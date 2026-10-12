@@ -191,8 +191,13 @@ class LifecycleJourneys:
         identity = started["session_id"]
         self.page(identity)
         self.approve(identity)
+        refreshed = self.cli("browser_reconnect", "--session-id", identity)
+        assert refreshed["pid"] == started["pid"]
         record = _session.read(identity)
-        assert _session.same_process(record)
+        assert _session.same_process(record), {
+            "expected": record,
+            "actual": _session.process_info(record.get("pid")),
+        }
         process = psutil.Process(started["pid"])
         process.suspend()
         try:
@@ -614,6 +619,8 @@ class LifecycleJourneys:
         ready = queue.Queue()
         log_path = self.root / "foreign-http-server.log"
         program = """
+import sys
+print('Independent actor started', file=sys.stderr, flush=True)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
@@ -629,7 +636,9 @@ server.serve_forever()
 """
         with log_path.open("w", encoding="utf-8") as log:
             service = subprocess.Popen(
-                [sys.executable, "-u", "-c", program],
+                [sys.executable, "-I", "-S", "-u", "-c", program],
+                start_new_session=sys.platform != "win32",
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=log,
                 text=True,
@@ -649,6 +658,10 @@ server.serve_forever()
                         "pid": service.pid,
                         "exit_code": service.poll(),
                         "stderr": log_path.read_text(encoding="utf-8"),
+                        "status": psutil.Process(service.pid).status()
+                        if service.poll() is None
+                        else None,
+                        "actual_process": _session.process_info(service.pid),
                     }
                 ) from None
             observed = _session.process_info(service.pid)
