@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import collections
 import importlib
+import inspect
 import itertools
 import json
 import logging
 import types
 from asyncio import iscoroutinefunction
 from typing import Any, Callable, Generator
+from urllib.parse import urlsplit
 
 import websockets
 import websockets.asyncio.client
@@ -19,6 +21,7 @@ import websockets.exceptions
 from ai_dev_browser import cdp
 
 from ._case import camel_to_snake
+from .port import _is_loopback_host
 
 logger = logging.getLogger(__name__)
 
@@ -147,10 +150,19 @@ class CDPConnection:
         """Open WebSocket and start listener."""
         if self._websocket and not self._websocket.close_code:
             return  # already connected
+        options = {}
+        if _is_loopback_host(urlsplit(self.websocket_url).hostname or "") and (
+            "proxy" in inspect.signature(websockets.connect).parameters
+        ):
+            # websockets 15+ discovers environment proxies by default. Local
+            # Chrome/extension control is direct; older supported versions have
+            # no proxy parameter and already connect directly.
+            options["proxy"] = None
         self._websocket = await websockets.connect(
             self.websocket_url,
             ping_timeout=PING_TIMEOUT,
             max_size=MAX_SIZE,
+            **options,
         )
         self._listener_task = asyncio.ensure_future(self._listener())
         await self._register_handlers()

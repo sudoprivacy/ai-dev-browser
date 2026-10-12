@@ -81,7 +81,7 @@ def pending_launch(port: int) -> bool:
     return False
 
 
-def failure(code: str, error_message: str, **state) -> dict:
+def failure(code: str, error_message: str, /, **state) -> dict:
     return {
         **state,
         "connected": False,
@@ -176,6 +176,7 @@ def capabilities(record: dict) -> dict:
         "profile_owned_by_caller": record.get("profile_owner") == "adb",
         "page_images": True,
         "page_input": True,
+        "remote_adapters": ["page", "x11_window"],
         "remote_viewer": False,
         "remote_relay": False,
     }

@@ -3,7 +3,7 @@
 AUTO-GENERATED - DO NOT EDIT
 
 This file was auto-generated from SKILL.md by integration-test-generator.
-Generated: 2026-10-13 03:12:25
+Generated: 2026-10-13 03:45:39
 
 To modify test behavior:
   1. Update SKILL.md with better workflow examples
@@ -22,7 +22,7 @@ Coverage Report:
   ✅ Existing logged-in Chrome -> connect -> human-side UI approval -> reject unauthorized restart -> reconnect -> submit -> disconnect -> inspect sentinel
   ✅ Discover help -> request unavailable profile -> inspect unsupported -> start correct CDP -> reject mode mutation -> approve once -> verify no duplicate
   ✅ Login -> trusted popup open -> stop/start worker -> same session -> trusted consent -> close owned child -> observe parent server state
-  ✅ Configured profile -> launch with zero wait -> retain PID -> connect same launched process -> authenticated approval -> submit once -> owned close
+  ✅ Configured profile -> launch with zero wait -> retain PID -> connect same launched process -> verify extension nonce matches actual process arguments -> authenticated approval -> submit once -> owned close
 
 Uncovered workflows: None
 """
@@ -170,7 +170,7 @@ def test_real_extension_delayed_handshake_preserves_ownership(
     """
     Real scenario: Recover control after an explicit launch outlasts its handshake deadline
 
-    Workflow: Configured profile -> launch with zero wait -> retain PID -> connect same launched process -> authenticated approval -> submit once -> owned close
+    Workflow: Configured profile -> launch with zero wait -> retain PID -> connect same launched process -> verify extension nonce matches actual process arguments -> authenticated approval -> submit once -> owned close
 
     User problem: A slow handshake must preserve the real browser and its recorded ownership without launching a second process.
 

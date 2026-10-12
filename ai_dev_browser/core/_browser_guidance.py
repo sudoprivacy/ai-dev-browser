@@ -16,8 +16,10 @@ GUIDANCE = """Mode choice:
 
     Window visibility and remote viewing are separate. A cloud headful Chrome
     does not appear on the user's computer; a headless Chrome can still supply
-    page_screenshot/recording. adb supplies page images and input, not a remote
-    viewer or relay. A local visible browser alone does not provide cloud pairing.
+    page_screenshot/recording. ai_dev_browser.remote provides optional page-view
+    and X11 window adapters (see docs/remote-views.md). The host supplies viewer
+    authentication, target/control ownership and any tunnel or relay. A local
+    visible browser alone does not provide cloud pairing.
 
     Extension connect requires Chrome running with the bridge installed/enabled
     in the intended profile. Connecting cannot change its headless state. To

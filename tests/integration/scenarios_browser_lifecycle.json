@@ -17,16 +17,32 @@
       "title": "Reject an unrelated HTTP service on the bridge port and preserve the original Chrome",
       "workflow": "Start real Chrome -> authenticated approval -> real separate HTTP service -> refuse bridge disconnect -> verify HTTP service/PID -> reconnect original Chrome -> one submission",
       "user_problem": "Disconnect must never kill an unrelated listener or its hosting process when the port does not identify an adb bridge.",
-      "fixtures": ["lifecycle"],
-      "steps": [{"raw_code": ["lifecycle.foreign_bridge_listener()"]}]
+      "fixtures": [
+        "lifecycle"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "lifecycle.foreign_bridge_listener()"
+          ]
+        }
+      ]
     },
     {
       "name": "unavailable_cdp_identity_recovers_without_input_replay",
       "title": "Report unavailable identity on a suspended real Chrome, then resume the same page",
       "workflow": "Start real Chrome -> authenticated approval -> suspend its owned process -> structured metadata/reconnect failure -> resume -> same page -> one submission",
       "user_problem": "A temporarily unresponsive Chrome must return a transient failure while preserving launch details and completed server actions.",
-      "fixtures": ["lifecycle"],
-      "steps": [{"raw_code": ["lifecycle.unavailable_cdp_identity()"]}]
+      "fixtures": [
+        "lifecycle"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "lifecycle.unavailable_cdp_identity()"
+          ]
+        }
+      ]
     },
     {
       "name": "owned_cdp_reconnect_and_explicit_restart",
@@ -116,7 +132,7 @@
     {
       "name": "real_extension_delayed_handshake_preserves_ownership",
       "title": "Recover control after an explicit launch outlasts its handshake deadline",
-      "workflow": "Configured profile -> launch with zero wait -> retain PID -> connect same launched process -> authenticated approval -> submit once -> owned close",
+      "workflow": "Configured profile -> launch with zero wait -> retain PID -> connect same launched process -> verify extension nonce matches actual process arguments -> authenticated approval -> submit once -> owned close",
       "user_problem": "A slow handshake must preserve the real browser and its recorded ownership without launching a second process.",
       "fixtures": [
         "lifecycle",

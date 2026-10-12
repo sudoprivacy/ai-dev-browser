@@ -26,6 +26,7 @@ from .extension import (
 )
 from .port import (
     _cleanup_temp_profile,
+    _open_chrome_http,
     _query_chrome_guid,
     _query_chrome_version,
     _query_chrome_user_data_dir,
@@ -702,11 +703,10 @@ def _describe_cdp(
     record["profile_id"] = record.get("user_data_dir")
     if not record.get("automation_target_id"):
         import json
-        import urllib.request
 
         try:
-            with urllib.request.urlopen(
-                f"http://127.0.0.1:{port}/json/list", timeout=2
+            with _open_chrome_http(
+                f"http://127.0.0.1:{port}/json/list", "127.0.0.1", 2
             ) as response:
                 pages = [
                     target
@@ -1484,6 +1484,10 @@ def browser_stop(
                 port=port,
             )
         pid = get_pid_on_port(port)
+        if pid is None and session_id:
+            # Minimal containers may not have lsof. The session's PID/start time
+            # and live Chrome GUID were verified above, so ownership is known.
+            pid = record["pid"]
         if pid:
             result = _graceful_stop(port, pid)
             stopped.append(result)

@@ -144,7 +144,20 @@ function forget(tabId) {
   announce().catch(() => {});
 }
 
-async function ensureDedicatedTab() {
+// Startup events and a socket opening can select a tab concurrently. Serialize
+// selection so a late nonce tab cannot be overwritten by a newly created blank.
+let tabSelection = Promise.resolve();
+function selectDedicated(operation) {
+  const selected = tabSelection.then(operation);
+  tabSelection = selected.catch(() => {});
+  return selected;
+}
+
+function ensureDedicatedTab() {
+  return selectDedicated(ensureDedicatedTabSelected);
+}
+
+async function ensureDedicatedTabSelected() {
   // Reuse our own tab across reconnects; recreate if the user closed it. We
   // NEVER attach to the user's existing tabs — automation gets its own tab so a
   // hijacked/injected page can't act on whatever the user had open.
@@ -187,20 +200,19 @@ async function announce() {
 
 // Chrome can commit the launch URL after the worker's first handshake. Adopt
 // only the caller's nonce-marked tab; do not guess at unrelated existing tabs.
-let adoptingLaunch = false;
-chrome.tabs.onUpdated.addListener(async (tabId, change, tab) => {
+function adoptLaunch(tab) {
   const token = launchMarker(tab);
-  if (!token || launchToken === token || adoptingLaunch) return;
-  adoptingLaunch = true;
-  try {
+  if (!token) return Promise.resolve();
+  return selectDedicated(async () => {
     await boot();
+    if (launchToken === token) return;
     const old = mainTabId;
-    mainTabId = tabId;
+    mainTabId = tab.id;
     launchToken = token;
     await chrome.storage.session.set({ adbLaunchToken: token });
-    await attachTab(tabId);
-    await chrome.tabs.update(tabId, { url: "about:blank" });
-    if (old != null && old !== tabId && autoTabs.has(old)) {
+    await attachTab(tab.id);
+    await chrome.tabs.update(tab.id, { url: "about:blank" });
+    if (old != null && old !== tab.id && autoTabs.has(old)) {
       const previous = await chrome.tabs.get(old).catch(() => null);
       if (previous && previous.url === "about:blank") {
         await chrome.tabs.remove(old);
@@ -209,7 +221,13 @@ chrome.tabs.onUpdated.addListener(async (tabId, change, tab) => {
     }
     persist();
     await announce();
-  } finally { adoptingLaunch = false; }
+  });
+}
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+  adoptLaunch(tab).catch(error => console.error("Launch adoption failed", error));
+});
+chrome.tabs.onCreated.addListener(tab => {
+  adoptLaunch(tab).catch(error => console.error("Launch adoption failed", error));
 });
 
 function toCdpCookie(c) {
@@ -294,7 +312,7 @@ async function browserLevel(method, params, tab) {
     case "AiDevBrowser.debugState":
       // Introspection for field support (not a real CDP method): which tabs
       // does the extension think it owns / has attached right now?
-      return { mainTabId, autoTabs: [...autoTabs], attached: [...attached], profileId, sessionId };
+      return { mainTabId, autoTabs: [...autoTabs], attached: [...attached], profileId, sessionId, launchToken };
     case "AiDevBrowser.closeBrowser":
       // The Python lifecycle layer verifies PID ownership/authorization first.
       // This is explicit process-wide close; disconnect never calls it.
@@ -385,7 +403,7 @@ async function connect() {
 if (chrome.webNavigation && chrome.webNavigation.onCreatedNavigationTarget) {
   chrome.webNavigation.onCreatedNavigationTarget.addListener(async (d) => {
     if (d.tabId == null || d.sourceTabId == null) return;
-    if (autoTabs.size === 0) await restore();
+    await boot();
     if (!autoTabs.has(d.sourceTabId)) return;
     followTab(d.tabId);
   });
@@ -395,7 +413,7 @@ if (chrome.webNavigation && chrome.webNavigation.onCreatedNavigationTarget) {
 // e.g. a foreground opener). Same invariant: only tabs OUR tabs opened.
 chrome.tabs.onCreated.addListener(async (tab) => {
   if (tab.id == null || tab.openerTabId == null) return;
-  if (autoTabs.size === 0) await restore();
+  await boot();
   if (!autoTabs.has(tab.openerTabId)) return;
   followTab(tab.id);
 });

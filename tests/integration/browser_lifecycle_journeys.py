@@ -136,6 +136,13 @@ class LifecycleJourneys:
         identity = started["session_id"]
         pid = started["pid"]
         actual_args = psutil.Process(pid).cmdline()
+        from ai_dev_browser.core import _session
+        from ai_dev_browser.core.chrome import find_chrome
+
+        recorded = _session.read(identity)
+        # macOS may report a temporary code-sign clone as process.exe(). That
+        # physical identity must not replace the reusable launch executable.
+        assert recorded["start_options"]["chrome_path"] == find_chrome()
         assert "--headless=new" in actual_args and started["headless"] is True
         assert started["owner"] == "adb" and started["capabilities"]["can_restart"]
         self.page(identity)
@@ -514,6 +521,15 @@ class LifecycleJourneys:
         self.sessions.append(identity)
         assert connected["owner"] == "adb" and connected["pid"] == delayed["pid"]
         assert connected["user_data_dir"] == str(profile)
+        state = self.cli(
+            "cdp_send", "--session-id", identity, "--method", "AiDevBrowser.debugState"
+        )["result"]
+        marker = next(
+            arg
+            for arg in psutil.Process(delayed["pid"]).cmdline()
+            if arg.startswith(f"http://127.0.0.1:{port}/adb-launch/")
+        )
+        assert state["launchToken"] == marker.rsplit("/", 1)[1]
         self.page(identity, self.server.url)
         self.approve(identity)
         self.submit(identity, "Late handshake preserved ownership")

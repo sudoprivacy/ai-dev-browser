@@ -9,7 +9,7 @@
   "audit": {
     "naming": "Core exports, module filenames and CLI names match; reconnect/restart join the existing browser lifecycle family.",
     "parameters": "Core signatures/docstrings drive actual --help and generated wrappers. Existing start/connect arguments remain compatible; page calls take the same connection-scoped --session-id.",
-    "discovery": "Start/connect first lines distinguish isolated launch from attaching real Chrome. One shared core guidance covers headless task selection, explicit/env/default precedence, GUI prerequisites, real device identity, same-page collaboration and absence of viewer/relay.",
+    "discovery": "Start/connect first lines distinguish isolated launch from attaching real Chrome. One shared core guidance covers headless task selection, explicit/env/default precedence, GUI prerequisites, real device identity, same-page collaboration and remote adapter versus host viewer/relay responsibilities.",
     "returns": "Legacy result fields remain. Observed session/profile identity, actual headless mode where known, ownership and capabilities are additive. Opaque automation_target_id is distinct from zero-based targets.index. External physical process fields remain null when unknown.",
     "failures": "Stable unsupported=6, conflict/session_changed=5, target_closed/not_found=4, auth_failed=7, transient=9. Hints come from core Failure sections. No implicit transport/profile fallback or input replay.",
     "sync_async": "Async connect/reconnect use wrap_core; sync start/disconnect/stop/restart use wrap_core_sync. An async SDK caller with a held CDP connection awaits browser.close on its own loop.",
@@ -22,7 +22,7 @@
     "external_restart": "Explicit authorization is required; unknown executable/start settings still return unsupported.",
     "extension_launch": "Requires a persistently installed/enabled bridge in the specified existing profile. No remote-debugging or command-line extension loading flags. Busy profile conflicts without killing it.",
     "slow_handshake": "Keeps the launched browser running, reports resources and persists its observed process identity. A later handshake on the nonce URL restores ownership.",
-    "remote": "Page images/input are available to hosts. Viewer, relay and cloud pairing are outside these FRs."
+    "remote": "Page images/input and remote page/X11 adapters are shipped after integrating PR #14. remote_adapters names bundled adapters; it does not assert a configured viewer, system X11 dependencies or a relay. Hosts retain viewer authentication, target/control ownership and cloud pairing."
   },
   "paid_live_reports": [
     {
@@ -130,7 +130,9 @@
     "visible_strict_check": "An earlier visible run reported the existing documented synthetic click fallback and failed the strict trusted-submission assertion. The final unchanged input primitive completed a trusted single submission. The failed run remains at scratch/lifecycle-model-visible-ready-20261012; no assertion was weakened.",
     "process_exit": "A live restart trial observed the old process after its debug port closed. Graceful close now waits for observed process identity to end; restart separately refuses to launch while the old process remains.",
     "early_worker_hello": "A worker can announce connected before observing the nonce-marked tab. Connect now waits for a pending launch identity on that specific bridge before classifying ownership.",
-    "visible_extension": "Earlier headful trials acknowledged input without a server-side action, including a sequential run. Explicit startup now activates its dedicated page. A later diagnostic captured the actual trusted mousedown/up/click at the correct DOM coordinates; final 9-case acceptance includes an event log and authenticated server receipts. These observations do not establish a universal fix for all Chrome input timing; earlier failures remain at scratch/lifecycle-sequential-final-20261013."
+    "visible_extension": "Earlier headful trials acknowledged input without a server-side action, including a sequential run. Explicit startup now activates its dedicated page. A later diagnostic captured the actual trusted mousedown/up/click at the correct DOM coordinates; final 9-case acceptance includes an event log and authenticated server receipts. These observations do not establish a universal fix for all Chrome input timing; earlier failures remain at scratch/lifecycle-sequential-final-20261013.",
+    "integrated_nonce": "scratch/lifecycle-integrated-final-20261013: 38 passed, 1 skipped and one delayed-handshake failure. The worker connected without its launch nonce; connect returned transient and preserved the process. Dedicated-tab selection is now serialized; created/updated marker events share adoption and popup tracking reuses the single boot initialization. The focused live case verifies the nonce against actual process arguments.",
+    "cross_browser_model_profile": "scratch/lifecycle-model-existing-nonce-final-20261013: the Chromium-prepared profile did not handshake under branded Google Chrome. The model reported unavailable setup and stopped. No isolated fallback or submission occurred; acceptance uses the previously verified same-browser Google Chrome test profile."
   },
   "regression_protection": {
     "workflow": ".github/workflows/ci.yml",
@@ -140,7 +142,7 @@
     "extension_matrix": "Real worker/OAuth recovery on both WebSocket implementations; persistently installed profile and independent desktop actor on Windows.",
     "artifacts": "Retains actual evidence JSON and installed/final-page screenshots for 7 days.",
     "paid_runner": "scripts/live_browser_lifecycle_steering.py is opt-in and uses inherited real provider credentials; no credentials are recorded.",
-    "release_assets": "Wheel validation includes shared guidance, ownership records, extension launcher and generated reconnect/restart tools."
+    "release_assets": "Wheel validation includes shared guidance, ownership records, extension launcher, generated reconnect/restart tools and remote adapters/page_view.js. Published wheel/sdist/extension assets are checked against PyPI/GitHub checksums."
   },
   "post_merge_release_gate": {
     "original_feature_ci": "38277069870: seven successful jobs before PR #15 merge",
@@ -185,5 +187,27 @@
         "scenario": "existing"
       }
     }
+  },
+  "integrated_final_acceptance": {
+    "base": "87deba2 (remote views PR #14)",
+    "live": "scratch/lifecycle-integrated-nonce-final-20261013: 22 passed, zero skips; full 11 lifecycle, 5 remote page/proxy workflows and 6 actual extension/GIF cases",
+    "unit": "scratch/lifecycle-integrated-nonce-unit-20261013: 138 passed",
+    "nonce": "scratch/lifecycle-nonce-selection-fix-20261013: focused real late-handshake case passed; ownership nonce verified against actual Chrome process arguments",
+    "hooks": "All repository pre-commit hooks, including mypy, passed for the integrated changes",
+    "package": "Built wheel/sdist and extension ZIP/checksums locally; release validation also checks remote modules and page_view.js",
+    "paid": [
+      {
+        "evidence": "scratch/lifecycle-model-integrated-20261013/model-steering.json",
+        "scenario": "background",
+        "status": "passed",
+        "requests": 7
+      },
+      {
+        "evidence": "scratch/lifecycle-model-existing-integrated-final-20261013/model-steering.json",
+        "scenario": "existing",
+        "status": "passed",
+        "requests": 9
+      }
+    ]
   }
 }

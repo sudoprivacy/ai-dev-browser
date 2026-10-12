@@ -11,7 +11,6 @@ import logging
 import os
 import pickle
 import re
-import urllib.request
 from pathlib import Path
 
 from ai_dev_browser.cdp import (
@@ -256,7 +255,11 @@ class BrowserClient:
 
         for attempt in range(5):
             try:
-                resp = await loop.run_in_executor(None, urllib.request.urlopen, url)
+                from .port import _open_chrome_http
+
+                resp = await loop.run_in_executor(
+                    None, _open_chrome_http, url, self.host, 2
+                )
                 info = json.loads(resp.read())
                 return info["webSocketDebuggerUrl"]
             except Exception:
@@ -735,7 +738,9 @@ async def graceful_close_browser(
         # Get WebSocket URL
         url = f"http://{host}:{port}/json/version"
         loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(None, urllib.request.urlopen, url)
+        from .port import _open_chrome_http
+
+        resp = await loop.run_in_executor(None, _open_chrome_http, url, host, 2)
         info = json.loads(resp.read())
         ws_url = info["webSocketDebuggerUrl"]
 
