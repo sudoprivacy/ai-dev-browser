@@ -3,7 +3,7 @@
 import asyncio
 import base64
 import json
-import os
+import sys
 from importlib.resources import files
 from io import BytesIO
 
@@ -169,9 +169,9 @@ async def test_remote_surface_submission_and_same_profile_reconnect(
                     browser_start,
                     headless=mode,
                     temp=True,
-                    extra_args=["--no-sandbox"]
-                    if hasattr(os, "geteuid") and os.geteuid() == 0
-                    else None,
+                    # These owned loopback fixtures also run on Ubuntu CI,
+                    # where AppArmor prevents Chrome's user-namespace sandbox.
+                    extra_args=["--no-sandbox"] if sys.platform == "linux" else None,
                 )
                 assert "error" not in result, result
                 browsers.append(result)
@@ -321,6 +321,12 @@ async def test_remote_surface_submission_and_same_profile_reconnect(
                     "document.readyState==='complete' && !!document.querySelector('#name')"
                 ),
                 bool,
+            )
+            # Hand-back requires a fresh observation after navigation. DOM load
+            # completion alone does not mean the new frame's hit-test data exists.
+            observed = await view.capture(replacement)
+            Image.open(BytesIO(base64.b64decode(observed))).save(
+                tmp_path / "reconnected-view.jpg"
             )
             await view.input(
                 replacement, {"kind": "click", "x": 40, "y": 40}, width=480, height=850

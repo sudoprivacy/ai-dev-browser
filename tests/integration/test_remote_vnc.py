@@ -97,16 +97,20 @@ async def test_vnc_pixels_input_and_owned_cleanup(tmp_path, remote_site):
                 bool,
                 30,
             )
-            frame = await client.js(
-                "document.querySelector('canvas').toDataURL('image/png')"
-            )
-            image = Image.open(
-                BytesIO(base64.b64decode(frame.split(",", 1)[1]))
-            ).convert("RGB")
-            assert (
-                sum(1 for pixel in image.getdata() if pixel == (34, 170, 102)) > 100_000
-            )
-            image.save(tmp_path / "novnc-live.png")
+
+            # The RFB connection can finish before its first framebuffer arrives.
+            # Wait for visible fixture pixels, preserving the last frame on failure.
+            async def painted_pixels():
+                frame = await client.js(
+                    "document.querySelector('canvas').toDataURL('image/png')"
+                )
+                image = Image.open(
+                    BytesIO(base64.b64decode(frame.split(",", 1)[1]))
+                ).convert("RGB")
+                image.save(tmp_path / "novnc-live.png")
+                return sum(1 for pixel in image.getdata() if pixel == (34, 170, 102))
+
+            await wait_for(painted_pixels, lambda count: count > 100_000, 30)
 
             # Use the viewer's real pointer handler to press the target button.
             # Native Chrome's toolbar offset is measured from this owned window.
