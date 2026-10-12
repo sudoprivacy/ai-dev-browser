@@ -3,7 +3,7 @@
 AUTO-GENERATED - DO NOT EDIT
 
 This file was auto-generated from SKILL.md by integration-test-generator.
-Generated: 2026-10-13 03:45:39
+Generated: 2026-10-13 04:28:57
 
 To modify test behavior:
   1. Update SKILL.md with better workflow examples
@@ -15,12 +15,12 @@ Coverage: 8/8 real workflows (100%)
 Identified using AI scenario recognition with complete code generation
 
 Coverage Report:
-  ✅ Start real Chrome -> authenticated approval -> real separate HTTP service -> refuse bridge disconnect -> verify HTTP service/PID -> reconnect original Chrome -> one submission
+  ✅ Start real Chrome -> authenticated approval -> independent HTTP child announces its bound port -> refuse bridge disconnect -> verify HTTP service/PID -> reconnect original Chrome -> one submission
   ✅ Start real Chrome -> authenticated approval -> suspend its owned process -> structured metadata/reconnect failure -> resume -> same page -> one submission
   ✅ Start headless -> login -> user approval -> disconnect -> reconnect -> submit -> restart -> reject stale session
   ✅ Persist login/installed extension -> explicit extension launch -> approve -> disconnect -> reconnect same tab/profile -> submit -> explicit owned restart -> authenticated root -> reject stale input -> owned close
   ✅ Existing logged-in Chrome -> connect -> human-side UI approval -> reject unauthorized restart -> reconnect -> submit -> disconnect -> inspect sentinel
-  ✅ Discover help -> request unavailable profile -> inspect unsupported -> start correct CDP -> reject mode mutation -> approve once -> verify no duplicate
+  ✅ Discover help -> request unavailable profile -> inspect unsupported -> start correct CDP -> reject mode mutation -> approve and submit once -> blocked URL reports navigation error -> reconnect same session and inspect state without replay
   ✅ Login -> trusted popup open -> stop/start worker -> same session -> trusted consent -> close owned child -> observe parent server state
   ✅ Configured profile -> launch with zero wait -> retain PID -> connect same launched process -> verify extension nonce matches actual process arguments -> authenticated approval -> submit once -> owned close
 
@@ -55,7 +55,7 @@ def test_foreign_bridge_listener_is_preserved(lifecycle):
     """
     Real scenario: Reject an unrelated HTTP service on the bridge port and preserve the original Chrome
 
-    Workflow: Start real Chrome -> authenticated approval -> real separate HTTP service -> refuse bridge disconnect -> verify HTTP service/PID -> reconnect original Chrome -> one submission
+    Workflow: Start real Chrome -> authenticated approval -> independent HTTP child announces its bound port -> refuse bridge disconnect -> verify HTTP service/PID -> reconnect original Chrome -> one submission
 
     User problem: Disconnect must never kill an unrelated listener or its hosting process when the port does not identify an adb bridge.
 
@@ -136,7 +136,7 @@ def test_unsupported_modes_do_not_launch_or_replay(lifecycle):
     """
     Real scenario: Explain missing extension and unsupported attached headless without substituting a browser
 
-    Workflow: Discover help -> request unavailable profile -> inspect unsupported -> start correct CDP -> reject mode mutation -> approve once -> verify no duplicate
+    Workflow: Discover help -> request unavailable profile -> inspect unsupported -> start correct CDP -> reject mode mutation -> approve and submit once -> blocked URL reports navigation error -> reconnect same session and inspect state without replay
 
     User problem: A model needs accurate failure reasons and an explicit recovery decision, never an implicit transport/profile switch.
 

@@ -582,6 +582,19 @@ class LifecycleJourneys:
         self.page(identity)
         self.approve(identity)
         self.submit(identity, "Explicit choice")
+        failed = self.cli(
+            "page_goto",
+            "--session-id",
+            identity,
+            "--url",
+            "http://127.0.0.1:0/",
+            exit_code=1,
+        )
+        assert "ERR_UNSAFE_PORT" in failed["error"] and not failed["retryable"]
+        recovered = self.cli("browser_reconnect", "--session-id", identity)
+        assert recovered["pid"] == started["pid"]
+        self.page(identity, self.server.url)
+        assert len(self.server.approvals) == len(self.server.submissions) == 1
         self.cli.evidence(
             "unsupported-lifecycle",
             approvals=self.server.approvals,
@@ -589,34 +602,61 @@ class LifecycleJourneys:
         )
 
     def foreign_bridge_listener(self):
-        import time
         from ai_dev_browser.core import _session
         from ai_dev_browser.core.port import _open_chrome_http
-        from .browser_lifecycle_support import free_port
+        import queue
+        import threading
 
         started = self.start("--headless", "true", "--silent-stderr")
         identity = started["session_id"]
         self.page(identity)
         self.approve(identity)
-        port = free_port()
-        service = subprocess.Popen(
-            [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        ready = queue.Queue()
+        log_path = self.root / "foreign-http-server.log"
+        program = """
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args): pass
+    def do_GET(self):
+        body = b'Independent HTTP service'
+        self.send_response(200)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+print(server.server_port, flush=True)
+server.serve_forever()
+"""
+        with log_path.open("w", encoding="utf-8") as log:
+            service = subprocess.Popen(
+                [sys.executable, "-u", "-c", program],
+                stdout=subprocess.PIPE,
+                stderr=log,
+                text=True,
+                encoding="utf-8",
+            )
         observed = _session.process_info(service.pid)
         assert observed
-        url = f"http://127.0.0.1:{port}/"
+        threading.Thread(
+            target=lambda: ready.put(service.stdout.readline()), daemon=True
+        ).start()
         try:
-            deadline = time.monotonic() + 15
-            while True:
-                try:
-                    with _open_chrome_http(url, "127.0.0.1", 1) as response:
-                        assert response.status == 200
-                    break
-                except OSError:
-                    assert time.monotonic() < deadline and service.poll() is None
-                    time.sleep(0.05)
+            try:
+                port = int(ready.get(timeout=20).strip())
+            except (queue.Empty, ValueError):
+                raise AssertionError(
+                    {
+                        "pid": service.pid,
+                        "exit_code": service.poll(),
+                        "stderr": log_path.read_text(encoding="utf-8"),
+                    }
+                ) from None
+            observed = _session.process_info(service.pid)
+            assert observed and service.poll() is None
+            url = f"http://127.0.0.1:{port}/"
+            with _open_chrome_http(url, "127.0.0.1", 2) as response:
+                assert response.status == 200
+                assert response.read() == b"Independent HTTP service"
             foreign_cli = LifecycleCLI(
                 self.root / "foreign-listener",
                 AI_DEV_BROWSER_EXTENSION_BRIDGE_PORT=str(port),

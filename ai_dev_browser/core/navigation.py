@@ -38,6 +38,8 @@ async def page_goto(
         incomplete. Poll with `page_wait_ready(timeout=<larger>)`, or
         `page_wait_url` for a redirect / multi-step flow, before reading the
         DOM. A bad or blocked URL instead raises with the reason inline.
+        Inspect the current page after a navigation error before choosing
+        another URL. Navigation is not retried and input is not replayed.
     """
     result_tab = await tab.get(url, tab_new=tab_new)
 

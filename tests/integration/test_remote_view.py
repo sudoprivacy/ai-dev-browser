@@ -17,6 +17,7 @@ from PIL import Image
 
 from ai_dev_browser.core.browser import browser_start, browser_stop
 from ai_dev_browser.core.connection import connect_browser, get_active_tab
+from ai_dev_browser.core.navigation import page_goto
 from ai_dev_browser.core.port import (
     _open_chrome_http,
     _query_chrome_cmdline,
@@ -159,14 +160,33 @@ async def remote_site():
         await runner.cleanup()
 
 
-async def connect_page(http, port):
+async def connect_page(http, port, target_id=None):
     async with http.get(f"http://127.0.0.1:{port}/json/list") as response:
         targets = await response.json()
-    target = next(t for t in targets if t["type"] == "page")
+    target = next(
+        t
+        for t in targets
+        if t["type"] == "page" and (target_id is None or t["id"] == target_id)
+    )
     cdp = CDP(await http.ws_connect(target["webSocketDebuggerUrl"]))
     await cdp.call("Page.enable")
     await cdp.call("Page.bringToFront")
     return cdp, target["id"]
+
+
+async def navigate_owned_browser(browser, url):
+    # Reuse adb's selected-page preparation and awaited navigation. The host
+    # chooses its owned target explicitly; view adapters do not navigate/retry.
+    controller = await connect_browser(
+        port=browser["port"], session_id=browser["session_id"]
+    )
+    try:
+        tab = await get_active_tab(controller)
+        assert str(tab._target.target_id) == browser["automation_target_id"]
+        result = await page_goto(tab, url)
+        assert result["ready"] and result["url"].rstrip("/") == url.rstrip("/"), result
+    finally:
+        await controller.close()
 
 
 async def test_owned_browser_identity_and_close_with_outbound_proxy(
@@ -319,8 +339,13 @@ async def test_remote_surface_submission_and_same_profile_reconnect(
                 )
                 assert "error" not in result, result
                 browsers.append(result)
-            target, target_id = await connect_page(http, browsers[0]["port"])
-            client, _ = await connect_page(http, browsers[1]["port"])
+            await navigate_owned_browser(browsers[0], url)
+            target, target_id = await connect_page(
+                http, browsers[0]["port"], browsers[0]["automation_target_id"]
+            )
+            client, _ = await connect_page(
+                http, browsers[1]["port"], browsers[1]["automation_target_id"]
+            )
             connections.extend((target, client))
             bind(target)
             await client.call(
@@ -331,7 +356,6 @@ async def test_remote_surface_submission_and_same_profile_reconnect(
                 "Emulation.setDeviceMetricsOverride",
                 {"width": 480, "height": 850, "deviceScaleFactor": 1, "mobile": False},
             )
-            await target.call("Page.navigate", {"url": url})
             await wait_for(
                 lambda: target.js("!!document.querySelector('#submit')"), bool
             )
@@ -342,8 +366,8 @@ async def test_remote_surface_submission_and_same_profile_reconnect(
             # Observe the painted page before streaming it to the real viewer.
             # DOM readiness alone can precede the first headful compositor frame.
             assert await view.capture(target)
-            navigation = await client.call("Page.navigate", {"url": url + "/viewer"})
-            assert not navigation.get("errorText"), navigation
+            await navigate_owned_browser(browsers[1], url + "/viewer")
+            navigation = {"requested_url": url + "/viewer", "core_navigation": True}
             try:
                 await wait_for(
                     lambda: client.js(
@@ -467,7 +491,9 @@ async def test_remote_surface_submission_and_same_profile_reconnect(
             # Closing UI/socket connections preserves Chrome, target and profile.
             await client.js("disconnect()")
             await target.close()
-            replacement, current_id = await connect_page(http, browsers[0]["port"])
+            replacement, current_id = await connect_page(
+                http, browsers[0]["port"], target_id
+            )
             connections.append(replacement)
             bind(replacement)
             assert current_id == target_id

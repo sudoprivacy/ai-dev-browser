@@ -825,7 +825,11 @@ class Tab:
         if tab_new or new_window:
             if self._browser:
                 return await self._browser.get(url, tab_new, new_window)
-        frame_id, loader_id, *_ = await self.send(page.navigate(url))
+        frame_id, loader_id, error_text, *_ = await self.send(page.navigate(url))
+        if error_text:
+            raise ProtocolException(
+                f"Navigation failed: {error_text}", method="Page.navigate"
+            )
         await asyncio.sleep(0.5)
         return self
 

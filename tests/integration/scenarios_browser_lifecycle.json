@@ -15,7 +15,7 @@
     {
       "name": "foreign_bridge_listener_is_preserved",
       "title": "Reject an unrelated HTTP service on the bridge port and preserve the original Chrome",
-      "workflow": "Start real Chrome -> authenticated approval -> real separate HTTP service -> refuse bridge disconnect -> verify HTTP service/PID -> reconnect original Chrome -> one submission",
+      "workflow": "Start real Chrome -> authenticated approval -> independent HTTP child announces its bound port -> refuse bridge disconnect -> verify HTTP service/PID -> reconnect original Chrome -> one submission",
       "user_problem": "Disconnect must never kill an unrelated listener or its hosting process when the port does not identify an adb bridge.",
       "fixtures": [
         "lifecycle"
@@ -98,7 +98,7 @@
     {
       "name": "unsupported_modes_do_not_launch_or_replay",
       "title": "Explain missing extension and unsupported attached headless without substituting a browser",
-      "workflow": "Discover help -> request unavailable profile -> inspect unsupported -> start correct CDP -> reject mode mutation -> approve once -> verify no duplicate",
+      "workflow": "Discover help -> request unavailable profile -> inspect unsupported -> start correct CDP -> reject mode mutation -> approve and submit once -> blocked URL reports navigation error -> reconnect same session and inspect state without replay",
       "user_problem": "A model needs accurate failure reasons and an explicit recovery decision, never an implicit transport/profile switch.",
       "fixtures": [
         "lifecycle"
