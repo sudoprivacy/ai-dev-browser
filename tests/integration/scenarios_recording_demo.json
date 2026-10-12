@@ -1,7 +1,7 @@
 {
   "config": {
     "imports": [
-      "from tests.integration.recording_demo_support import run_demo_journey, run_opt_out, run_extension_demo, run_recording_lifecycle, run_failed_movement"
+      "from tests.integration.recording_demo_support import run_demo_journey, run_opt_out, run_extension_demo, run_recording_lifecycle, run_failed_movement, run_delayed_click_demo"
     ],
     "call_style": "function",
     "extract_style": "dict",
@@ -11,7 +11,8 @@
       "callable(run_opt_out)",
       "callable(run_extension_demo)",
       "callable(run_recording_lifecycle)",
-      "callable(run_failed_movement)"
+      "callable(run_failed_movement)",
+      "callable(run_delayed_click_demo)"
     ]
   },
   "scenarios": [
@@ -113,6 +114,26 @@
           "raw_code": [
             "monkeypatch.setenv(\"AI_DEV_BROWSER_RECORDING_DIR\", str(tmp_path / \"recordings\"))",
             "await run_failed_movement(recording_browser, tmp_path, monkeypatch)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "recording_demo_delayed_click_ack",
+      "title": "Record a trusted click with an 800ms real page handler and inspect its full feedback",
+      "workflow": "Real Chrome -> record -> trusted click with slow mouseup handler -> one opened form -> stop -> decode expanding click ring",
+      "user_problem": "A slow real browser input acknowledgement must not expire demo feedback before the recorder can observe it.",
+      "fixtures": [
+        "recording_browser",
+        "tmp_path",
+        "monkeypatch"
+      ],
+      "async": true,
+      "steps": [
+        {
+          "raw_code": [
+            "monkeypatch.setenv('AI_DEV_BROWSER_RECORDING_DIR', str(tmp_path / 'recordings'))",
+            "await run_delayed_click_demo(recording_browser, tmp_path)"
           ]
         }
       ]

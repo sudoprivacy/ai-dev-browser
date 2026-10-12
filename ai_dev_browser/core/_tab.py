@@ -256,13 +256,15 @@ class Tab:
                 and params.get("type") in ("char", "keyDown")
             ):
                 await asyncio.sleep(TYPE_SECONDS)
-        issued = time.monotonic()
         try:
             result = await self._connection.send(
                 cdp_obj, _is_update=_is_update, timeout=timeout, session_id=session_id
             )
             if demo and command["method"] == "Input.dispatchMouseEvent":
-                demo.record(params, issued, point)
+                # Publish only confirmed input. A slow handler/navigation can
+                # delay the ACK past the feedback lifetime; start that lifetime
+                # when the recorder can actually observe the confirmation.
+                demo.record(params, time.monotonic(), point)
                 self._mouse_x, self._mouse_y = point or (params["x"], params["y"])
             if viewport_session:
                 viewport_session.publish("viewport.json", params)

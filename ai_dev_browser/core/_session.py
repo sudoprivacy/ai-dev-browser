@@ -118,9 +118,9 @@ def same_process(record: dict) -> bool:
         os.path.realpath(record.get("chrome_path", ""))
     ):
         return True
-    # macOS Chrome can report its protected code-sign clone as the runtime
-    # executable. A path shape alone never grants ownership: also verify the
-    # recorded process birth, profile argument and original live CDP identity.
+    # macOS Chrome can report either its launch executable or its protected
+    # code-sign clone as the runtime image. Neither path alone grants ownership:
+    # also verify process birth, profile argument and original live CDP identity.
     executable = current["chrome_path"]
     launch = (record.get("start_options") or {}).get("chrome_path", "")
     root = record.get("user_data_dir")
@@ -130,9 +130,14 @@ def same_process(record: dict) -> bool:
         and launch
         and root
         and identity.startswith("cdp-")
-        and executable.startswith("/private/var/folders/")
-        and ".code_sign_clone/code_sign_clone." in executable
-        and executable.endswith("/Contents/MacOS/" + Path(launch).name)
+        and (
+            os.path.realpath(executable) == os.path.realpath(launch)
+            or (
+                executable.startswith("/private/var/folders/")
+                and ".code_sign_clone/code_sign_clone." in executable
+                and executable.endswith("/Contents/MacOS/" + Path(launch).name)
+            )
+        )
         and f"--user-data-dir={root}" in current.get("launch_args", [])
         and not any(arg.startswith("--type=") for arg in current.get("launch_args", []))
     ):
