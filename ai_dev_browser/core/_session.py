@@ -81,13 +81,13 @@ def pending_launch(port: int) -> bool:
     return False
 
 
-def failure(code: str, message: str, **state) -> dict:
+def failure(code: str, message: str, /, **state) -> dict:
     return {
+        **state,
         "connected": False,
         "error": message,
         "error_code": code,
         "retryable": code == "transient",
-        **state,
     }
 
 

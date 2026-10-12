@@ -10,6 +10,7 @@ Example:
     chromes = find_debug_chromes()
 """
 
+import ipaddress
 import json
 import logging
 import os
@@ -36,6 +37,24 @@ from .process import get_pid_on_port
 logger = logging.getLogger(__name__)
 
 
+def _is_loopback_host(host: str) -> bool:
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
+def _open_chrome_http(url: str, host: str, timeout: float):
+    """Keep local browser control out of the caller's outbound HTTP proxy."""
+    if _is_loopback_host(host):
+        return urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
+            url, timeout=timeout
+        )
+    return urllib.request.urlopen(url, timeout=timeout)
+
+
 # =============================================================================
 # CDP-based Chrome Discovery
 # =============================================================================
@@ -59,11 +78,10 @@ def _query_chrome_cmdline(
     Returns:
         List of command line arguments, or None if not a Chrome debug port.
     """
+    local_socket = None
     try:
         # Step 1: HTTP — confirm Chrome debug port, get WebSocket URL
-        resp = urllib.request.urlopen(
-            f"http://{host}:{port}/json/version", timeout=timeout
-        )
+        resp = _open_chrome_http(f"http://{host}:{port}/json/version", host, timeout)
         info = json.loads(resp.read())
         ws_url = info.get("webSocketDebuggerUrl")
         if not ws_url:
@@ -72,7 +90,12 @@ def _query_chrome_cmdline(
         # Step 2: Sync WebSocket — CDP Browser.getBrowserCommandLine
         import websocket  # websocket-client (sync)
 
-        ws = websocket.create_connection(ws_url, timeout=timeout)
+        # websocket-client ignores http_no_proxy unless http_proxy_host is also
+        # specified. An owned local socket avoids environment proxy discovery
+        # without mutating the caller's process-wide proxy settings.
+        if _is_loopback_host(host):
+            local_socket = socket.create_connection((host.strip("[]"), port), timeout)
+        ws = websocket.create_connection(ws_url, timeout=timeout, socket=local_socket)
         try:
             ws.send(json.dumps({"id": 1, "method": "Browser.getBrowserCommandLine"}))
             result = json.loads(ws.recv())
@@ -81,6 +104,9 @@ def _query_chrome_cmdline(
             ws.close()
     except Exception:
         return None
+    finally:
+        if local_socket is not None:
+            local_socket.close()
 
 
 def _extract_workspace(cmdline: list[str]) -> str | None:
@@ -113,9 +139,7 @@ def _query_chrome_version(
 ) -> dict | None:
     """GET /json/version — confirm a Chrome debug port, return its JSON (or None)."""
     try:
-        resp = urllib.request.urlopen(
-            f"http://{host}:{port}/json/version", timeout=timeout
-        )
+        resp = _open_chrome_http(f"http://{host}:{port}/json/version", host, timeout)
         return json.loads(resp.read())
     except Exception:
         return None

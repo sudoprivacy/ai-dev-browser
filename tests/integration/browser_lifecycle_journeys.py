@@ -136,6 +136,13 @@ class LifecycleJourneys:
         identity = started["session_id"]
         pid = started["pid"]
         actual_args = psutil.Process(pid).cmdline()
+        from ai_dev_browser.core import _session
+        from ai_dev_browser.core.chrome import find_chrome
+
+        recorded = _session.read(identity)
+        # macOS may report a temporary code-sign clone as process.exe(). That
+        # physical identity must not replace the reusable launch executable.
+        assert recorded["start_options"]["chrome_path"] == find_chrome()
         assert "--headless=new" in actual_args and started["headless"] is True
         assert started["owner"] == "adb" and started["capabilities"]["can_restart"]
         self.page(identity)

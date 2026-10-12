@@ -26,6 +26,7 @@ from .extension import (
 )
 from .port import (
     _cleanup_temp_profile,
+    _open_chrome_http,
     _query_chrome_guid,
     _query_chrome_version,
     _query_chrome_user_data_dir,
@@ -641,6 +642,11 @@ def browser_start(
         if egress_ip:
             result["egress_ip"] = egress_ip
     start_options["headless"] = headless_resolved
+    # On macOS Chrome may execute from a temporary code-sign clone. Preserve
+    # the executable we actually launched; process.exe() can disappear on exit.
+    launch_args = getattr(process, "args", None)
+    if isinstance(launch_args, (list, tuple)) and launch_args:
+        start_options["chrome_path"] = str(launch_args[0])
     return _describe_cdp(result, start_options=start_options)
 
 
@@ -689,11 +695,10 @@ def _describe_cdp(result: dict, start_options: dict | None = None) -> dict:
     record["profile_id"] = record.get("user_data_dir")
     if not record.get("automation_target_id"):
         import json
-        import urllib.request
 
         try:
-            with urllib.request.urlopen(
-                f"http://127.0.0.1:{port}/json/list", timeout=2
+            with _open_chrome_http(
+                f"http://127.0.0.1:{port}/json/list", "127.0.0.1", 2
             ) as response:
                 pages = [
                     target
@@ -707,8 +712,8 @@ def _describe_cdp(result: dict, start_options: dict | None = None) -> dict:
     if start_options:
         record["start_options"] = {
             **start_options,
-            "chrome_path": observed.get("chrome_path")
-            or start_options.get("chrome_path"),
+            "chrome_path": start_options.get("chrome_path")
+            or observed.get("chrome_path"),
         }
         record["workspace"] = os.getcwd()
     _session.write(record)
@@ -1405,6 +1410,10 @@ def browser_stop(
                 port=port,
             )
         pid = get_pid_on_port(port)
+        if pid is None and session_id:
+            # Minimal containers may not have lsof. The session's PID/start time
+            # and live Chrome GUID were verified above, so ownership is known.
+            pid = record["pid"]
         if pid:
             result = _graceful_stop(port, pid)
             stopped.append(result)
