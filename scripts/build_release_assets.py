@@ -38,6 +38,11 @@ def build_assets(dist: Path, output: Path) -> None:
             "core/_demo.py",
             "tools/page_record_start.py",
             "tools/page_record_stop.py",
+            "core/_session.py",
+            "core/_browser_guidance.py",
+            "core/_extension_lifecycle.py",
+            "tools/browser_reconnect.py",
+            "tools/browser_restart.py",
         ):
             if f"ai_dev_browser/{name}" not in archive.namelist():
                 raise ValueError(f"Wheel is missing {name}")

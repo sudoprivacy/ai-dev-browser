@@ -23,6 +23,71 @@ python -m ai_dev_browser.tools.click_by_ref --ref "5#214"
 python -m ai_dev_browser.tools.mouse_click --x 105 --y 52 --screenshot screenshots/page.png
 ```
 
+## Browser sessions
+
+The authoritative mode guidance is in the core tool descriptions and actual
+`browser_start --help` / `browser_connect --help`. Hosts can forward those
+surfaces without maintaining their own browser strategy.
+
+| Intent | Tool | Resource effect |
+|--------|------|-----------------|
+| New isolated browser | `browser_start` | Creates an adb-owned CDP Chrome |
+| Launch an already configured real profile | `browser_start --transport extension --user-data-dir <root>` | Starts the selected Chrome; preserves installed extensions and profile preferences |
+| Attach to running Chrome | `browser_connect --transport cdp` or `extension` | Leaves the process running; extension uses its dedicated tab |
+| Recover disconnected control | `browser_reconnect --session-id <id>` | Verifies the same browser, profile and original page; never replays input |
+| Release control | `browser_disconnect --session-id <id>` | Preserves Chrome and tabs; extension releases every driver on its local bridge |
+| Explicitly close / restart | `browser_stop` / `browser_restart --session-id <id>` | Affects every window/tab in the selected owned process |
+
+Start/connect return `session_id`, actual transport, profile identity, process
+ownership and capabilities. Pass that identity to subsequent page/input tools:
+
+```bash
+python -m ai_dev_browser.tools.browser_start --headless true
+python -m ai_dev_browser.tools.page_goto --session-id <returned-id> --url https://example.com
+python -m ai_dev_browser.tools.browser_disconnect --session-id <returned-id>
+python -m ai_dev_browser.tools.browser_reconnect --session-id <returned-id>
+```
+
+For extension startup, first install and enable the bundled bridge in the chosen
+Chrome profile. Select `--chrome-path`, `--user-data-dir`, `--profile-directory`
+and `--headless` explicitly as needed. Startup adds neither a debugging port nor
+a command-line extension loading flag. A busy profile returns `conflict`; a
+missing/unsupported extension returns `unsupported` with setup instructions.
+A handshake timeout leaves the launched Chrome running and reports its PID;
+a later `browser_connect --transport extension` retains its observed ownership.
+Connecting never changes an existing Chrome's headless mode.
+
+For attached extension Chrome, physical PID/path/headless mode may be unknown;
+`profile_id` and `session_id` still identify the actual extension profile and
+Chrome run. Unknown process settings mean `can_close` / `can_restart` are false.
+External stop/restart requires explicit caller authorization and verified
+process/start settings; authorization alone cannot supply unknown settings.
+A closed original page returns `target_closed`; a replaced browser returns
+`session_changed`. Inspect current state before choosing another session or
+repeating a side effect. `automation_target_id` is an opaque identity;
+`targets[].index` is the index accepted by `tab_switch` / `tab_close`.
+
+The generated [lifecycle journeys](tests/integration/test_browser_lifecycle.py)
+run real CLI processes and verify authenticated server outcomes, preserved tabs,
+worker recovery with OAuth children, process ownership, explicit restart and
+headless/headful extension startup. The installed-profile Windows tests use
+Chrome's real management UI and a separate desktop mouse actor:
+
+```powershell
+$env:AI_DEV_BROWSER_TEST_EXTENSION_CHROME = 'C:\path\to\chrome.exe'
+uv run python -m pytest -v -s tests/integration/test_browser_lifecycle.py --basetemp scratch/lifecycle-acceptance
+```
+
+The paid [mode discovery runner](scripts/live_browser_lifecycle_steering.py)
+uses inherited real Claude API credentials. It gives the model installed names,
+first-line summaries and actual help, then executes its choices in real Chrome:
+
+```powershell
+uv run python scripts/live_browser_lifecycle_steering.py --scenario background --output scratch/lifecycle-model
+# Existing-profile case requires an owned test profile with the bridge installed:
+uv run python scripts/live_browser_lifecycle_steering.py --scenario existing --prepared-profile <test-root> --output scratch/lifecycle-profile-model
+```
+
 ## Screenshot Coordinate Alignment
 
 Screenshots are auto-scaled to fit LLM vision limits (default 1280px
@@ -328,6 +393,7 @@ Default: click offset randomization (free, always on). Everything else is opt-in
 
 | Variable | Purpose |
 |----------|---------|
+| `AI_DEV_BROWSER_SESSION_ID` | Pin later CLI page/input calls to the session returned by start/connect. Explicit `--session-id` wins. |
 | `AI_DEV_BROWSER_PORT` | Default CDP port (skips auto-detection) |
 | `AI_DEV_BROWSER_HEADLESS` | Default headless mode (`1`/`true`) |
 | `AI_DEV_BROWSER_REDIRECT` | Block direct CLI, print redirect message |

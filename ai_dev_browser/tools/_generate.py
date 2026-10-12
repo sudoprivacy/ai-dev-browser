@@ -33,12 +33,14 @@ INTERNAL = {
 # Per-tool metadata overrides. Key = function name, value = dict of overrides.
 # Defaults: requires_tab=True (auto-detected from first param), result_key="success"
 TOOL_META = {
-    "browser_start": {"result_key": "port"},
+    "browser_start": {"result_key": "connected"},
     "browser_stop": {"result_key": "stopped"},
     "browser_list": {"result_key": "count"},
     "browser_cleanup": {"result_key": "count"},
     "browser_connect": {"result_key": "connected"},
     "browser_disconnect": {"result_key": "stopped"},
+    "browser_reconnect": {"result_key": "reconnected"},
+    "browser_restart": {"result_key": "restarted"},
     "click_by_ref": {"result_key": "clicked"},
     "click_by_text": {"result_key": "clicked"},
     "click_row_by_text": {"result_key": "clicked"},

@@ -1,0 +1,145 @@
+{
+  "date": "2026-10-13",
+  "base_commit": "fb19340",
+  "scope": "Both adb mode-guidance and session-lifecycle FRs; sudohand migration stays parked.",
+  "skills": {
+    "cli_steering": "C:/Users/songym/cursor-projects/document-ai/.claude/skills/cli-steering-engineering/SKILL.md",
+    "integration_test_generator": "C:/Users/songym/cursor-projects/document-ai/.claude/skills/integration-test-generator/SKILL.md"
+  },
+  "audit": {
+    "naming": "Core exports, module filenames and CLI names match; reconnect/restart join the existing browser lifecycle family.",
+    "parameters": "Core signatures/docstrings drive actual --help and generated wrappers. Existing start/connect arguments remain compatible; page calls take the same connection-scoped --session-id.",
+    "discovery": "Start/connect first lines distinguish isolated launch from attaching real Chrome. One shared core guidance covers headless task selection, explicit/env/default precedence, GUI prerequisites, real device identity, same-page collaboration and absence of viewer/relay.",
+    "returns": "Legacy result fields remain. Observed session/profile identity, actual headless mode where known, ownership and capabilities are additive. Opaque automation_target_id is distinct from zero-based targets.index. External physical process fields remain null when unknown.",
+    "failures": "Stable unsupported=6, conflict/session_changed=5, target_closed/not_found=4, auth_failed=7, transient=9. Hints come from core Failure sections. No implicit transport/profile fallback or input replay.",
+    "sync_async": "Async connect/reconnect use wrap_core; sync start/disconnect/stop/restart use wrap_core_sync. An async SDK caller with a held CDP connection awaits browser.close on its own loop.",
+    "generation": "63 generated tools; generator reports zero changes after regeneration. Integration scenarios are generated with integration-test-generator, then linted/formatted.",
+    "composition": "Reuses Chrome spawn, BrowserClient, page navigation/input and bridge. Two additional lifecycle primitives manage process/identity state that in-page JS cannot express.",
+    "paid_model_limits": "Four final workflows passed using real credentials and Chrome, names/first lines and actual help in isolated model context. This is observed workflow success, not a promise of perfect choices across all model runs."
+  },
+  "capability_bounds": {
+    "already_running_extension": "Connect preserves Chrome/profile/unrelated tabs. It identifies actual extension profile and browser-run UUID; no attempt to infer unknown OS PID/path or change running headless mode.",
+    "external_restart": "Explicit authorization is required; unknown executable/start settings still return unsupported.",
+    "extension_launch": "Requires a persistently installed/enabled bridge in the specified existing profile. No remote-debugging or command-line extension loading flags. Busy profile conflicts without killing it.",
+    "slow_handshake": "Keeps the launched browser running, reports resources and persists its observed process identity. A later handshake on the nonce URL restores ownership.",
+    "remote": "Page images/input are available to hosts. Viewer, relay and cloud pairing are outside these FRs."
+  },
+  "paid_live_reports": [
+    {
+      "evidence": "scratch/lifecycle-model-background-20261012/model-steering.json",
+      "status": "passed",
+      "requests": 8,
+      "cases": [
+        {
+          "scenario": "background",
+          "selected_tools": [
+            "help:browser_start",
+            "browser_start",
+            "page_discover",
+            "click_by_ref",
+            "type_by_ref",
+            "click_by_ref",
+            "page_discover"
+          ],
+          "models": [
+            "claude-opus-4-8"
+          ]
+        }
+      ]
+    },
+    {
+      "evidence": "scratch/lifecycle-model-unsupported-final-20261012/model-steering.json",
+      "status": "passed",
+      "requests": 3,
+      "cases": [
+        {
+          "scenario": "unsupported",
+          "selected_tools": [
+            "help:browser_start",
+            "browser_start"
+          ],
+          "models": [
+            "claude-opus-4-8"
+          ]
+        }
+      ]
+    },
+    {
+      "evidence": "scratch/lifecycle-model-existing-final-20261012/model-steering.json",
+      "status": "passed",
+      "requests": 10,
+      "cases": [
+        {
+          "scenario": "existing",
+          "selected_tools": [
+            "help:browser_connect",
+            "browser_connect",
+            "page_goto",
+            "page_discover",
+            "help:type_by_ref",
+            "type_by_ref",
+            "click_by_ref",
+            "click_by_ref",
+            "page_discover"
+          ],
+          "models": [
+            "claude-opus-4-8"
+          ]
+        }
+      ]
+    },
+    {
+      "evidence": "scratch/lifecycle-model-visible-ledger-20261012/model-steering.json",
+      "status": "passed",
+      "requests": 7,
+      "cases": [
+        {
+          "scenario": "visible",
+          "selected_tools": [
+            "help:browser_start",
+            "browser_start",
+            "page_discover",
+            "type_by_ref",
+            "click_by_ref",
+            "page_discover"
+          ],
+          "models": [
+            "claude-opus-4-8"
+          ]
+        }
+      ]
+    }
+  ],
+  "passed_model_requests": 28,
+  "live_checks": {
+    "core_regression": "134 passed: unit suite, browser_start retry and actual WebSocket bridge checks.",
+    "branded_chrome": "Google Chrome 154.0.8037.98: persistently installed extension launch in headless/headful, busy profile conflict, disconnect/reconnect, authenticated server submission, owned close; existing real profile plus native desktop mouse confirmation, unauthorized restart refusal, same-tab continuation and closed-target refusal. Three focused journeys passed at scratch/lifecycle-foreground-diagnosis-20261012.",
+    "chromium_matrix": "9 passed, zero skips: complete generated lifecycle journeys on Chromium 148.0.0.0 with persistently installed bridge in both headless/headful modes, native desktop actor, both worker WebSocket backends, busy profile, closed target, delayed handshake and owned CDP restart. JUnit: scratch/lifecycle-acceptance-final.xml; per-case CLI/server/event evidence: scratch/lifecycle-acceptance-final-20261013.",
+    "recording_regression": "6 passed: real bundled extension routing/worker recovery, GIF recording and demo movement/click/typing on legacy and asyncio WebSocket backends. Evidence: scratch/lifecycle-recording-regression-20261012.",
+    "launch_landing": "Actual HTTP nonce landing plus actual WebSocket status passed on both websockets.legacy.server and websockets.asyncio.server.",
+    "screenshots": "Inspected actual final-page.png from visible model collaboration and existing-profile model operation; authenticated single approval/submission visible.",
+    "ci_selection": "317 passed, 7 skipped locally using the existing 31 CI-selected regression files; actual extension-specific coverage ran separately (6 passed). JUnit: scratch/lifecycle-ci-regression.xml.",
+    "restart_gate": "2 passed after the stop-process guard; the final 9-case run also confirms graceful exit, pinned multi-tab continuation, stale-session refusal and late-handshake ownership."
+  },
+  "retained_failed_attempts": {
+    "location_8_bootstrap": "Command-line/pipe extension loads are ephemeral and do not prove persistent installation. Acceptance switched to the actual Chrome management UI/native folder picker and verifies installed path.",
+    "native_ui": "UIA Invoke generated repeated trusted clicks; switched to one physical mouse click in a separate main-thread desktop actor.",
+    "readiness": "Early interaction runs were inconsistent; live flows now await server-backed logged-in state before input, with actual HTTP attempts retained.",
+    "cold_launch": "A plain WebSocket endpoint could turn the nonce URL into a failed navigation before a cold worker observes it. The bridge now serves a stable HTML launch landing.",
+    "model_harness": "A valid page_html choice was excluded by the early executor allow-list; the actual read tool is now allowed. Reports remain in scratch/lifecycle-model-existing-20261012.",
+    "visible_strict_check": "An earlier visible run reported the existing documented synthetic click fallback and failed the strict trusted-submission assertion. The final unchanged input primitive completed a trusted single submission. The failed run remains at scratch/lifecycle-model-visible-ready-20261012; no assertion was weakened.",
+    "process_exit": "A live restart trial observed the old process after its debug port closed. Graceful close now waits for observed process identity to end; restart separately refuses to launch while the old process remains.",
+    "early_worker_hello": "A worker can announce connected before observing the nonce-marked tab. Connect now waits for a pending launch identity on that specific bridge before classifying ownership.",
+    "visible_extension": "Earlier headful trials acknowledged input without a server-side action, including a sequential run. Explicit startup now activates its dedicated page. A later diagnostic captured the actual trusted mousedown/up/click at the correct DOM coordinates; final 9-case acceptance includes an event log and authenticated server receipts. These observations do not establish a universal fix for all Chrome input timing; earlier failures remain at scratch/lifecycle-sequential-final-20261013."
+  },
+  "regression_protection": {
+    "workflow": ".github/workflows/ci.yml",
+    "scenarios": "tests/integration/scenarios_browser_lifecycle.json",
+    "generated_tests": "tests/integration/test_browser_lifecycle.py",
+    "standard_matrix": "CDP lifecycle and unavailable-capability journeys on Linux/macOS/Windows.",
+    "extension_matrix": "Real worker/OAuth recovery on both WebSocket implementations; persistently installed profile and independent desktop actor on Windows.",
+    "artifacts": "Retains actual evidence JSON and installed/final-page screenshots for 7 days.",
+    "paid_runner": "scripts/live_browser_lifecycle_steering.py is opt-in and uses inherited real provider credentials; no credentials are recorded.",
+    "release_assets": "Wheel validation includes shared guidance, ownership records, extension launcher and generated reconnect/restart tools."
+  }
+}

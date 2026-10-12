@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Literal
 
 from . import registry
+from . import _session
+from ._browser_guidance import mode_guidance
 from .chrome import launch_chrome
 from .config import (
     DEFAULT_PROFILE_PREFIX,
@@ -25,6 +27,7 @@ from .extension import (
 from .port import (
     _cleanup_temp_profile,
     _query_chrome_guid,
+    _query_chrome_version,
     _query_chrome_user_data_dir,
     find_debug_chromes,
     find_workspace_chromes,
@@ -177,6 +180,7 @@ def _run_coro(coro):
         return ex.submit(lambda: asyncio.run(coro)).result()
 
 
+@mode_guidance
 def browser_start(
     port: int | None = None,
     headless: bool | str = None,  # type: ignore[assignment]
@@ -193,8 +197,14 @@ def browser_start(
     geo: str | None = None,
     locale: str | None = None,
     match_proxy: bool | None = None,
+    transport: Literal["cdp", "extension"] = "cdp",
+    chrome_path: str | None = None,
+    user_data_dir: str | None = None,
+    profile_directory: str = "Default",
 ) -> dict:
-    """Start a browser instance — ISOLATED and STEALTH by default.
+    """Use when: you need a new isolated CDP session or explicitly launch a configured extension profile; returns session_id and actual capabilities.
+
+    {mode_guidance}
 
     With no `profile`, each call is a throwaway isolated session: its own port,
     a temporary profile, and no reuse. That's the safe default — automation
@@ -207,12 +217,11 @@ def browser_start(
     isolation boundary. `cookies_save` / `cookies_load` carry login into an
     otherwise ephemeral session without a named profile.
 
-    This **launches** a new browser. To drive an ALREADY-RUNNING one instead,
-    use `browser_connect` — an existing CDP Chrome by port, or your **real,
-    logged-in** browser via `browser_connect --transport extension` (real
-    profile, logins, device-trust; for Google SSO / sites that block fresh
-    profiles). Reusing your real login is `browser_connect --transport
-    extension`, not a fresh `browser_start`.
+    With transport=extension, choose an existing user_data_dir and
+    profile_directory that already has the bridge installed/enabled. A busy
+    data directory returns conflict; use browser_connect instead. Startup
+    changes neither installed extensions nor profile preferences. A failed
+    handshake leaves the explicitly launched Chrome running and reports its PID.
 
     Proxy consistency (automatic): if `extra_args` carries a `--proxy-server`
     and you don't pass an explicit `timezone`/`geo`, this auto-aligns the
@@ -223,6 +232,13 @@ def browser_start(
     `locale` only when you mean to. See `match_proxy`.
 
     Args:
+        transport: "cdp" (isolated automation, default) or "extension"
+            (explicitly launch an already configured real Chrome/profile).
+        chrome_path: Chrome executable to launch; otherwise find_chrome resolves it.
+        user_data_dir: Existing Chrome user-data root, required for extension
+            startup. CDP uses temp/named adb profiles; this option is extension only.
+        profile_directory: Chrome folder inside user_data_dir, e.g. "Default"
+            or "Profile 1". Extension only; different folders share a process lock.
         port: Debug port (auto-assigned if None)
         headless: Run in headless mode. Accepts `False` (default,
             windowed), `True` / `"new"` (new headless: full Chrome
@@ -314,8 +330,66 @@ def browser_start(
         but the egress lookup failed: `identity_consistent: false` +
         `identity_warning` (the browser launched, but IP and location signals may
         be inconsistent — pass explicit `timezone`/`geo` or check the proxy).
+    Failure:
+        Check error_code and actual resources. Busy profiles need an explicit
+        browser_connect request. Install/enable the bridge in the selected
+        profile before extension startup. Configure a GUI or explicitly choose
+        a supported headless mode. Never switch transport/profile, restart, or
+        replay input implicitly after failure.
     """
+    start_options = dict(locals())
     startup_timeout = resolve_startup_timeout(startup_timeout)
+    if transport == "extension":
+        if (
+            port is not None
+            or profile is not None
+            or temp
+            or override_default_args
+            or timezone
+            or geo
+            or locale
+            or match_proxy is not None
+        ):
+            return _session.failure(
+                "validation",
+                "Extension startup uses user_data_dir/profile_directory; CDP port, named/temp profiles, default-flag overrides and identity emulation do not apply",
+                transport="extension",
+            )
+        from ._extension_lifecycle import start
+
+        return _run_coro(
+            start(
+                user_data_dir=user_data_dir,
+                profile_directory=profile_directory,
+                chrome_path=chrome_path,
+                headless=_env_headless_default() if headless is None else headless,
+                url=url,
+                startup_timeout=startup_timeout,
+                extra_args=extra_args,
+            )
+        )
+    if (
+        transport != "cdp"
+        or user_data_dir is not None
+        or profile_directory != "Default"
+    ):
+        return _session.failure(
+            "validation",
+            "CDP startup uses temp/named adb profiles; user_data_dir/profile_directory are extension-only",
+            transport=transport,
+        )
+    effective_headless = _env_headless_default() if headless is None else headless
+    if not effective_headless:
+        import sys
+
+        if sys.platform.startswith("linux") and not (
+            os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+        ):
+            return _session.failure(
+                "unsupported",
+                "Windowed Chrome requires DISPLAY or WAYLAND_DISPLAY; configure a GUI or choose headless explicitly",
+                transport="cdp",
+            )
 
     # Isolation by default: an unnamed session has nothing to persist and must
     # not reuse a shared Chrome (where it could act on another session's tabs),
@@ -333,13 +407,15 @@ def browser_start(
         reused_port = _find_reusable_chrome(profile=profile)
         if reused_port:
             pid = get_pid_on_port(reused_port)
-            return {
-                "port": reused_port,
-                "pid": pid,
-                "profile": profile or "default",
-                "reused": True,
-                "message": f"Reusing existing Chrome on port {reused_port}",
-            }
+            return _describe_cdp(
+                {
+                    "port": reused_port,
+                    "pid": pid,
+                    "profile": profile or "default",
+                    "reused": True,
+                    "message": f"Reusing existing Chrome on port {reused_port}",
+                }
+            )
 
     # No reusable Chrome found above (or reuse was skipped for
     # temp/profile/none). Top-level has already decided reuse semantics, so
@@ -370,27 +446,27 @@ def browser_start(
         # globs on stop.
         import tempfile
 
-        user_data_dir = Path(
-            tempfile.mkdtemp(prefix=f"{DEFAULT_PROFILE_PREFIX}{port}_")
-        )
+        cdp_data_dir = Path(tempfile.mkdtemp(prefix=f"{DEFAULT_PROFILE_PREFIX}{port}_"))
         profile_name = "(temp)"
     else:
         profile_name = profile or "default"
-        user_data_dir = get_workspace_profile_dir(profile_name)
-        user_data_dir.mkdir(parents=True, exist_ok=True)
+        cdp_data_dir = get_workspace_profile_dir(profile_name)
+        cdp_data_dir.mkdir(parents=True, exist_ok=True)
 
         # Safety: if another Chrome is already using this profile, reuse it
         # (launching two Chromes with the same user-data-dir causes crashes)
-        existing = _find_chrome_using_profile(user_data_dir)
+        existing = _find_chrome_using_profile(cdp_data_dir)
         if existing:
             existing_port, existing_pid = existing
-            return {
-                "port": existing_port,
-                "pid": existing_pid,
-                "profile": profile_name,
-                "reused": True,
-                "message": f"Profile '{profile_name}' already in use. Reusing Chrome on port {existing_port}.",
-            }
+            return _describe_cdp(
+                {
+                    "port": existing_port,
+                    "pid": existing_pid,
+                    "profile": profile_name,
+                    "reused": True,
+                    "message": f"Profile '{profile_name}' already in use. Reusing Chrome on port {existing_port}.",
+                }
+            )
 
     # Launch Chrome, retrying ONCE on a cold-start miss with a fresh port. On a
     # loaded host (esp. Windows: a just-released port transiently rejecting the
@@ -408,16 +484,20 @@ def browser_start(
     last_error: dict = {}
     process = None
 
+    from typing import Any
+
+    launch_options: dict[str, Any] = {"chrome_path": chrome_path} if chrome_path else {}
     for attempt in range(max_attempts):
         process = launch_chrome(
             port=port,
             headless=headless_resolved,
             start_url=start_url,
-            user_data_dir=str(user_data_dir),
+            user_data_dir=str(cdp_data_dir),
             extra_args=extra_args,
             override_default_args=override_default_args,
             silent_stderr=silent_stderr,
             stealth=stealth,
+            **launch_options,
         )
 
         # Wait for Chrome to bind its debug port.
@@ -469,7 +549,7 @@ def browser_start(
             if temp:
                 import tempfile
 
-                user_data_dir = Path(
+                cdp_data_dir = Path(
                     tempfile.mkdtemp(prefix=f"{DEFAULT_PROFILE_PREFIX}{port}_")
                 )
             continue
@@ -523,14 +603,14 @@ def browser_start(
         guid=_query_chrome_guid(port),
         workspace=os.getcwd(),
         pid=process.pid,
-        user_data_dir=str(user_data_dir),
+        user_data_dir=str(cdp_data_dir),
         identity=identity,
     )
 
     result = {
         "port": port,
         "pid": process.pid,
-        "headless": headless,
+        "headless": headless_resolved,
         "url": start_url,
         "profile": profile_name,
         "reused": False,
@@ -560,7 +640,79 @@ def browser_start(
                 result["locale_requested"] = requested
         if egress_ip:
             result["egress_ip"] = egress_ip
-    return result
+    start_options["headless"] = headless_resolved
+    return _describe_cdp(result, start_options=start_options)
+
+
+def _describe_cdp(result: dict, start_options: dict | None = None) -> dict:
+    """Add observed process/session identity without changing legacy result fields."""
+    port = result["port"]
+    guid = _query_chrome_guid(port)
+    if not guid:
+        return _session.failure(
+            "transient",
+            "Chrome debug port did not return a browser identity",
+            **result,
+            transport="cdp",
+        )
+    identity = "cdp-" + guid
+    try:
+        record = _session.read(identity)
+    except LookupError:
+        record = {"session_id": identity, "transport": "cdp"}
+    registered = registry.lookup(port, guid)
+    observed = _session.process_info(result.get("pid") or get_pid_on_port(port)) or {}
+    args = observed.get("launch_args", [])
+    actual_headless = next(
+        (a for a in reversed(args) if a == "--headless" or a.startswith("--headless=")),
+        None,
+    )
+    headless = result.get("headless", record.get("headless"))
+    if args:
+        headless = (
+            (headless if headless else actual_headless.partition("=")[2] or True)
+            if actual_headless
+            else False
+        )
+    record.update(
+        {
+            **observed,
+            "port": port,
+            "owner": "adb" if registered or start_options else "external",
+            "profile_owner": "adb" if registered or start_options else "user",
+            "user_data_dir": (registered or {}).get("user_data_dir"),
+            "headless": headless,
+        }
+    )
+    version = _query_chrome_version(port) or {}
+    record["browser_version"] = version.get("Browser")
+    record["profile_id"] = record.get("user_data_dir")
+    if not record.get("automation_target_id"):
+        import json
+        import urllib.request
+
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/json/list", timeout=2
+            ) as response:
+                pages = [
+                    target
+                    for target in json.load(response)
+                    if target.get("type") == "page"
+                ]
+            if pages:
+                record["automation_target_id"] = pages[0]["id"]
+        except (OSError, ValueError):
+            pass
+    if start_options:
+        record["start_options"] = {
+            **start_options,
+            "chrome_path": observed.get("chrome_path")
+            or start_options.get("chrome_path"),
+        }
+        record["workspace"] = os.getcwd()
+    _session.write(record)
+    return {**result, **_session.describe(record), "connected": True}
 
 
 def _build_info() -> dict:
@@ -593,161 +745,473 @@ def _build_info() -> dict:
     return info
 
 
+@mode_guidance
 async def browser_connect(
     transport: Literal["cdp", "extension"] = "cdp",
     port: int | None = None,
+    session_id: str | None = None,
+    headless: bool | str | None = None,
+    timeout: float = 4.0,
 ) -> dict:
-    """Use when: you want to drive an ALREADY-RUNNING browser — a CDP Chrome
-    (`transport=cdp`, the default) or your REAL logged-in browser via the
-    extension (`transport=extension`). Returns `{transport, connected, ...}` so
-    you can act immediately (or, if not connected, exact setup steps).
+    """Use when: attaching to existing CDP or the user's real Chrome/profile via extension; returns connected, session_id and capabilities.
 
-    Two transports, deliberately different tools than `browser_start`:
-    - **cdp** (default): attaches to a CDP Chrome by `--port` (or auto-detects
-      the workspace one). Autonomous, headless-capable, parallel — the 90% case.
-    - **extension**: drives your **real** Chrome (your profile, logins,
-      device-trust) through the ai-dev-browser bridge extension — the way to
-      look human on hardened sites (Google SSO). It drives a dedicated
-      automation tab and FOLLOWS the popups/new tabs your automation opens (an
-      OAuth account-chooser, a magic-link tab), so multi-tab logins don't stall
-      — reach them with `tab_list`/`tab_switch` or `--tab-url`, exactly like cdp;
-      your own tabs are never touched. **Not autonomous**: it needs the
-      extension installed + enabled and Chrome running, and can't run headless
-      or parallel. If it isn't set up, this returns the exact
-      `setup_instructions` to hand the user (Chrome blocks command-line
-      loading, so a person loads it once).
+    {mode_guidance}
 
-    For a FRESH, isolated, disposable browser instead of attaching to an
-    existing one, use `browser_start` (it launches one; this only attaches).
+    Connect never starts/restarts Chrome or changes its headless state. The
+    extension gets a dedicated automation tab and follows its OAuth children;
+    unrelated user tabs are excluded. profile_id identifies an extension
+    installation in a profile even when account is absent. session_id identifies
+    this Chrome run across worker/bridge reconnects. Physical profile path and
+    PID are unknown for a browser adb did not launch; unknown fields stay null.
+    Use browser_list for OS inventory. A newly installed/reloaded extension
+    may need a few seconds to dial the local bridge, which auto-starts.
+    targets includes each page's index, target_id and URL. Use index for
+    tab_switch/tab_close; automation_target_id tracks the main page identity.
+    For visible local collaboration, show the dedicated page with tab_switch
+    using its targets index so the human and agent work on that same page.
 
     Args:
-        transport: "cdp" (attach to a CDP Chrome, default) or "extension"
-            (drive your real browser via the bridge extension). Settable
-            process-wide via `AI_DEV_BROWSER_TRANSPORT`.
-        port: CDP debug port to attach to (cdp only; auto-detects if omitted).
-
-    Which profile (extension mode): the extension drives the Chrome **profile it
-    was loaded into**. On success this returns `account` (the profile's signed-in
-    email) so you know WHICH browser/account you're driving — if it's the wrong
-    one, load & enable the extension in the target profile instead. There's no
-    remote profile-switch: the extension is per-profile.
-
-    Args-note: extension mode auto-starts its local bridge daemon (no manual
-    step); you only ever load the extension once, by hand.
+        transport: "cdp" (default, existing debug Chrome) or "extension"
+            (running real Chrome with the bridge enabled in its profile).
+        port: CDP debug port; auto-detected if omitted. Extension does not use it.
+        session_id: Identity returned by start/connect; verifies that same
+            browser/profile is still connected. Prefer browser_reconnect after
+            a disconnect. Does not select a different profile.
+        headless: An attached browser's mode cannot be changed. Any explicit
+            value returns unsupported; select mode only in browser_start.
+        timeout: Seconds to await an extension handshake, greater than zero.
 
     Returns:
-        dict with `transport`, `connected`, and `version` (+ `git_commit` when
-        run from a checkout, since the packaged version lags a repo-direct /
-        editable working tree — use it to confirm WHICH code you're driving).
-        cdp+connected: `port, tab_count,
-        tabs`. extension+connected: `account, tab_count, tabs`. Not connected:
-        `setup_instructions` + `extension_dir` (and `bridge_running` once the
-        daemon is up), or the cdp connect error.
+        dict with connected, transport, session_id, capabilities, profile_id,
+        owner, profile_owner, actual headless (null if unknown), account for
+        extension, port for CDP, tabs and tab_count. Includes version/git_commit.
 
     Failure:
-        cdp + not connected → no Chrome on that port; `browser_start` to launch
-        one. extension: the bridge daemon is auto-started, so `connected: false`
-        with `bridge_running: true` means NO extension has dialed in — either the
-        ai-dev-browser extension isn't loaded/enabled in a running Chrome (follow
-        `setup_instructions`, load `extension_dir`), or you just (re)loaded it —
-        wait a few seconds, it auto-reconnects, and retry. `bridge_running` absent
-        means the daemon itself couldn't start (see `error`).
+        Read error_code and setup_instructions. Missing bridge/extension needs
+        the extension installed/enabled in the intended running Chrome profile.
+        Reload the bundled bridge if its lifecycle identity is unavailable.
+        A missing CDP Chrome needs an explicit start request or a corrected port.
+        session_changed/target_closed require inspecting the actual state and an
+        explicit decision; never restart, switch profile/transport or replay input.
     """
+    if headless is not None:
+        return _session.failure(
+            "unsupported",
+            "Connect cannot change a running Chrome's headless state; choose it in browser_start",
+            transport=transport,
+        )
+    if timeout <= 0:
+        raise ValueError("timeout must be greater than zero")
+    expected = _session.read(session_id) if session_id else None
+    if expected and expected["transport"] != transport:
+        return _session.failure(
+            "validation",
+            "session_id belongs to another transport; use browser_reconnect",
+            session_id=session_id,
+            transport=transport,
+        )
     if transport == "extension":
+        if port is not None:
+            return _session.failure(
+                "validation",
+                "Extension connect does not use a CDP debug port",
+                transport="extension",
+            )
+        if expected and expected.get("pid") and not _session.same_process(expected):
+            return _session.failure(
+                "session_changed",
+                "Original extension Chrome process is gone; no browser was started or input replayed",
+                session_id=session_id,
+                transport="extension",
+            )
         from .ext_bridge import ensure_bridge_running, wait_for_extension
+        from .connection import connect_extension
 
-        # Auto-start the bridge daemon — no manual ensure_bridge_running() dance;
-        # extension mode should be as out-of-box as CDP mode's auto-connect.
         if not ensure_bridge_running():
-            return {
-                "transport": "extension",
-                "connected": False,
-                "retryable": False,  # daemon won't start — an environment issue
-                "extension_dir": str(extension_dir()),
-                "error": (
-                    "Could not start the extension bridge daemon on port "
-                    f"{EXTENSION_BRIDGE_PORT}."
-                ),
-            }
-        # Give a just-(re)loaded extension a few seconds to dial back in.
-        status = await wait_for_extension(timeout=4.0)
-        if status and status.get("extension_connected"):
-            # Build the real BrowserClient over the bridge and list its tabs —
-            # same shape as cdp, and it proves the multiplexer end to end.
-            tabs: list[str] = []
-            try:
-                from .connection import connect_extension
+            return _session.failure(
+                "unsupported",
+                "Could not start the local extension bridge",
+                transport="extension",
+                extension_dir=str(extension_dir()),
+            )
+        connection_deadline = time.monotonic() + timeout
+        status = await wait_for_extension(timeout=timeout)
+        if (
+            status
+            and not status.get("launch_token")
+            and _session.pending_launch(EXTENSION_BRIDGE_PORT)
+        ):
+            from .ext_bridge import bridge_status
 
-                browser = await connect_extension()
-                tabs = [getattr(t._target, "url", "") or "" for t in browser.tabs]
-            except Exception:
-                pass  # connected per the daemon; tab list is best-effort
-            # Report WHICH profile/account we're driving — the extension runs in
-            # the profile it was loaded into.
-            return {
-                "transport": "extension",
-                "connected": True,
-                "account": status.get("account"),
-                "tab_count": len(tabs),
-                "tabs": tabs,
-                "bridge_port": EXTENSION_BRIDGE_PORT,
+            while time.monotonic() < connection_deadline and not status.get(
+                "launch_token"
+            ):
+                await asyncio.sleep(0.1)
+                status = await bridge_status() or status
+            if not status.get("launch_token"):
+                return _session.failure(
+                    "transient",
+                    "The launched Chrome's worker connected before its profile launch identity was confirmed; inspect state and connect again without restarting",
+                    transport="extension",
+                    actual_profile_id=status.get("profile_id"),
+                )
+        if not status:
+            return _session.failure(
+                "transient",
+                "No extension has connected in the requested time; check enabled bridge and running Chrome/profile",
+                transport="extension",
+                bridge_running=True,
+                extension_dir=str(extension_dir()),
+                setup_instructions=extension_load_instructions(),
                 **_build_info(),
+            )
+        if not status.get("session_id") or not status.get("profile_id"):
+            return _session.failure(
+                "unsupported",
+                "Connected bridge lacks lifecycle identity. Reload the updated bundled extension in the selected profile",
+                transport="extension",
+                bridge_running=True,
+                extension_dir=str(extension_dir()),
+                setup_instructions=extension_load_instructions(),
+            )
+        identity = "extension-" + status["session_id"]
+        if expected and (
+            identity != session_id or status["profile_id"] != expected.get("profile_id")
+        ):
+            return _session.failure(
+                "session_changed",
+                "The connected extension is a different Chrome run/profile. No input was replayed",
+                session_id=session_id,
+                actual_session_id=identity,
+                actual_profile_id=status["profile_id"],
+                transport="extension",
+            )
+        try:
+            record = _session.read(identity)
+        except LookupError:
+            record = _session.adopt_launch(status) or {
+                "session_id": identity,
+                "transport": "extension",
+                "owner": "external",
+                "profile_owner": "user",
             }
-        # Daemon is up, but no extension has dialed in yet — loading/enabling it
-        # (or waiting out a just-reload) and retrying is the fix.
+        try:
+            browser = await connect_extension(session_id=session_id)
+        except Exception as error:
+            return _session.failure(
+                getattr(error, "error_code", "transient"),
+                str(error),
+                session_id=session_id,
+                transport="extension",
+            )
+        try:
+            tabs = [
+                {"tab_id": str(t._target.target_id), "url": t._target.url or ""}
+                for t in browser.tabs
+            ]
+        finally:
+            await browser.close()
+        main = status.get("automation_target_id")
+        if expected and expected.get("automation_target_id") != main:
+            return _session.failure(
+                "target_closed",
+                "Original automation tab was closed or detached; a new blank tab is not continuation of its page state. Inspect and choose explicitly",
+                session_id=session_id,
+                actual_automation_target_id=main,
+                transport="extension",
+                tabs=tabs,
+            )
+        previous_main = record.get("automation_target_id")
+        record.update(
+            {
+                "profile_id": status["profile_id"],
+                "automation_target_id": main,
+                "browser_version": status.get("browser_version"),
+            }
+        )
+        _session.write(record)
         return {
-            "transport": "extension",
-            "connected": False,
-            "retryable": True,
-            "bridge_running": True,
-            "extension_dir": str(extension_dir()),
-            "setup_instructions": extension_load_instructions(),
+            **_session.describe(record),
+            "connected": True,
+            "account": status.get("account"),
+            "bridge_port": EXTENSION_BRIDGE_PORT,
+            "tabs": [t["url"] for t in tabs],
+            "targets": [
+                {"index": i, "target_id": t["tab_id"], "url": t["url"]}
+                for i, t in enumerate(tabs)
+            ],
+            "tab_count": len(tabs),
+            "automation_tab_recreated": bool(previous_main and previous_main != main),
             **_build_info(),
         }
-
-    # cdp
+    if transport != "cdp":
+        raise ValueError("transport must be cdp or extension")
+    if expected:
+        if port is not None and port != expected["port"]:
+            return _session.failure(
+                "validation",
+                "port does not match session_id",
+                session_id=session_id,
+                transport="cdp",
+            )
+        port = expected["port"]
+        if "cdp-" + (_query_chrome_guid(port) or "") != session_id:
+            return _session.failure(
+                "session_changed",
+                "Original CDP Chrome is gone or this port now belongs to another browser; no input was replayed",
+                session_id=session_id,
+                transport="cdp",
+                port=port,
+            )
     try:
-        browser = await connect_browser(port=port)
-    except Exception as e:
-        # Not retryable as-is: no Chrome on that port — launch one (browser_start)
-        # or fix the port. The Failure: hint says so.
-        return {
-            "transport": "cdp",
-            "connected": False,
-            "retryable": False,
-            "error": str(e),
-        }
-    tabs = [getattr(t._target, "url", "") or "" for t in browser.tabs]
+        browser = await connect_browser(port=port, session_id=session_id)
+        try:
+            tabs = [
+                {"tab_id": str(t._target.target_id), "url": t._target.url or ""}
+                for t in browser.tabs
+            ]
+            result = _describe_cdp({"port": browser.port})
+        finally:
+            await browser.close()
+    except Exception as error:
+        return _session.failure(
+            getattr(error, "error_code", "transient"),
+            str(error),
+            transport="cdp",
+            port=port,
+        )
+    record = _session.read(result["session_id"])
+    if (
+        expected
+        and expected.get("automation_target_id")
+        and expected["automation_target_id"] not in {t["tab_id"] for t in tabs}
+    ):
+        return _session.failure(
+            "target_closed",
+            "Original page target is closed; inspect the remaining tabs before continuing",
+            session_id=session_id,
+            transport="cdp",
+            tabs=tabs,
+        )
+    if tabs and not record.get("automation_target_id"):
+        record["automation_target_id"] = tabs[0]["tab_id"]
+        _session.write(record)
     return {
-        "transport": "cdp",
-        "connected": True,
-        "port": browser.port,
+        **result,
+        **_session.describe(record),
+        "tabs": [t["url"] for t in tabs],
+        "targets": [
+            {"index": i, "target_id": t["tab_id"], "url": t["url"]}
+            for i, t in enumerate(tabs)
+        ],
         "tab_count": len(tabs),
-        "tabs": tabs,
         **_build_info(),
     }
 
 
-def browser_disconnect() -> dict:
-    """Use when: you're done driving your real browser, or want to cut
-    automation's access to it NOW. Emergency stop for the **extension**
-    transport — drops the local bridge so ai-dev-browser can no longer reach
-    your live browser. Returns `{stopped, was_running}`.
+async def browser_reconnect(session_id: str, timeout: float = 10.0) -> dict:
+    """Use when: control disconnected; reconnect session_id to the same Chrome/profile and return current tabs without replaying input.
 
-    The extension detaches once the bridge is gone. For a HARD kill (revoke the
-    debugger permission entirely), also toggle off or 移除 the "AI Dev Browser —
-    bridge" extension in chrome://extensions — that's the one-click hardware
-    switch. CDP mode has nothing to disconnect (connections are per-call); use
-    `browser_stop` to stop a launched Chrome.
+    Does not start/restart a browser, change transport/profile, recreate a
+    closed page state, or repeat a click/submission. The returned identity and
+    tabs confirm reconnection; inspect page/server state before continuing an
+    action whose previous result was uncertain.
+
+    Args:
+        session_id: Identity from browser_start/browser_connect.
+        timeout: Seconds to wait for an extension handshake, greater than zero.
+
+    Returns:
+        dict with reconnected, connected, session_id, actual capabilities and tabs.
+
+    Failure:
+        session_changed means the original browser/profile is gone or replaced;
+        target_closed means its original page is gone. Inspect actual state and
+        request a new session explicitly. Missing extension needs the configured
+        profile running and its bridge enabled. Do not replay input or restart.
     """
-    from .ext_bridge import EXTENSION_BRIDGE_PORT, bridge_is_up
+    record = _session.read(session_id)
+    result = await browser_connect(
+        transport=record["transport"],
+        port=record.get("port"),
+        session_id=session_id,
+        timeout=timeout,
+    )
+    return {**result, "reconnected": result.get("connected", False)}
 
+
+def browser_disconnect(session_id: str | None = None) -> dict:
+    """Use when: releasing adb control while leaving Chrome and all page state running; returns disconnected and browser_closed=false.
+
+    Extension disconnect stops its local bridge and drops driver connections;
+    the dedicated tab and OAuth children stay in Chrome for browser_reconnect.
+    It affects every adb driver of that one extension session, including active
+    recordings. Disable the extension in chrome://extensions to revoke permission.
+    CDP CLI connections are per-call; disconnect closes this process's cached
+    connection. Future commands may reconnect; this is not browser_stop.
+
+    Args:
+        session_id: Scope to the identity returned by start/connect. Omitted
+            preserves the existing extension bridge emergency-stop operation.
+
+    Returns:
+        dict with disconnected, stopped (legacy bridge field), was_running,
+        browser_closed=false, session_id and affected_resources.
+
+    Failure:
+        A different active extension session is a conflict; do not disconnect
+        another profile. Use the current session_id or inspect browser_connect.
+    """
+    from .ext_bridge import bridge_is_up, bridge_status
+
+    record = _session.read(session_id) if session_id else None
+    if record and record["transport"] == "cdp":
+        from .connection import BrowserClient
+
+        browser = BrowserClient._instances.get(("127.0.0.1", record["port"]))
+        if browser:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                pass
+            else:
+                return _session.failure(
+                    "unsupported",
+                    "An async Python caller must await browser.close() on its connection's event loop",
+                    disconnected=False,
+                    browser_closed=False,
+                    session_id=session_id,
+                )
+            _run_coro(browser.close())
+        return {
+            "disconnected": True,
+            "stopped": True,
+            "was_running": bool(browser),
+            "browser_closed": False,
+            "session_id": session_id,
+            "affected_resources": ["current process CDP connections"],
+        }
+    status = _run_coro(bridge_status())
+    if (
+        record
+        and status
+        and status.get("session_id")
+        and "extension-" + status["session_id"] != session_id
+    ):
+        return _session.failure(
+            "conflict",
+            "Another extension session is active; its bridge was left untouched",
+            disconnected=False,
+            session_id=session_id,
+        )
     was_running = bridge_is_up(EXTENSION_BRIDGE_PORT)
     if was_running:
         pid = get_pid_on_port(EXTENSION_BRIDGE_PORT)
-        if pid:
-            _kill_process_tree(pid)
-    return {"stopped": True, "was_running": was_running}
+        if not pid or not _kill_process_tree(pid):
+            return _session.failure(
+                "transient",
+                "Could not stop the extension bridge",
+                disconnected=False,
+                session_id=session_id,
+            )
+    return {
+        "disconnected": True,
+        "stopped": True,
+        "was_running": was_running,
+        "browser_closed": False,
+        "session_id": session_id,
+        "affected_resources": [
+            "all drivers and recordings on the local extension bridge"
+        ],
+    }
+
+
+def browser_restart(session_id: str, allow_external: bool = False) -> dict:
+    """Use when: explicitly restarting a known browser process; returns new session_id and the resources closed; reconnect uses browser_reconnect.
+
+    Closes all windows/tabs of that process. Active recordings and pending
+    actions end; no input is replayed. Named CDP profiles persist; disposable
+    CDP profiles are recreated. Extension startup reuses its configured profile.
+    External Chrome requires allow_external=True after the caller has obtained
+    explicit authorization, plus verified PID/executable/start options. A real
+    user's profile remains user-owned even when adb launched its Chrome.
+
+    Args:
+        session_id: Known session from browser_start/browser_connect.
+        allow_external: Explicit authorization to restart an external process.
+            Default False refuses it without closing any browser/tab.
+
+    Returns:
+        dict with restarted, previous_session_id, new session_id, capabilities
+        and affected_resources (old PID, profile, all process windows/tabs).
+
+    Failure:
+        auth_failed needs explicit caller authorization for external Chrome.
+        unsupported means executable/start settings are unknown: do not guess
+        or copy the profile. session_changed means the original process ended.
+        Inspect the returned state before making a separate start decision.
+    """
+    record = _session.read(session_id)
+    if record.get("owner") != "adb" and not allow_external:
+        return _session.failure(
+            "auth_failed",
+            "Explicit authorization is required to restart user-owned Chrome; no resources were closed",
+            restarted=False,
+            session_id=session_id,
+            affected_resources=[],
+        )
+    options = record.get("start_options")
+    if not options:
+        return _session.failure(
+            "unsupported",
+            "Executable/start options of this attached Chrome are unknown; restart cannot be verified",
+            restarted=False,
+            session_id=session_id,
+            affected_resources=[],
+        )
+    if options.get("profile") and record.get("workspace") != os.getcwd():
+        return _session.failure(
+            "conflict",
+            "Named CDP profiles belong to their workspace; restart from the original workspace",
+            restarted=False,
+            session_id=session_id,
+            workspace=record.get("workspace"),
+            affected_resources=[],
+        )
+    if not _session.same_process(record):
+        return _session.failure(
+            "session_changed",
+            "Original Chrome process no longer matches its recorded PID/executable",
+            restarted=False,
+            session_id=session_id,
+            affected_resources=[],
+        )
+    affected = {
+        "pid": record["pid"],
+        "user_data_dir": record.get("user_data_dir"),
+        "scope": "all windows/tabs and recordings in this browser process",
+    }
+    stopped = browser_stop(session_id=session_id, allow_external=allow_external)
+    if stopped.get("error"):
+        return {**stopped, "restarted": False}
+    exit_deadline = time.monotonic() + 5
+    while _session.same_process(record) and time.monotonic() < exit_deadline:
+        time.sleep(0.1)
+    if _session.same_process(record):
+        return _session.failure(
+            "transient",
+            "The original process is still running; no replacement browser was launched",
+            restarted=False,
+            session_id=session_id,
+            affected_resources=[affected],
+        )
+    result = browser_start(**options)
+    return {
+        **result,
+        "restarted": bool(result.get("connected")),
+        "previous_session_id": session_id,
+        "affected_resources": [affected],
+    }
 
 
 def _graceful_stop(port: int, pid: int, timeout: float = 5.0) -> dict:
@@ -759,6 +1223,7 @@ def _graceful_stop(port: int, pid: int, timeout: float = 5.0) -> dict:
     Returns:
         dict with port, pid, and method used ("graceful" or "force").
     """
+    process_identity = _session.process_info(pid)
     # Try graceful shutdown via CDP. Detect whether we're already inside a
     # running event loop BEFORE constructing the coroutine — otherwise
     # calling graceful_close_browser(port=port) eagerly creates a coroutine
@@ -791,7 +1256,9 @@ def _graceful_stop(port: int, pid: int, timeout: float = 5.0) -> dict:
         elapsed = 0.0
         poll_interval = 0.2
         while elapsed < timeout:
-            if not is_port_in_use(port=port):
+            if not is_port_in_use(port=port) and (
+                not process_identity or not _session.same_process(process_identity)
+            ):
                 _cleanup_temp_profile(port)
                 registry.unregister_instance(port)
                 return {"port": port, "pid": pid, "method": "graceful"}
@@ -799,7 +1266,8 @@ def _graceful_stop(port: int, pid: int, timeout: float = 5.0) -> dict:
             elapsed += poll_interval
 
     # Graceful failed or timed out — force kill
-    _kill_process_tree(pid)
+    if process_identity and _session.same_process(process_identity):
+        _kill_process_tree(pid)
     _cleanup_temp_profile(port)
     registry.unregister_instance(port)
     return {"port": port, "pid": pid, "method": "force"}
@@ -808,8 +1276,10 @@ def _graceful_stop(port: int, pid: int, timeout: float = 5.0) -> dict:
 def browser_stop(
     port: int | None = None,
     stop_all: bool = False,
+    session_id: str | None = None,
+    allow_external: bool = False,
 ) -> dict:
-    """Stop browser instance(s).
+    """Use when: explicitly closing an adb-owned browser process; disconnect preserves Chrome, stop closes all its windows/tabs.
 
     Uses CDP Browser.close() for graceful shutdown (flushes cookies to
     profile SQLite). Falls back to force-kill if graceful fails.
@@ -819,10 +1289,94 @@ def browser_stop(
         stop_all: Stop all debugging Chrome instances adb launched. Registry-
             scoped — it only stops Chromes in adb's launch registry, so it can
             NEVER reap a debug Chrome adb didn't start (a user's own).
+        session_id: Known CDP/extension session to close. Confirms the process
+            still matches its recorded PID/executable. Extension closes every
+            window of this process; its user-owned profile files are preserved.
+        allow_external: Explicit caller authorization to close an external
+            browser process. Default False protects attached user Chrome.
 
     Returns:
         dict with stopped status, count, browsers list
+
+    Failure:
+        auth_failed requires explicit caller authorization to close external
+        Chrome. Unknown process ownership is unsupported. Use browser_disconnect
+        to release control while preserving browser/page state. A changed session
+        requires inspecting current state; never kill a recycled PID or port.
     """
+    if session_id:
+        if stop_all or port is not None:
+            raise ValueError("Choose session_id or port/stop_all, not both")
+        record = _session.read(session_id)
+        if record.get("owner") != "adb" and not allow_external:
+            return _session.failure(
+                "auth_failed",
+                "Explicit authorization required to close user Chrome",
+                stopped=False,
+                session_id=session_id,
+            )
+        if not record.get("pid") or not record.get("process_created"):
+            return _session.failure(
+                "unsupported",
+                "This attached Chrome's physical process identity is unknown; use browser_disconnect to release control",
+                stopped=False,
+                session_id=session_id,
+                affected_resources=[],
+            )
+        if not _session.same_process(record):
+            return _session.failure(
+                "session_changed",
+                "Recorded Chrome process is gone or cannot be verified; no resources were closed",
+                stopped=False,
+                session_id=session_id,
+            )
+        if record["transport"] == "extension":
+            from .connection import connect_extension
+            from .cdp import cdp_send
+
+            async def close_extension():
+                browser = await connect_extension(session_id=session_id)
+                try:
+                    await cdp_send(
+                        browser.tabs[0],
+                        method="AiDevBrowser.closeBrowser",
+                        params='{"authorized":true}',
+                    )
+                finally:
+                    await browser.close()
+
+            _run_coro(close_extension())
+            deadline = time.monotonic() + 10
+            while _session.same_process(record) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            if _session.same_process(record):
+                return _session.failure(
+                    "transient",
+                    "Chrome still has background resources after closing its windows; process was not force-killed",
+                    stopped=False,
+                    session_id=session_id,
+                    pid=record["pid"],
+                )
+            return {
+                "stopped": True,
+                "count": 1,
+                "session_id": session_id,
+                "browsers": [
+                    {
+                        "pid": record["pid"],
+                        "method": "extension-windows-close",
+                        "user_data_dir": record["user_data_dir"],
+                    }
+                ],
+            }
+        port = record["port"]
+        if "cdp-" + (_query_chrome_guid(port) or "") != session_id:
+            return _session.failure(
+                "session_changed",
+                "Debug port belongs to another Chrome; nothing closed",
+                stopped=False,
+                session_id=session_id,
+            )
     if not port and not stop_all:
         return {"error": "Please specify port or stop_all"}
 
@@ -842,6 +1396,14 @@ def browser_stop(
             except Exception:
                 pass
     else:
+        owned = registry.lookup(port, _query_chrome_guid(port))
+        if not owned and not allow_external:
+            return _session.failure(
+                "auth_failed",
+                "Debug Chrome was not launched by adb; allow_external requires explicit caller authorization",
+                stopped=False,
+                port=port,
+            )
         pid = get_pid_on_port(port)
         if pid:
             result = _graceful_stop(port, pid)

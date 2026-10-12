@@ -154,6 +154,7 @@ def launch_chrome(
     disable_session_crashed_bubble: bool = True,
     hide_crash_restore_bubble: bool = True,
     stealth: bool = True,
+    chrome_path: str | None = None,
 ) -> subprocess.Popen:
     """
     Launch Chrome with remote debugging enabled.
@@ -162,6 +163,7 @@ def launch_chrome(
     suitable for browser automation without affecting user's Chrome.
 
     Args:
+        chrome_path: Explicit Chrome executable; otherwise use find_chrome.
         port: Remote debugging port (default: DEFAULT_DEBUG_PORT)
         headless: Run in headless mode. Accepts:
             - `False` (default): windowed Chrome with a visible UI.
@@ -222,7 +224,7 @@ def launch_chrome(
         # ... connect via CDP ...
         process.terminate()
     """
-    chrome_path = find_chrome()
+    chrome_path = chrome_path or find_chrome()
     if not chrome_path:
         raise FileNotFoundError(
             "Chrome executable not found. Please install Google Chrome or set the path manually."
@@ -336,6 +338,11 @@ def launch_chrome(
     if start_url:
         args.append(start_url)
 
+    return _spawn_chrome(args, silent_stderr=silent_stderr)
+
+
+def _spawn_chrome(args: list[str], silent_stderr: bool = False) -> subprocess.Popen:
+    """Shared detached process primitive for CDP and configured-profile startup."""
     # Start Chrome process
     try:
         # Use subprocess.Popen on all platforms
@@ -355,7 +362,7 @@ def launch_chrome(
                 "start_new_session": True,
             }
 
-        logger.debug(f"Launching Chrome on port {port}")
+        logger.debug("Launching Chrome executable %s", args[0])
         process = subprocess.Popen(args, **popen_kwargs)  # type: ignore[call-overload]
 
         logger.debug(f"Chrome process created, PID: {process.pid}")

@@ -33,6 +33,9 @@ const BADGE_COLOR = "#5b49e6"; // sudoprivacy purple
 
 let ws = null;
 let connecting = false;
+let profileId = null; // persistent profile identity, not an account/email guess
+let sessionId = null; // survives a worker/bridge restart, not a Chrome restart
+let launchToken = null; // proves an explicitly launched profile answered
 
 // Automation session state. targetId (string) == chrome tabId as a string.
 let mainTabId = null; // the DEDICATED tab we create (never a user's tab)
@@ -92,8 +95,14 @@ function persist() {
 }
 
 async function restore() {
+  const local = await chrome.storage.local.get("adbProfileId");
+  profileId = local.adbProfileId || crypto.randomUUID();
+  await chrome.storage.local.set({ adbProfileId: profileId });
   try {
-    const s = await chrome.storage.session.get(["adbMainTabId", "adbAutoTabs"]);
+    const s = await chrome.storage.session.get(["adbMainTabId", "adbAutoTabs", "adbSessionId", "adbLaunchToken"]);
+    sessionId = s.adbSessionId || crypto.randomUUID();
+    launchToken = s.adbLaunchToken || null;
+    await chrome.storage.session.set({ adbSessionId: sessionId });
     if (s.adbMainTabId != null) mainTabId = s.adbMainTabId;
     if (Array.isArray(s.adbAutoTabs)) {
       for (const id of s.adbAutoTabs) autoTabs.add(id);
@@ -132,6 +141,7 @@ function forget(tabId) {
   if (tabId === mainTabId) mainTabId = null;
   syncKeepalive();
   persist();
+  announce().catch(() => {});
 }
 
 async function ensureDedicatedTab() {
@@ -143,12 +153,64 @@ async function ensureDedicatedTab() {
     catch { autoTabs.delete(mainTabId); attached.delete(mainTabId); mainTabId = null; }
   }
   if (mainTabId == null) {
-    const t = await chrome.tabs.create({ url: "about:blank", active: false });
+    const tabs = await chrome.tabs.query({});
+    const marker = tabs.find(t => launchMarker(t));
+    const t = marker || await chrome.tabs.create({ url: "about:blank", active: false });
+    if (marker) {
+      launchToken = launchMarker(marker);
+      await chrome.storage.session.set({ adbLaunchToken: launchToken });
+      await chrome.tabs.update(marker.id, { url: "about:blank" });
+    }
     mainTabId = t.id;
   }
   await attachTab(mainTabId);
   return mainTabId;
 }
+
+function launchMarker(tab) {
+  for (const url of [tab.url, tab.pendingUrl]) {
+    const prefix = BRIDGE.replace("ws:", "http:") + "/adb-launch/";
+    if (url && url.startsWith(prefix) && /^[a-f0-9]{32}$/.test(url.slice(prefix.length))) return url.slice(prefix.length);
+    if (/^about:blank#adb-launch=[a-f0-9]{32}$/.test(url || "")) return url.split("=")[1];
+  }
+  return null;
+}
+
+async function announce() {
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({
+    _hello: true, account: await profileAccount(), profile_id: profileId,
+    session_id: sessionId, launch_token: launchToken,
+    automation_target_id: mainTabId == null ? null : String(mainTabId), browser_version: navigator.userAgent,
+  }));
+}
+
+// Chrome can commit the launch URL after the worker's first handshake. Adopt
+// only the caller's nonce-marked tab; do not guess at unrelated existing tabs.
+let adoptingLaunch = false;
+chrome.tabs.onUpdated.addListener(async (tabId, change, tab) => {
+  const token = launchMarker(tab);
+  if (!token || launchToken === token || adoptingLaunch) return;
+  adoptingLaunch = true;
+  try {
+    await boot();
+    const old = mainTabId;
+    mainTabId = tabId;
+    launchToken = token;
+    await chrome.storage.session.set({ adbLaunchToken: token });
+    await attachTab(tabId);
+    await chrome.tabs.update(tabId, { url: "about:blank" });
+    if (old != null && old !== tabId && autoTabs.has(old)) {
+      const previous = await chrome.tabs.get(old).catch(() => null);
+      if (previous && previous.url === "about:blank") {
+        await chrome.tabs.remove(old);
+        forget(old);
+      }
+    }
+    persist();
+    await announce();
+  } finally { adoptingLaunch = false; }
+});
 
 function toCdpCookie(c) {
   const same = { no_restriction: "None", lax: "Lax", strict: "Strict" }[c.sameSite];
@@ -208,6 +270,7 @@ async function browserLevel(method, params, tab) {
     }
     case "Target.activateTarget": {
       const id = Number((params && params.targetId) || tab);
+      if (!autoTabs.has(id)) throw new Error("Target is not an owned automation tab");
       try {
         const t = await chrome.tabs.get(id);
         await chrome.tabs.update(id, { active: true });
@@ -217,6 +280,7 @@ async function browserLevel(method, params, tab) {
     }
     case "Target.closeTarget": {
       const id = Number((params && params.targetId) || tab);
+      if (!autoTabs.has(id)) throw new Error("Target is not an owned automation tab");
       try { await chrome.tabs.remove(id); } catch { /* already gone */ }
       forget(id);
       return { success: true };
@@ -224,7 +288,15 @@ async function browserLevel(method, params, tab) {
     case "AiDevBrowser.debugState":
       // Introspection for field support (not a real CDP method): which tabs
       // does the extension think it owns / has attached right now?
-      return { mainTabId, autoTabs: [...autoTabs], attached: [...attached] };
+      return { mainTabId, autoTabs: [...autoTabs], attached: [...attached], profileId, sessionId };
+    case "AiDevBrowser.closeBrowser":
+      // The Python lifecycle layer verifies PID ownership/authorization first.
+      // This is explicit process-wide close; disconnect never calls it.
+      if (!params.authorized) throw new Error("Explicit close authorization required");
+      setTimeout(async () => {
+        for (const window of await chrome.windows.getAll()) await chrome.windows.remove(window.id);
+      }, 100);
+      return { closing: true };
     case "Storage.getCookies":
     case "Network.getAllCookies": {
       const cookies = await chrome.cookies.getAll({});
@@ -250,6 +322,7 @@ async function handleCommand(gid, tab, method, params) {
     let result = await browserLevel(method, params || {}, tab);
     if (result === undefined) {
       if (tab == null) throw new Error(`no target for ${method}`);
+      if (!autoTabs.has(Number(tab))) throw new Error("Target is not an owned automation tab");
       await attachTab(Number(tab)); // ensure the tab is attached before driving it
       result = await chrome.debugger.sendCommand(dbg(tab), method, params || {});
     }
@@ -272,12 +345,11 @@ async function connect() {
 
   ws.onopen = async () => {
     connecting = false;
-    const account = await profileAccount();
     // Seed the dedicated tab BEFORE announcing readiness, so the first
     // Target.getTargets a driver sends already lists it — no empty-list race
     // that would make adb spin up a second blank tab.
     try { await ensureDedicatedTab(); } catch { /* driver can create one */ }
-    ws.send(JSON.stringify({ _hello: true, account }));
+    await announce();
   };
 
   ws.onmessage = (ev) => {
@@ -354,10 +426,14 @@ if (chrome.alarms) {
 // Every worker (re)start re-runs this file top-to-bottom: restore which tabs we
 // own from storage.session, resume the keepalive, then connect — so a worker
 // woken mid-session re-adopts its tabs instead of orphaning them.
-async function boot() {
-  await restore();
-  syncKeepalive();
-  connect();
+let booting = null;
+function boot() {
+  if (!booting) booting = (async () => {
+    await restore();
+    syncKeepalive();
+    connect();
+  })();
+  return booting;
 }
 if (chrome.action && chrome.action.onClicked) chrome.action.onClicked.addListener(connect);
 chrome.runtime.onStartup.addListener(boot);

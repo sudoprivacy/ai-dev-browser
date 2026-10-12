@@ -14,6 +14,16 @@ from __future__ import annotations
 _SNIPPET_MAX = 120
 
 
+class SessionError(Exception):
+    """A lifecycle identity cannot be used for another browser or page state."""
+
+    retryable = False
+
+    def __init__(self, message: str, error_code: str = "session_changed"):
+        super().__init__(message)
+        self.error_code = error_code
+
+
 class RecordingError(Exception):
     """A recording cannot be used as evidence; repeating stop cannot repair it."""
 
