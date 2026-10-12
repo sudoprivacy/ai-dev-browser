@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 import tempfile
 
 from .config import DEFAULT_BASE_DIR
@@ -111,12 +112,34 @@ def process_info(pid: int | None) -> dict | None:
 
 def same_process(record: dict) -> bool:
     current = process_info(record.get("pid"))
-    return bool(
-        current
-        and current["process_created"] == record.get("process_created")
-        and os.path.normcase(current["chrome_path"])
-        == os.path.normcase(record.get("chrome_path", ""))
-    )
+    if not current or current["process_created"] != record.get("process_created"):
+        return False
+    if os.path.normcase(os.path.realpath(current["chrome_path"])) == os.path.normcase(
+        os.path.realpath(record.get("chrome_path", ""))
+    ):
+        return True
+    # macOS Chrome can report its protected code-sign clone as the runtime
+    # executable. A path shape alone never grants ownership: also verify the
+    # recorded process birth, profile argument and original live CDP identity.
+    executable = current["chrome_path"]
+    launch = (record.get("start_options") or {}).get("chrome_path", "")
+    root = record.get("user_data_dir")
+    identity = record.get("session_id", "")
+    if (
+        sys.platform == "darwin"
+        and launch
+        and root
+        and identity.startswith("cdp-")
+        and executable.startswith("/private/var/folders/")
+        and ".code_sign_clone/code_sign_clone." in executable
+        and executable.endswith("/Contents/MacOS/" + Path(launch).name)
+        and f"--user-data-dir={root}" in current.get("launch_args", [])
+        and not any(arg.startswith("--type=") for arg in current.get("launch_args", []))
+    ):
+        from .port import _query_chrome_guid
+
+        return "cdp-" + (_query_chrome_guid(record["port"]) or "") == identity
+    return False
 
 
 def profile_processes(user_data_dir: Path) -> list[dict]:

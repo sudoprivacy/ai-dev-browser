@@ -88,3 +88,40 @@ def test_restart_options_keep_launch_path_separate_from_runtime_clone(monkeypatc
     assert saved[0]["chrome_path"] == observed["chrome_path"]
     assert saved[0]["start_options"]["chrome_path"] == "/Applications/Chrome"
     assert result["launch_chrome_path"] == "/Applications/Chrome"
+
+
+def test_mac_clone_requires_same_birth_profile_and_live_session(monkeypatch):
+    monkeypatch.setattr(_session.sys, "platform", "darwin")
+    from ai_dev_browser.core import port
+
+    monkeypatch.setattr(port, "_query_chrome_guid", lambda number: "same")
+    record = {
+        "pid": 1234,
+        "process_created": 1.0,
+        "chrome_path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "start_options": {
+            "chrome_path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        "user_data_dir": "/test/owned-profile",
+        "session_id": "cdp-same",
+        "port": 9355,
+    }
+    current = {
+        "pid": 1234,
+        "process_created": 1.0,
+        "chrome_path": "/private/var/folders/test/X/com.google.Chrome.code_sign_clone/code_sign_clone.ABC123/Google Chrome.app.bundle/Contents/MacOS/Google Chrome",
+        "launch_args": ["Google Chrome", "--user-data-dir=/test/owned-profile"],
+    }
+    monkeypatch.setattr(_session, "process_info", lambda pid: current)
+    assert _session.same_process(record)
+    current["process_created"] = 2.0
+    assert not _session.same_process(record)
+    current["process_created"] = 1.0
+    current["launch_args"] = ["Google Chrome", "--user-data-dir=/different"]
+    assert not _session.same_process(record)
+    current["launch_args"] = ["Google Chrome", "--user-data-dir=/test/owned-profile"]
+    monkeypatch.setattr(port, "_query_chrome_guid", lambda number: "replacement")
+    assert not _session.same_process(record)
+    monkeypatch.setattr(port, "_query_chrome_guid", lambda number: "same")
+    current["chrome_path"] = "/private/var/folders/test/unrelated/Google Chrome"
+    assert not _session.same_process(record)

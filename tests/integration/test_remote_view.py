@@ -342,11 +342,25 @@ async def test_remote_surface_submission_and_same_profile_reconnect(
             # Observe the painted page before streaming it to the real viewer.
             # DOM readiness alone can precede the first headful compositor frame.
             assert await view.capture(target)
-            await client.call("Page.navigate", {"url": url + "/viewer"})
-            await wait_for(
-                lambda: client.js("document.querySelector('#screen')?.naturalWidth"),
-                bool,
-            )
+            navigation = await client.call("Page.navigate", {"url": url + "/viewer"})
+            assert not navigation.get("errorText"), navigation
+            try:
+                await wait_for(
+                    lambda: client.js(
+                        "document.querySelector('#screen')?.naturalWidth"
+                    ),
+                    bool,
+                )
+            except Exception:
+                diagnostic = await client.js(
+                    "({url:location.href,state:document.readyState,title:document.title,body:document.body?.innerText,html:document.documentElement.outerHTML.slice(0,4096)})"
+                )
+                (tmp_path / "viewer-navigation-evidence.json").write_text(
+                    json.dumps({"navigation": navigation, "page": diagnostic}),
+                    encoding="utf-8",
+                )
+                print("Actual viewer navigation:", diagnostic)
+                raise
             image = Image.open(BytesIO(base64.b64decode(view.last_frame)))
             assert image.size == (480, 850)
             image.save(tmp_path / "remote-view.jpg")

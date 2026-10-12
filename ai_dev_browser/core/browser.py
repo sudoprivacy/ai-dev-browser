@@ -1248,11 +1248,20 @@ def browser_restart(session_id: str, allow_external: bool = False) -> dict:
             affected_resources=[],
         )
     if not _session.same_process(record):
+        observed = _session.process_info(record.get("pid")) or {}
         return _session.failure(
             "session_changed",
             "Original Chrome process no longer matches its recorded PID/executable",
             restarted=False,
             session_id=session_id,
+            expected_process={
+                key: record.get(key)
+                for key in ("pid", "process_created", "chrome_path")
+            },
+            actual_process={
+                key: observed.get(key)
+                for key in ("pid", "process_created", "chrome_path")
+            },
             affected_resources=[],
         )
     affected = {

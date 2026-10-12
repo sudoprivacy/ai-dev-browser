@@ -590,8 +590,8 @@ class LifecycleJourneys:
 
     def foreign_bridge_listener(self):
         import time
-        import urllib.request
         from ai_dev_browser.core import _session
+        from ai_dev_browser.core.port import _open_chrome_http
         from .browser_lifecycle_support import free_port
 
         started = self.start("--headless", "true", "--silent-stderr")
@@ -611,7 +611,7 @@ class LifecycleJourneys:
             deadline = time.monotonic() + 15
             while True:
                 try:
-                    with urllib.request.urlopen(url, timeout=1) as response:
+                    with _open_chrome_http(url, "127.0.0.1", 1) as response:
                         assert response.status == 200
                     break
                 except OSError:
@@ -624,7 +624,7 @@ class LifecycleJourneys:
             refused = foreign_cli("browser_disconnect", exit_code=9)
             assert not refused["disconnected"]
             assert service.poll() is None and _session.same_process(observed)
-            with urllib.request.urlopen(url, timeout=2) as response:
+            with _open_chrome_http(url, "127.0.0.1", 2) as response:
                 assert response.status == 200
             recovered = self.cli("browser_reconnect", "--session-id", identity)
             assert recovered["pid"] == started["pid"]
