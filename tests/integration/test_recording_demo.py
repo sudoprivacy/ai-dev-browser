@@ -3,7 +3,7 @@
 AUTO-GENERATED - DO NOT EDIT
 
 This file was auto-generated from SKILL.md by integration-test-generator.
-Generated: 2026-10-08 12:39:19
+Generated: 2026-10-13 05:56:24
 
 To modify test behavior:
   1. Update SKILL.md with better workflow examples
@@ -11,7 +11,7 @@ To modify test behavior:
 
 Manual edits will be lost when regenerated!
 
-Coverage: 5/5 real workflows (100%)
+Coverage: 6/6 real workflows (100%)
 Identified using AI scenario recognition with complete code generation
 
 Coverage Report:
@@ -20,6 +20,7 @@ Coverage Report:
   ✅ Connect extension -> record -> move -> click -> type -> stop -> decode GIF
   ✅ Record -> open another tab -> fill -> return -> fill -> stop -> fill again
   ✅ Open -> record -> movement fault -> click -> inspect trusted DOM event -> stop -> decode GIF
+  ✅ Real Chrome -> record -> trusted click with slow mouseup handler -> one opened form -> stop -> decode expanding click ring
 
 Uncovered workflows: None
 """
@@ -37,6 +38,7 @@ from tests.integration.recording_demo_support import (
     run_extension_demo,
     run_recording_lifecycle,
     run_failed_movement,
+    run_delayed_click_demo,
 )
 
 # Integration guard: allow CI to opt-out with SKIP_INTEGRATION=1
@@ -133,6 +135,24 @@ async def test_recording_demo_positioning_failure(
     await run_failed_movement(recording_browser, tmp_path, monkeypatch)
 
 
+async def test_recording_demo_delayed_click_ack(
+    recording_browser, tmp_path, monkeypatch
+):
+    """
+    Real scenario: Record a trusted click with an 800ms real page handler and inspect its full feedback
+
+    Workflow: Real Chrome -> record -> trusted click with slow mouseup handler -> one opened form -> stop -> decode expanding click ring
+
+    User problem: A slow real browser input acknowledgement must not expire demo feedback before the recorder can observe it.
+
+    Data flow:
+      1. inline code operation
+    """
+    # Step 1: Execute operation
+    monkeypatch.setenv("AI_DEV_BROWSER_RECORDING_DIR", str(tmp_path / "recordings"))
+    await run_delayed_click_demo(recording_browser, tmp_path)
+
+
 # Smoke test - can import without errors
 def test_imports_work():
     """Verify all imports are valid"""
@@ -141,3 +161,4 @@ def test_imports_work():
     assert callable(run_extension_demo)
     assert callable(run_recording_lifecycle)
     assert callable(run_failed_movement)
+    assert callable(run_delayed_click_demo)

@@ -385,6 +385,50 @@ async def run_extension_demo(extension, folder):
         await core.page_record_stop(recording["recording_id"])
 
 
+async def run_delayed_click_demo(port, folder):
+    """A real slow mouseup handler must not expire feedback before its ACK."""
+    import time
+
+    from ai_dev_browser import core
+
+    first, _ = make_page(folder)
+    browser = await core.connect_browser(port=port)
+    try:
+        tab = await core.get_active_tab(browser)
+        await core.window_set(tab, width=960, height=640)
+        await core.page_goto(tab, url=first)
+        await tab.evaluate("""document.querySelector('#open').addEventListener('mouseup', () => {
+            const started = performance.now();
+            while (performance.now() - started < 800) {}
+            window.handlerDuration = performance.now() - started;
+        }); true""")
+        viewport = await tab.evaluate("[innerWidth,innerHeight]")
+        recording = await core.page_record_start(tab, out=str(folder / "demo.gif"))
+        try:
+            tick = time.monotonic()
+            clicked = await core.click_by_html_id(tab, html_id="open")
+            elapsed = time.monotonic() - tick
+            state = await tab.evaluate(
+                "({clicks,handlerDuration,opened:!document.querySelector('#panel').hidden})"
+            )
+            assert clicked["clicked"] and state["opened"], (clicked, state)
+            assert state["handlerDuration"] >= 790 and elapsed >= 0.8, (elapsed, state)
+            assert len(state["clicks"]) == 1 and state["clicks"][0]["trusted"], state
+            saved = await core.page_record_stop(recording["recording_id"])
+            point = state["clicks"][0]
+            decode(saved, folder, click=[point["x"], point["y"]], viewport=viewport)
+            (folder / "delayed-click-evidence.json").write_text(
+                json.dumps(
+                    {"elapsed": elapsed, "state": state, "saved": saved}, indent=2
+                ),
+                encoding="utf-8",
+            )
+        finally:
+            await core.page_record_stop(recording["recording_id"])
+    finally:
+        await browser.close()
+
+
 def run_recording_lifecycle(cli, port, folder):
     """Demo affects only its recorded target, and ordinary input resumes on stop."""
     first, _ = make_page(folder)

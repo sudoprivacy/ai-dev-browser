@@ -1,0 +1,35 @@
+{
+  "config": {
+    "imports": ["from tests.integration.pdf_readiness_support import verify_pdf_readiness"],
+    "call_style": "function",
+    "extract_style": "dict",
+    "required_env_vars": [],
+    "smoke_test_assertions": ["callable(verify_pdf_readiness)"]
+  },
+  "scenarios": [
+    {
+      "name": "document_page_size_waits_for_stylesheet",
+      "title": "Print the document's 90x54mm card while its stylesheet is pending",
+      "workflow": "Real Chrome CLI launch -> navigation without waiting -> pending real HTTP stylesheet -> print document CSS size -> inspect actual vector PDF and loaded same page -> owned stop",
+      "user_problem": "Printing a still-loading stylesheet silently creates a Letter PDF instead of the document's declared physical size.",
+      "fixtures": ["tmp_path"],
+      "steps": [{"raw_code": ["verify_pdf_readiness(tmp_path, 'document')"]}]
+    },
+    {
+      "name": "preset_page_size_waits_for_stylesheet",
+      "title": "Apply the 90x54mm preset after the document's different print stylesheet loads",
+      "workflow": "Real Chrome CLI launch -> pending 140x80mm stylesheet -> request card-cn -> inspect actual 90x54mm vector PDF -> verify injected rule removed -> owned stop",
+      "user_problem": "The requested exact preset must win after document styles load, with no silently rounded fallback.",
+      "fixtures": ["tmp_path"],
+      "steps": [{"raw_code": ["verify_pdf_readiness(tmp_path, 'preset')"]}]
+    },
+    {
+      "name": "explicit_units_wait_for_stylesheet",
+      "title": "Print exact explicit metric units after real pending styles complete",
+      "workflow": "Real Chrome CLI launch -> pending real stylesheet -> request 90mm x 54mm -> inspect MediaBox and reported trim -> same ready page without temporary style -> owned stop",
+      "user_problem": "An explicit physical trim must survive slow page loading and report the dimensions that actually landed.",
+      "fixtures": ["tmp_path"],
+      "steps": [{"raw_code": ["verify_pdf_readiness(tmp_path, 'units')"]}]
+    }
+  ]
+}

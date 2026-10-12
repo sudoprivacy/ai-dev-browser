@@ -1417,6 +1417,12 @@ def browser_stop(
                 "Recorded Chrome process is gone or cannot be verified; no resources were closed",
                 stopped=False,
                 session_id=session_id,
+                expected_process={
+                    key: record.get(key)
+                    for key in ("pid", "process_created", "chrome_path")
+                },
+                actual_process=_session.process_info(record.get("pid")),
+                affected_resources=[],
             )
         if record["transport"] == "extension":
             from .connection import connect_extension

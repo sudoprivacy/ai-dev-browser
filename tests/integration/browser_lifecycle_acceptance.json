@@ -221,5 +221,32 @@
     "latest_extension": "scratch/lifecycle-navigation-extension-final-20261013: 6 passed, zero skips, on real Chrome 155; both WebSocket backends, routing/worker recovery and GIF/demo.",
     "isolated_actor": "scratch/lifecycle-isolated-peer-final-20261013: both foreign-peer preservation and unavailable/recovery flows passed locally on Chrome 155, including one trusted approval/submission each.",
     "loopback_peer": "scratch/lifecycle-loopback-peer-final-20261013: real independent HTTP peer preservation passed locally on Chrome 155; listener bootstrap uses actual bind completion and fixed loopback metadata."
+  },
+  "pdf_post_merge_release_gate": {
+    "ci": "38310046477 at 5c6e917: eight jobs passed; Windows failed two existing PDF trim checks (612pt Letter instead of 255.12pt, and a rounded 256.07999pt preset). Publishing stayed blocked.",
+    "reproduction": "scratch/pdf-slow-readiness-before-20261013/evidence.json: real Google Chrome 154 with an actual pending HTTP stylesheet produced a 612x792pt PDF while document.readyState remained interactive. This reproduces the Letter failure class; the second CI deviation was not independently reproduced.",
+    "fix": "Reuse core page_wait_ready and await document.fonts.ready before printing or injecting exact page size. Style failures now propagate instead of silently falling back to rounded inches.",
+    "google_chrome": "scratch/pdf-readiness-cli-fixed-20261013: all three fresh-CLI pending stylesheet workflows passed on Google Chrome 154 (plus import smoke); document CSS, preset and explicit metric units produce actual 90x54mm vector PDFs and remove the temporary style.",
+    "chrome_for_testing": "scratch/pdf-readiness-chrome155-final-20261013: 20 passed on Chrome 155, including the new CLI journeys, all five existing PDF tests, page navigation and unit/error regressions.",
+    "protection": "tests/integration/scenarios_pdf_readiness.json and generated test_pdf_readiness.py run on all three CI platforms. Actual PDFs and server/page/CLI evidence are retained.",
+    "checks": "All repository hooks, including configured mypy, passed; tool regeneration changed zero files."
+  },
+  "confirmed_feedback_release_gate": {
+    "ci": "38312013700 at fd168ef: eight jobs passed. macOS failed the existing GIF expansion check and a new PDF journey's stop identity check; all PDF dimensions passed on all platforms. Log and GIF retained at scratch/pdf-readiness-mac-ci-failure.log and scratch/pdf-readiness-mac-artifacts.",
+    "real_reproduction": "scratch/recording-delayed-ack-before-20261013: a trusted click with a real 800ms mouseup handler opens the form once but fails the unchanged expanding-ring pixel check. No input or browser protocol mock.",
+    "fix": "Demo feedback is timestamped when input is acknowledged, so a slow handler/navigation ACK cannot consume its lifetime before publication. The existing 0.55s lifetime and strict GIF pixel assertion remain unchanged.",
+    "after": "scratch/recording-delayed-ack-after-20261013: the same real page/handler passes, one trusted click, handler=800ms, actual growing GIF ring and inspected output frames.",
+    "macos_bounds": "The protected runtime-image fallback accepts the original launch image as well as its protected clone, only with identical PID birth, profile arguments, no child type and original live CDP GUID. Stop refusal now includes expected/actual process diagnostics. The original CI stop failure had no physical diagnostic, so its exact cause remains unclassified.",
+    "regression": {
+      "evidence": "scratch/confirmed-feedback-final-20261013",
+      "tests": 38,
+      "skipped": 1,
+      "failures": 1,
+      "passed": 36
+    },
+    "headful_comparison": "The Chrome 155 local headful case completed its two trusted clicks but captureScreenshot timed out in the full suite, an isolated new-browser run and a display-idle reset run. Native inspection found a hidden page and unpainted window; target/window activation did not restore normal rendering. The unchanged headful case passed on stock Google Chrome 154 at scratch/confirmed-feedback-headful-chrome154-20261013. No product fallback, assertion weakening or browser downgrade was added; the Chrome 155 host-specific cause remains unclassified.",
+    "public_web": "scratch/confirmed-feedback-public-final-20261013: the explicitly enabled real Wikipedia recording passed on Google Chrome 154, with actual query typing, article navigation and decoded GIF frames. The initial suite's opt-in public case remains honestly marked skipped.",
+    "protection": "Generated delayed-ack journey runs with the normal recording matrix; existing trusted event, single click, cursor movement and GIF expansion checks remain. Physical identity guard tests cover both image directions and reject recycled birth or replaced GUID.",
+    "checks": "All repository hooks, including configured mypy, passed; tool regeneration changed zero files."
   }
 }

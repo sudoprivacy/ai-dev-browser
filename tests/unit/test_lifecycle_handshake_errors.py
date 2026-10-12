@@ -125,3 +125,14 @@ def test_mac_clone_requires_same_birth_profile_and_live_session(monkeypatch):
     monkeypatch.setattr(port, "_query_chrome_guid", lambda number: "same")
     current["chrome_path"] = "/private/var/folders/test/unrelated/Google Chrome"
     assert not _session.same_process(record)
+    # Runtime observation can return from the clone to the original image.
+    record["chrome_path"] = (
+        "/private/var/folders/test/X/com.google.Chrome.code_sign_clone/code_sign_clone.ABC123/Google Chrome.app.bundle/Contents/MacOS/Google Chrome"
+    )
+    current["chrome_path"] = record["start_options"]["chrome_path"]
+    assert _session.same_process(record)
+    current["process_created"] = 2.0
+    assert not _session.same_process(record)
+    current["process_created"] = 1.0
+    monkeypatch.setattr(port, "_query_chrome_guid", lambda number: "replacement")
+    assert not _session.same_process(record)

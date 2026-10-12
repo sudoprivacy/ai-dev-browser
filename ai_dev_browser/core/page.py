@@ -599,7 +599,8 @@ async def page_pdf(
     honors exactly (unlike printToPDF's inches path, which rounds a
     metric/fractional size <1pt). Set `prefer_css_page_size=True` instead when
     the DOCUMENT declares its own `@page { size }` and should decide — then the
-    paper args are ignored and the template's size wins.
+    paper args are ignored and the template's size wins. Waits for page load
+    and fonts before printing so pending styles cannot silently change the trim.
 
     Args:
         tab: Tab instance
@@ -642,7 +643,10 @@ async def page_pdf(
         restart with `browser_start --headless` (or set
         `AI_DEV_BROWSER_HEADLESS=1`). An unparsable size (bad number or unknown
         unit) fails loud with `error_code: validation` — fix the value, e.g.
-        `"90mm"` / `"3.5in"` / a bare number in inches.
+        `"90mm"` / `"3.5in"` / a bare number in inches. If the page remains
+        loading, printing fails before creating a PDF; inspect the pending
+        resources and use `page_wait_ready` before requesting another print.
+        An exact-size style failure is reported instead of silently rounding.
     """
     from ai_dev_browser.cdp import page as cdp_page
 
@@ -677,24 +681,36 @@ async def page_pdf(
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         path = str(out_dir / f"{ts}.pdf")
 
+    # printToPDF does not wait for pending stylesheets: a still-loading @page
+    # can silently produce Letter instead. Reuse the core readiness wait, then
+    # settle fonts before injecting a rule into the loaded document.
+    from .navigation import page_wait_ready
+
+    if not await page_wait_ready(tab):
+        raise TimeoutError(
+            "Page is still loading; PDF was not created. Inspect pending "
+            "resources and use page_wait_ready before requesting another print."
+        )
+    await tab.evaluate("document.fonts.ready.then(() => true)", await_promise=True)
+
     # Make an explicit/preset size PIXEL-EXACT by injecting an `@page { size }`
     # rule and letting the CSS page size win: Chrome honors a CSS @page size
     # exactly, whereas printToPDF's inches path rounds a metric/fractional size
     # <1pt — so the obvious call (`--paper card-cn`) would otherwise be silently
     # oversized. Skipped when the caller opted into the document's OWN @page
-    # (prefer_css_page_size) or gave no explicit size. Best-effort: if injection
-    # fails we fall back to the paperWidth/Height (rounding) path.
+    # (prefer_css_page_size) or gave no explicit size. A failed injection must
+    # not silently fall back to the rounded paperWidth/Height path.
     wants_exact = not prefer_css_page_size and (
         paper is not None or paper_width is not None or paper_height is not None
     )
     injected = False
     if wants_exact:
-        try:
-            css = f"@page {{ size: {width_in}in {height_in}in }}"
-            await tab.evaluate(_INJECT_PAGE_SIZE_JS % json.dumps(css))
-            injected = True
-        except Exception:
-            injected = False
+        css = f"@page {{ size: {width_in}in {height_in}in }}"
+        injected = bool(await tab.evaluate(_INJECT_PAGE_SIZE_JS % json.dumps(css)))
+        if not injected:
+            raise RuntimeError(
+                "Exact PDF page size could not be applied; PDF was not created."
+            )
     try:
         result = await tab.send(
             cdp_page.print_to_pdf(
