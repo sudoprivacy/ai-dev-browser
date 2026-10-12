@@ -13,6 +13,14 @@
   },
   "scenarios": [
     {
+      "name": "foreign_bridge_listener_is_preserved",
+      "title": "Reject an unrelated HTTP service on the bridge port and preserve the original Chrome",
+      "workflow": "Start real Chrome -> authenticated approval -> real separate HTTP service -> refuse bridge disconnect -> verify HTTP service/PID -> reconnect original Chrome -> one submission",
+      "user_problem": "Disconnect must never kill an unrelated listener or its hosting process when the port does not identify an adb bridge.",
+      "fixtures": ["lifecycle"],
+      "steps": [{"raw_code": ["lifecycle.foreign_bridge_listener()"]}]
+    },
+    {
       "name": "unavailable_cdp_identity_recovers_without_input_replay",
       "title": "Report unavailable identity on a suspended real Chrome, then resume the same page",
       "workflow": "Start real Chrome -> authenticated approval -> suspend its owned process -> structured metadata/reconnect failure -> resume -> same page -> one submission",
@@ -38,8 +46,8 @@
     },
     {
       "name": "real_extension_installed_profile_start_disconnect_reconnect",
-      "title": "Launch a persistently installed extension profile without loading flags or a CDP port",
-      "workflow": "Persist login/installed extension -> explicit extension launch -> approve -> disconnect -> reconnect same tab/profile -> submit -> owned close",
+      "title": "Launch and explicitly restart a persistently installed extension profile without loading flags or a CDP port",
+      "workflow": "Persist login/installed extension -> explicit extension launch -> approve -> disconnect -> reconnect same tab/profile -> submit -> explicit owned restart -> authenticated root -> reject stale input -> owned close",
       "user_problem": "Reuse the real profile's authenticated browser state and release/recover control without repeating a server submission.",
       "fixtures": [
         "lifecycle",

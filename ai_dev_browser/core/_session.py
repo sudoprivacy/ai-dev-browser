@@ -199,4 +199,7 @@ def describe(record: dict) -> dict:
             "browser_version",
             "automation_target_id",
         )
-    } | {"capabilities": capabilities(record)}
+    } | {
+        "launch_chrome_path": (record.get("start_options") or {}).get("chrome_path"),
+        "capabilities": capabilities(record),
+    }

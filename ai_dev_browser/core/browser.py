@@ -321,7 +321,9 @@ def browser_start(
             launch still succeeds but the return flags it (see below).
 
     Returns:
-        dict with port, pid, headless, url, profile, reused, message. With an
+        dict with port, pid, headless, url, profile, reused, message. chrome_path
+        is the observed process executable; launch_chrome_path is the original
+        spawn executable used for restart, which can differ on macOS. With an
         identity override: `identity_consistent: true` + the effective
         `timezone` / `geolocation` / `locale` (+ `egress_ip` when matched), so
         you confirm consistency in one call. `locale` is the locale that actually
@@ -646,6 +648,11 @@ def browser_start(
         if egress_ip:
             result["egress_ip"] = egress_ip
     start_options["headless"] = headless_resolved
+    spawned_args = getattr(process, "args", None)
+    if isinstance(spawned_args, (list, tuple)) and spawned_args:
+        # psutil can observe a temporary macOS code-sign clone. Restart the
+        # executable we actually launched; retain the observed path for PID checks.
+        start_options["chrome_path"] = str(spawned_args[0])
     return _describe_cdp(result, start_options=start_options, guid=ready_guid)
 
 
@@ -713,8 +720,8 @@ def _describe_cdp(
     if start_options:
         record["start_options"] = {
             **start_options,
-            "chrome_path": observed.get("chrome_path")
-            or start_options.get("chrome_path"),
+            "chrome_path": start_options.get("chrome_path")
+            or observed.get("chrome_path"),
         }
         record["workspace"] = os.getcwd()
     _session.write(record)
@@ -833,15 +840,17 @@ async def browser_connect(
         from .ext_bridge import ensure_bridge_running, wait_for_extension
         from .connection import connect_extension
 
-        if not ensure_bridge_running():
+        connection_deadline = time.monotonic() + timeout
+        if not ensure_bridge_running(timeout=timeout):
             return _session.failure(
-                "unsupported",
-                "Could not start the local extension bridge",
+                "transient",
+                "The local extension bridge did not become ready within the connection timeout; Chrome was left running",
                 transport="extension",
                 extension_dir=str(extension_dir()),
             )
-        connection_deadline = time.monotonic() + timeout
-        status = await wait_for_extension(timeout=timeout)
+        status = await wait_for_extension(
+            timeout=max(0.01, connection_deadline - time.monotonic())
+        )
         if (
             status
             and not status.get("launch_token")
@@ -1083,7 +1092,7 @@ def browser_disconnect(session_id: str | None = None) -> dict:
         A different active extension session is a conflict; do not disconnect
         another profile. Use the current session_id or inspect browser_connect.
     """
-    from .ext_bridge import bridge_is_up, bridge_status
+    from .ext_bridge import bridge_is_up, bridge_status, shutdown_bridge
 
     record = _session.read(session_id) if session_id else None
     if record and record["transport"] == "cdp":
@@ -1127,12 +1136,42 @@ def browser_disconnect(session_id: str | None = None) -> dict:
         )
     was_running = bridge_is_up(EXTENSION_BRIDGE_PORT)
     if was_running:
-        pid = get_pid_on_port(EXTENSION_BRIDGE_PORT)
-        if not pid or not _kill_process_tree(pid):
+        stopped = False
+        if status and status.get("can_shutdown"):
+            stopped = _run_coro(
+                shutdown_bridge(
+                    session_id=session_id.removeprefix("extension-")
+                    if session_id
+                    else None
+                )
+            )
+        elif status:
+            # Compatibility for an older adb daemon. Never kill an unrelated
+            # listener or the host of an embedded bridge.
+            pid = get_pid_on_port(EXTENSION_BRIDGE_PORT)
+            observed = _session.process_info(pid)
+            if (
+                observed
+                and "ai_dev_browser.core.ext_bridge" in observed.get("launch_args", [])
+                and _session.same_process(observed)
+            ):
+                stopped = _kill_process_tree(pid)
+        if not stopped:
             return _session.failure(
                 "transient",
-                "Could not stop the extension bridge",
+                "Could not release the selected extension bridge; unrelated processes were left untouched",
                 disconnected=False,
+                session_id=session_id,
+            )
+        deadline = time.monotonic() + 5
+        while bridge_is_up(EXTENSION_BRIDGE_PORT) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if bridge_is_up(EXTENSION_BRIDGE_PORT):
+            return _session.failure(
+                "transient",
+                "Bridge shutdown was requested but the listener has not closed; Chrome remains running",
+                disconnected=False,
+                browser_closed=False,
                 session_id=session_id,
             )
     return {
@@ -1190,6 +1229,15 @@ def browser_restart(session_id: str, allow_external: bool = False) -> dict:
             session_id=session_id,
             affected_resources=[],
         )
+    if not options.get("chrome_path") or not Path(options["chrome_path"]).is_file():
+        return _session.failure(
+            "unsupported",
+            "The recorded launch executable is unavailable; no browser was closed. Restore that executable before restarting",
+            restarted=False,
+            session_id=session_id,
+            browser_closed=False,
+            affected_resources=[],
+        )
     if options.get("profile") and record.get("workspace") != os.getcwd():
         return _session.failure(
             "conflict",
@@ -1226,7 +1274,17 @@ def browser_restart(session_id: str, allow_external: bool = False) -> dict:
             session_id=session_id,
             affected_resources=[affected],
         )
-    result = browser_start(**options)
+    try:
+        result = browser_start(**options)
+    except Exception as error:
+        return _session.failure(
+            "transient",
+            f"Original browser closed, but replacement launch failed: {error}",
+            restarted=False,
+            previous_session_id=session_id,
+            browser_closed=True,
+            affected_resources=[affected],
+        )
     return {
         **result,
         "restarted": bool(result.get("connected")),

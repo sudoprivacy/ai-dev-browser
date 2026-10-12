@@ -254,6 +254,27 @@ class LifecycleJourneys:
             and any(arg.startswith("--headless") for arg in args) is headless
         )
         self.page(identity, self.server.url)
+        if not headless:
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "tests.integration.browser_lifecycle_ui",
+                    "--minimize-pid",
+                    str(pid),
+                ],
+                env=self.cli.env,
+                check=True,
+                timeout=30,
+            )
+            hidden = self.cli(
+                "js_evaluate",
+                "--session-id",
+                identity,
+                "--expression",
+                "document.visibilityState",
+            )
+            assert hidden["result"] == "hidden", hidden
         self.approve(identity)
         busy = self.cli(
             "browser_start",
@@ -291,9 +312,48 @@ class LifecycleJourneys:
             str(self.root / "extension-lifecycle.png"),
         )
         assert Path(shot["path"]).stat().st_size > 1000
+        restarted = self.cli("browser_restart", "--session-id", identity)
+        assert restarted["restarted"] and restarted["previous_session_id"] == identity
+        assert restarted["session_id"] != identity and restarted["pid"] != pid
+        assert restarted["profile_id"] == started["profile_id"]
+        assert restarted["headless"] is headless and restarted["owner"] == "adb"
+        self.sessions.append(restarted["session_id"])
+        assert not psutil.pid_exists(pid)
+        restart_args = psutil.Process(restarted["pid"]).cmdline()
+        assert f"--user-data-dir={profile}" in restart_args
+        assert all(
+            not arg.startswith(("--remote-debugging", "--load-extension"))
+            for arg in restart_args
+        )
+        # Visit the authenticated root, never the login endpoint: restarting
+        # must preserve the real profile cookie, without logging in again.
+        self.page(restarted["session_id"], self.server.url)
+        state = self.cli(
+            "js_evaluate",
+            "--session-id",
+            restarted["session_id"],
+            "--expression",
+            "window.serverState",
+        )["result"]
+        assert state["logged_in"] and state["approvals"] == [{"trusted": True}]
+        assert state["submissions"] == [
+            {"trusted": True, "name": "Profile login preserved"}
+        ]
+        stale = self.cli(
+            "click_by_html_id",
+            "--session-id",
+            identity,
+            "--html-id",
+            "submit",
+            exit_code=5,
+        )
+        assert stale["error_code"] == "session_changed"
+        assert len(self.server.approvals) == len(self.server.submissions) == 1
         self.cli.evidence(
             "extension-lifecycle",
             actual_launch_args=args,
+            restarted=restarted,
+            actual_restart_args=restart_args,
             approvals=self.server.approvals,
             submissions=self.server.submissions,
         )
@@ -511,6 +571,60 @@ class LifecycleJourneys:
             approvals=self.server.approvals,
             submissions=self.server.submissions,
         )
+
+    def foreign_bridge_listener(self):
+        import time
+        import urllib.request
+        from ai_dev_browser.core import _session
+        from .browser_lifecycle_support import free_port
+
+        started = self.start("--headless", "true", "--silent-stderr")
+        identity = started["session_id"]
+        self.page(identity)
+        self.approve(identity)
+        port = free_port()
+        service = subprocess.Popen(
+            [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        observed = _session.process_info(service.pid)
+        assert observed
+        url = f"http://127.0.0.1:{port}/"
+        try:
+            deadline = time.monotonic() + 15
+            while True:
+                try:
+                    with urllib.request.urlopen(url, timeout=1) as response:
+                        assert response.status == 200
+                    break
+                except OSError:
+                    assert time.monotonic() < deadline and service.poll() is None
+                    time.sleep(0.05)
+            foreign_cli = LifecycleCLI(
+                self.root / "foreign-listener",
+                AI_DEV_BROWSER_EXTENSION_BRIDGE_PORT=str(port),
+            )
+            refused = foreign_cli("browser_disconnect", exit_code=9)
+            assert not refused["disconnected"]
+            assert service.poll() is None and _session.same_process(observed)
+            with urllib.request.urlopen(url, timeout=2) as response:
+                assert response.status == 200
+            recovered = self.cli("browser_reconnect", "--session-id", identity)
+            assert recovered["pid"] == started["pid"]
+            self.submit(identity, "Unrelated listener preserved")
+            self.cli.evidence(
+                "foreign-listener",
+                refused=refused,
+                unrelated_pid=service.pid,
+                original_chrome_pid=started["pid"],
+                approvals=self.server.approvals,
+                submissions=self.server.submissions,
+            )
+        finally:
+            if _session.same_process(observed):
+                service.terminate()
+                service.wait(timeout=10)
 
     async def worker_oauth(self, extension):
         import asyncio

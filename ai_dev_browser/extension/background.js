@@ -271,11 +271,17 @@ async function browserLevel(method, params, tab) {
     case "Target.activateTarget": {
       const id = Number((params && params.targetId) || tab);
       if (!autoTabs.has(id)) throw new Error("Target is not an owned automation tab");
-      try {
-        const t = await chrome.tabs.get(id);
-        await chrome.tabs.update(id, { active: true });
-        if (t.windowId != null) await chrome.windows.update(t.windowId, { focused: true });
-      } catch { /* tab gone */ }
+      const t = await chrome.tabs.get(id);
+      await chrome.tabs.update(id, { active: true });
+      if (t.windowId != null) {
+        const window = await chrome.windows.get(t.windowId);
+        if (window.state === "minimized") {
+          await chrome.windows.update(t.windowId, { state: "normal" });
+        }
+        await chrome.windows.update(t.windowId, { focused: true });
+      }
+      await attachTab(id);
+      await chrome.debugger.sendCommand({ tabId: id }, "Page.bringToFront", {});
       return {};
     }
     case "Target.closeTarget": {

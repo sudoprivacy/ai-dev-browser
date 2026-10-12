@@ -157,6 +157,33 @@
     "live_fault_report": "scratch/lifecycle-handshake-fix-20261013",
     "complete_acceptance": "scratch/lifecycle-handshake-complete-20261013: 10 passed, no skips",
     "regression": "scratch/lifecycle-handshake-unit-regression-20261013: 132 passed",
-    "paid_model": "scratch/lifecycle-model-handshake-fix-20261013/model-steering.json: background passed, 7 actual API requests"
+    "paid_model": "scratch/lifecycle-model-handshake-fix-20261013/model-steering.json: background passed, 7 actual API requests",
+    "additional_validation": {
+      "macos_attempts": [
+        "scratch/lifecycle-fix-macos-failure.log: one Chrome process exited during a recording fixture's setup; reason remains unclassified",
+        "scratch/lifecycle-fix-macos-retry-failure.log: restart used a temporary code_sign_clone executable that was removed after Chrome exit"
+      ],
+      "macos_fix": "Preserve the actual spawn executable in restart options separately from the observed runtime executable used for PID identity checks; validate the launch file before closing and report replacement-start failures with resource effects.",
+      "macos_reference": "https://chromium.googlesource.com/chromium/src/+/refs/tags/135.0.7049.7/chrome/browser/mac/code_sign_clone_manager.mm",
+      "input_failed_trials": [
+        "scratch/lifecycle-extension-restart-20261013: headless restart passed; headful pre-restart input returned clicked but had no DOM mouse events and visibility=hidden",
+        "scratch/lifecycle-visible-restart-20261013: headful minimized-window recovery/restart passed; headless control-bridge restart did not become ready within the old bootstrap wait"
+      ],
+      "input_fix": "Reuse selected-tab activation, restore a minimized owned window, wait for actual page visibility/paint before trusted extension input, and propagate unavailable-session errors before synthetic click fallbacks. No focus/device emulation or synthetic input was added.",
+      "bridge_fix": "Gracefully close the bridge through its own protocol and wait for the listener to release; legacy compatibility checks the daemon's process identity. Honor the connect timeout during daemon startup and explicitly pass the selected port to its environment.",
+      "live_reports": [
+        "scratch/lifecycle-launch-focus-final-20261013: 10 passed, no skips; includes explicit extension restart in both modes, actual native minimization/restoration, persisted login and refusal of stale input",
+        "scratch/lifecycle-foreign-listener-20261013: 1 passed; unrelated real HTTP process/response and original Chrome preserved, then one authenticated submission",
+        "scratch/lifecycle-focus-recording-regression-20261013: 6 passed; real extension routing, worker recovery, GIF and demo behavior on both WebSocket implementations",
+        "scratch/lifecycle-input-focus-regression-20261013: 11 passed; real click/drag regressions",
+        "scratch/lifecycle-graceful-bridge-unit-20261013: 137 passed"
+      ],
+      "type_check": "Repository pre-commit mypy configuration passed; no changes to repository checks or assertions.",
+      "paid_model": {
+        "evidence": "scratch/lifecycle-model-existing-focus-final-20261013/model-steering.json",
+        "status": "passed",
+        "scenario": "existing"
+      }
+    }
   }
 }

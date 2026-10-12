@@ -11,6 +11,7 @@ from . import human
 from ._element import Element
 from ._ref import node_id_of, parse_ref
 from ._tab import Tab
+from .errors import SessionError
 from .snapshot import _get_snapshot
 
 logger = logging.getLogger(__name__)
@@ -229,6 +230,8 @@ async def _rung_landed(tab: Tab, before: dict, action) -> bool:
     CDP mouse input) ever ran."""
     try:
         await action()
+    except SessionError:
+        raise
     except Exception:
         logger.debug("click rung raised; falling through to the next", exc_info=True)
         return False
@@ -260,6 +263,9 @@ async def _click_by_node_id(
     Returns:
         dict with clicked status (+ `verified`, `method` when robust).
     """
+    prepare_input = getattr(tab, "_prepare_input", None)
+    if prepare_input:
+        await prepare_input()
     try:
         backend_node_id = dom.BackendNodeId(node_id)
 
@@ -303,6 +309,8 @@ async def _click_by_node_id(
                 )
             )
         return {"clicked": True, "node_id": node_id}
+    except SessionError:
+        raise
     except Exception as e:
         return {"clicked": False, "error": str(e)}
 

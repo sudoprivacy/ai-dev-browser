@@ -33,6 +33,7 @@ import json
 import logging
 from http import HTTPStatus
 import re
+from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import websockets
@@ -69,6 +70,7 @@ class _Bridge:
         self.extension: object | None = None  # single ws to the extension
         self.account: str | None = None  # profile email from the extension hello
         self.identity: dict = {}
+        self.server: Any = None
         self._gid = itertools.count(1)  # global id namespace across all drivers
         # gid -> (driver_ws, original_id): where each in-flight command's
         # response must be delivered.
@@ -235,11 +237,40 @@ class _Bridge:
                             "extension_connected": self.extension is not None,
                             "account": self.account,
                             "concurrent_events": True,
+                            "can_shutdown": self.server is not None,
                             **self.identity,
                         },
                     }
                 )
             )
+            return
+
+        if method == "_bridge.shutdown":
+            requested = (msg.get("params") or {}).get("session_id")
+            current = self.identity.get("session_id")
+            if requested and current and requested != current:
+                await ws.send(
+                    json.dumps(
+                        {
+                            "id": mid,
+                            "error": {"message": "Another browser session is active"},
+                        }
+                    )
+                )
+            elif self.server is None:
+                await ws.send(
+                    json.dumps(
+                        {
+                            "id": mid,
+                            "error": {"message": "This bridge has no managed server"},
+                        }
+                    )
+                )
+            else:
+                await ws.send(
+                    json.dumps({"id": mid, "result": {"shutdown_requested": True}})
+                )
+                asyncio.get_running_loop().call_later(0.05, self.server.close)
             return
 
         if expected_session and self.identity.get("session_id") != expected_session:
@@ -313,10 +344,18 @@ def ensure_bridge_running(
         kwargs["creationflags"] = 0x00000008 | subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kwargs["start_new_session"] = True
-    subprocess.Popen([sys.executable, "-m", "ai_dev_browser.core.ext_bridge"], **kwargs)
+    import os
 
-    t0 = time.time()
-    while time.time() - t0 < timeout:
+    environment = dict(os.environ)
+    environment["AI_DEV_BROWSER_EXTENSION_BRIDGE_PORT"] = str(port)
+    subprocess.Popen(
+        [sys.executable, "-m", "ai_dev_browser.core.ext_bridge"],
+        env=environment,
+        **kwargs,
+    )
+
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout:
         if bridge_is_up(port):
             return True
         time.sleep(0.1)
@@ -335,6 +374,27 @@ async def bridge_status(
             return resp.get("result")
     except Exception:
         return None
+
+
+async def shutdown_bridge(
+    port: int = EXTENSION_BRIDGE_PORT, session_id: str | None = None
+) -> bool:
+    """Close this bridge's sockets through its own protocol, never its host PID."""
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            await ws.send(
+                json.dumps(
+                    {
+                        "id": 1,
+                        "method": "_bridge.shutdown",
+                        "params": {"session_id": session_id},
+                    }
+                )
+            )
+            result = json.loads(await asyncio.wait_for(ws.recv(), 3))
+            return bool(result.get("result", {}).get("shutdown_requested"))
+    except Exception:
+        return False
 
 
 async def wait_for_extension(
@@ -385,6 +445,7 @@ async def run_bridge(port: int = EXTENSION_BRIDGE_PORT):
         port,
         process_request=_launch_page,
     )
+    bridge.server = server
     logger.info("extension bridge listening on 127.0.0.1:%d", port)
     return server, bridge
 

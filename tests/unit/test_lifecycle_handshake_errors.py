@@ -57,3 +57,34 @@ def test_launch_waits_for_identity_on_the_same_process(monkeypatch):
     result = browser.browser_start(temp=True, headless=True, startup_timeout=3)
     assert result["connected"] and result["session_id"] == "cdp-ready"
     assert len(launches) == 1 and queries == [9355, 9355]
+
+
+def test_restart_options_keep_launch_path_separate_from_runtime_clone(monkeypatch):
+    saved = []
+    observed = {
+        "pid": 1234,
+        "process_created": 1.0,
+        "chrome_path": "/temporary/code_sign_clone/Chrome",
+        "launch_args": [],
+    }
+    monkeypatch.setattr(_session, "process_info", lambda pid: observed)
+    monkeypatch.setattr(
+        _session,
+        "read",
+        lambda sid: {
+            "session_id": sid,
+            "transport": "cdp",
+            "automation_target_id": "page",
+        },
+    )
+    monkeypatch.setattr(_session, "write", lambda record: saved.append(record))
+    monkeypatch.setattr(browser.registry, "lookup", lambda *args: None)
+    monkeypatch.setattr(browser, "_query_chrome_version", lambda port: None)
+    result = browser._describe_cdp(
+        {"port": 9355, "pid": 1234},
+        start_options={"chrome_path": "/Applications/Chrome"},
+        guid="ready",
+    )
+    assert saved[0]["chrome_path"] == observed["chrome_path"]
+    assert saved[0]["start_options"]["chrome_path"] == "/Applications/Chrome"
+    assert result["launch_chrome_path"] == "/Applications/Chrome"

@@ -24,6 +24,13 @@ class SessionError(Exception):
         self.error_code = error_code
 
 
+class InputUnavailableError(SessionError):
+    """A requested input was withheld because its page could not be made visible."""
+
+    def __init__(self, message: str):
+        super().__init__(message, error_code="unsupported")
+
+
 class RecordingError(Exception):
     """A recording cannot be used as evidence; repeating stop cannot repair it."""
 
