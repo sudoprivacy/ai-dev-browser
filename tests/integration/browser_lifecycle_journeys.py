@@ -619,9 +619,18 @@ class LifecycleJourneys:
         ready = queue.Queue()
         log_path = self.root / "foreign-http-server.log"
         program = """
-import sys
+import sys, faulthandler
+faulthandler.dump_traceback_later(10)
 print('Independent actor started', file=sys.stderr, flush=True)
+import socketserver
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+print('HTTP imported', file=sys.stderr, flush=True)
+class LoopbackServer(ThreadingHTTPServer):
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        # This listener is explicitly loopback; no reverse DNS is needed.
+        self.server_name = '127.0.0.1'
+        self.server_port = self.server_address[1]
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
     def do_GET(self):
@@ -630,7 +639,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)
-server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+server = LoopbackServer(('127.0.0.1', 0), Handler)
+faulthandler.cancel_dump_traceback_later()
 print(server.server_port, flush=True)
 server.serve_forever()
 """
