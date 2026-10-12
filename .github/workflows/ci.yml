@@ -58,6 +58,9 @@ jobs:
           print('Smoke test passed.')
           "
 
+      - name: Real CLI browser session lifecycle
+        run: uv run python -m pytest -v tests/integration/test_browser_lifecycle.py --basetemp lifecycle-results
+
       # ── E2E regression suite ──
       # Tests in `tests/integration/` that are self-contained (no real
       # logged-in browser, no external state) — they fabricate inputs,
@@ -81,7 +84,6 @@ jobs:
             tests/integration/test_pool_model_persistence.py \
             tests/integration/test_browser_start_retry.py \
             tests/integration/test_browser_inventory.py \
-            tests/integration/test_browser_lifecycle.py \
             tests/integration/test_proxy_identity.py \
             tests/integration/test_stealth_defaults.py \
             tests/integration/test_ext_bridge.py \
@@ -122,6 +124,10 @@ jobs:
             test-results/**/*-evidence.json
             test-results/**/extension-lifecycle.png
             test-results/**/installed-extension.png
+            lifecycle-results/**/*-evidence.json
+            lifecycle-results/**/live-cli.json
+            lifecycle-results/**/extension-lifecycle.png
+            lifecycle-results/**/installed-extension.png
 
   remote-view-live:
     name: Remote browser view (${{ matrix.os }})
