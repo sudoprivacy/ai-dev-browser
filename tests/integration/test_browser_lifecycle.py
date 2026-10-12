@@ -3,7 +3,7 @@
 AUTO-GENERATED - DO NOT EDIT
 
 This file was auto-generated from SKILL.md by integration-test-generator.
-Generated: 2026-10-12 23:25:22
+Generated: 2026-10-13 01:09:11
 
 To modify test behavior:
   1. Update SKILL.md with better workflow examples
@@ -11,10 +11,11 @@ To modify test behavior:
 
 Manual edits will be lost when regenerated!
 
-Coverage: 6/6 real workflows (100%)
+Coverage: 7/7 real workflows (100%)
 Identified using AI scenario recognition with complete code generation
 
 Coverage Report:
+  ✅ Start real Chrome -> authenticated approval -> suspend its owned process -> structured metadata/reconnect failure -> resume -> same page -> one submission
   ✅ Start headless -> login -> user approval -> disconnect -> reconnect -> submit -> restart -> reject stale session
   ✅ Persist login/installed extension -> explicit extension launch -> approve -> disconnect -> reconnect same tab/profile -> submit -> owned close
   ✅ Existing logged-in Chrome -> connect -> human-side UI approval -> reject unauthorized restart -> reconnect -> submit -> disconnect -> inspect sentinel
@@ -47,6 +48,21 @@ def _integration_guard():
     """Skip if SKIP_INTEGRATION is set."""
     if SKIP_INTEGRATION:
         pytest.skip("SKIP_INTEGRATION is set — skipping integration tests")
+
+
+def test_unavailable_cdp_identity_recovers_without_input_replay(lifecycle):
+    """
+    Real scenario: Report unavailable identity on a suspended real Chrome, then resume the same page
+
+    Workflow: Start real Chrome -> authenticated approval -> suspend its owned process -> structured metadata/reconnect failure -> resume -> same page -> one submission
+
+    User problem: A temporarily unresponsive Chrome must return a transient failure while preserving launch details and completed server actions.
+
+    Data flow:
+      1. inline code operation
+    """
+    # Step 1: Execute operation
+    lifecycle.unavailable_cdp_identity()
 
 
 def test_owned_cdp_reconnect_and_explicit_restart(lifecycle):

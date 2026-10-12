@@ -259,8 +259,8 @@ def browser_start(
         reuse: "none" (always new) or "any" (reuse an idle same-profile
             Chrome, default). Only consulted for a named profile — an
             ephemeral session never reuses.
-        startup_timeout: Seconds to wait for Chrome to bind its debug port
-            after spawn. `None` (default) resolves to the
+        startup_timeout: Seconds to wait for Chrome's debug port and CDP browser
+            identity, or the configured extension handshake. `None` resolves to the
             `AI_DEV_BROWSER_STARTUP_TIMEOUT` env var, else 30s — which
             covers cold-start on slow Windows machines (fresh profile init
             + Defender scan + I/O contention from the user's main Chrome).
@@ -500,13 +500,18 @@ def browser_start(
             **launch_options,
         )
 
-        # Wait for Chrome to bind its debug port.
+        # A listening socket can precede Chrome's CDP identity on a loaded host.
+        # Wait for that read-only handshake before registering this launch.
         bound = False
+        ready_guid = None
         elapsed = 0.0
+        wait_started = time.monotonic()
         while elapsed < startup_timeout:
             if is_port_in_use(port=port):
-                bound = True
-                break
+                ready_guid = _query_chrome_guid(port)
+                if ready_guid:
+                    bound = True
+                    break
             if process.poll() is not None:
                 stderr = process.stderr.read() if process.stderr else ""
                 if not stderr:
@@ -519,7 +524,7 @@ def browser_start(
                 last_error = {"error": f"Chrome process exited unexpectedly: {stderr}"}
                 break
             time.sleep(poll_interval)
-            elapsed += poll_interval
+            elapsed = time.monotonic() - wait_started
         else:
             # Timed out. Chrome may still be starting, but leaving it alive holds
             # the profile lockfile and blocks the next start — kill the tree so
@@ -529,7 +534,7 @@ def browser_start(
             last_error = {
                 "error": (
                     f"Chrome started (PID {orphan_pid}) but port {port} not "
-                    f"listening after {startup_timeout}s — process killed to "
+                    f"ready with a CDP browser identity after {startup_timeout}s — process killed to "
                     f"release profile lockfile. Retry with startup_timeout=<larger> "
                     f"if your environment is slow (Windows + main Chrome running, "
                     f"first-time profile init, AV scanning, etc.)."
@@ -600,7 +605,7 @@ def browser_start(
 
     registry.register_instance(
         port=port,
-        guid=_query_chrome_guid(port),
+        guid=ready_guid,
         workspace=os.getcwd(),
         pid=process.pid,
         user_data_dir=str(cdp_data_dir),
@@ -641,19 +646,20 @@ def browser_start(
         if egress_ip:
             result["egress_ip"] = egress_ip
     start_options["headless"] = headless_resolved
-    return _describe_cdp(result, start_options=start_options)
+    return _describe_cdp(result, start_options=start_options, guid=ready_guid)
 
 
-def _describe_cdp(result: dict, start_options: dict | None = None) -> dict:
+def _describe_cdp(
+    result: dict, start_options: dict | None = None, guid: str | None = None
+) -> dict:
     """Add observed process/session identity without changing legacy result fields."""
     port = result["port"]
-    guid = _query_chrome_guid(port)
+    guid = guid or _query_chrome_guid(port)
     if not guid:
         return _session.failure(
             "transient",
             "Chrome debug port did not return a browser identity",
-            **result,
-            transport="cdp",
+            **{**result, "transport": "cdp", "browser_closed": False},
         )
     identity = "cdp-" + guid
     try:
@@ -955,7 +961,20 @@ async def browser_connect(
                 transport="cdp",
             )
         port = expected["port"]
-        if "cdp-" + (_query_chrome_guid(port) or "") != session_id:
+        observed_guid = _query_chrome_guid(port)
+        if not observed_guid and (
+            not expected.get("pid") or _session.same_process(expected)
+        ):
+            return _session.failure(
+                "transient",
+                "Original CDP browser identity is temporarily unavailable; no input was replayed",
+                session_id=session_id,
+                transport="cdp",
+                port=port,
+                pid=expected.get("pid"),
+                browser_closed=False,
+            )
+        if "cdp-" + (observed_guid or "") != session_id:
             return _session.failure(
                 "session_changed",
                 "Original CDP Chrome is gone or this port now belongs to another browser; no input was replayed",
@@ -980,6 +999,8 @@ async def browser_connect(
             transport="cdp",
             port=port,
         )
+    if result.get("error"):
+        return result
     record = _session.read(result["session_id"])
     if (
         expected

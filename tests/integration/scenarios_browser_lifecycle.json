@@ -13,6 +13,14 @@
   },
   "scenarios": [
     {
+      "name": "unavailable_cdp_identity_recovers_without_input_replay",
+      "title": "Report unavailable identity on a suspended real Chrome, then resume the same page",
+      "workflow": "Start real Chrome -> authenticated approval -> suspend its owned process -> structured metadata/reconnect failure -> resume -> same page -> one submission",
+      "user_problem": "A temporarily unresponsive Chrome must return a transient failure while preserving launch details and completed server actions.",
+      "fixtures": ["lifecycle"],
+      "steps": [{"raw_code": ["lifecycle.unavailable_cdp_identity()"]}]
+    },
+    {
       "name": "owned_cdp_reconnect_and_explicit_restart",
       "title": "Approve once, reconnect the same page, submit once, then explicitly restart",
       "workflow": "Start headless -> login -> user approval -> disconnect -> reconnect -> submit -> restart -> reject stale session",

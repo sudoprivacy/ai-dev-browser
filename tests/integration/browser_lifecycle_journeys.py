@@ -175,6 +175,52 @@ class LifecycleJourneys:
             submissions=self.server.submissions,
         )
 
+    def unavailable_cdp_identity(self):
+        """Suspend only this test's real Chrome, then recover without input replay."""
+        from ai_dev_browser.core import _session
+        from ai_dev_browser.core.browser import _describe_cdp
+
+        started = self.start("--headless", "true", "--silent-stderr")
+        identity = started["session_id"]
+        self.page(identity)
+        self.approve(identity)
+        record = _session.read(identity)
+        assert _session.same_process(record)
+        process = psutil.Process(started["pid"])
+        process.suspend()
+        try:
+            unavailable = _describe_cdp(
+                {**started, "message": "Browser started on the real debug port"}
+            )
+            assert unavailable["error_code"] == "transient"
+            assert unavailable["retryable"] and not unavailable["connected"]
+            assert not unavailable["browser_closed"]
+            assert unavailable["pid"] == started["pid"]
+            assert unavailable["message"] == "Browser started on the real debug port"
+            disconnected = self.cli(
+                "browser_reconnect", "--session-id", identity, exit_code=9
+            )
+            assert disconnected["error_code"] == "transient"
+            assert disconnected["retryable"] and not disconnected["reconnected"]
+            assert self.server.approvals == [{"trusted": True}]
+            assert self.server.submissions == []
+        finally:
+            # Never resume a recycled PID or a process outside this owned fixture.
+            assert process.create_time() == record["process_created"]
+            assert process.exe() == record["chrome_path"]
+            process.resume()
+        recovered = self.cli("browser_reconnect", "--session-id", identity)
+        assert recovered["reconnected"] and recovered["pid"] == started["pid"]
+        assert recovered["automation_target_id"] == started["automation_target_id"]
+        self.submit(identity, "After real Chrome suspension")
+        self.cli.evidence(
+            "cdp-unavailable-identity",
+            unavailable=unavailable,
+            resumed_pid=recovered["pid"],
+            approvals=self.server.approvals,
+            submissions=self.server.submissions,
+        )
+
     def installed_extension(self, configuration, headless):
         profile, binary, port, extension_id = configuration
         self.cli.env["AI_DEV_BROWSER_EXTENSION_BRIDGE_PORT"] = str(port)

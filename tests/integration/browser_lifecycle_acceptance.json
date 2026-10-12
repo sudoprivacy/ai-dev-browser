@@ -141,5 +141,22 @@
     "artifacts": "Retains actual evidence JSON and installed/final-page screenshots for 7 days.",
     "paid_runner": "scripts/live_browser_lifecycle_steering.py is opt-in and uses inherited real provider credentials; no credentials are recorded.",
     "release_assets": "Wheel validation includes shared guidance, ownership records, extension launcher and generated reconnect/restart tools."
+  },
+  "post_merge_release_gate": {
+    "original_feature_ci": "38277069870: seven successful jobs before PR #15 merge",
+    "failed_master_ci": "38279691780, bf89316: Ubuntu browser-start smoke failed when identity query returned no GUID",
+    "exact_error": "TypeError: failure() got multiple values for argument 'message'",
+    "cancelled_release": "38279708858: v0.53.0 cancelled before the queued PyPI upload started; tag retained",
+    "fixes": [
+      "Wait for read-only CDP identity within the startup timeout; reuse that verified GUID for launch registration",
+      "Preserve legacy message/resource fields while keeping structured failure status authoritative",
+      "Report temporary unavailable identity as transient when the original process still matches; never replay input",
+      "Return connect failures before reading a missing session record"
+    ],
+    "live_fault": "Suspend/resume only a verified test-owned real Chrome process; inspect unavailable identity and CLI reconnect; recover the same page/PID and submit once after one trusted approval",
+    "live_fault_report": "scratch/lifecycle-handshake-fix-20261013",
+    "complete_acceptance": "scratch/lifecycle-handshake-complete-20261013: 10 passed, no skips",
+    "regression": "scratch/lifecycle-handshake-unit-regression-20261013: 132 passed",
+    "paid_model": "scratch/lifecycle-model-handshake-fix-20261013/model-steering.json: background passed, 7 actual API requests"
   }
 }
