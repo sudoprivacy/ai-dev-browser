@@ -3,7 +3,7 @@
 AUTO-GENERATED - DO NOT EDIT
 
 This file was auto-generated from SKILL.md by integration-test-generator.
-Generated: 2026-10-12 23:25:22
+Generated: 2026-10-13 04:28:57
 
 To modify test behavior:
   1. Update SKILL.md with better workflow examples
@@ -11,16 +11,18 @@ To modify test behavior:
 
 Manual edits will be lost when regenerated!
 
-Coverage: 6/6 real workflows (100%)
+Coverage: 8/8 real workflows (100%)
 Identified using AI scenario recognition with complete code generation
 
 Coverage Report:
+  ✅ Start real Chrome -> authenticated approval -> independent HTTP child announces its bound port -> refuse bridge disconnect -> verify HTTP service/PID -> reconnect original Chrome -> one submission
+  ✅ Start real Chrome -> authenticated approval -> suspend its owned process -> structured metadata/reconnect failure -> resume -> same page -> one submission
   ✅ Start headless -> login -> user approval -> disconnect -> reconnect -> submit -> restart -> reject stale session
-  ✅ Persist login/installed extension -> explicit extension launch -> approve -> disconnect -> reconnect same tab/profile -> submit -> owned close
+  ✅ Persist login/installed extension -> explicit extension launch -> approve -> disconnect -> reconnect same tab/profile -> submit -> explicit owned restart -> authenticated root -> reject stale input -> owned close
   ✅ Existing logged-in Chrome -> connect -> human-side UI approval -> reject unauthorized restart -> reconnect -> submit -> disconnect -> inspect sentinel
-  ✅ Discover help -> request unavailable profile -> inspect unsupported -> start correct CDP -> reject mode mutation -> approve once -> verify no duplicate
+  ✅ Discover help -> request unavailable profile -> inspect unsupported -> start correct CDP -> reject mode mutation -> approve and submit once -> blocked URL reports navigation error -> reconnect same session and inspect state without replay
   ✅ Login -> trusted popup open -> stop/start worker -> same session -> trusted consent -> close owned child -> observe parent server state
-  ✅ Configured profile -> launch with zero wait -> retain PID -> connect same launched process -> authenticated approval -> submit once -> owned close
+  ✅ Configured profile -> launch with zero wait -> retain PID -> connect same launched process -> verify extension nonce matches actual process arguments -> authenticated approval -> submit once -> owned close
 
 Uncovered workflows: None
 """
@@ -49,6 +51,36 @@ def _integration_guard():
         pytest.skip("SKIP_INTEGRATION is set — skipping integration tests")
 
 
+def test_foreign_bridge_listener_is_preserved(lifecycle):
+    """
+    Real scenario: Reject an unrelated HTTP service on the bridge port and preserve the original Chrome
+
+    Workflow: Start real Chrome -> authenticated approval -> independent HTTP child announces its bound port -> refuse bridge disconnect -> verify HTTP service/PID -> reconnect original Chrome -> one submission
+
+    User problem: Disconnect must never kill an unrelated listener or its hosting process when the port does not identify an adb bridge.
+
+    Data flow:
+      1. inline code operation
+    """
+    # Step 1: Execute operation
+    lifecycle.foreign_bridge_listener()
+
+
+def test_unavailable_cdp_identity_recovers_without_input_replay(lifecycle):
+    """
+    Real scenario: Report unavailable identity on a suspended real Chrome, then resume the same page
+
+    Workflow: Start real Chrome -> authenticated approval -> suspend its owned process -> structured metadata/reconnect failure -> resume -> same page -> one submission
+
+    User problem: A temporarily unresponsive Chrome must return a transient failure while preserving launch details and completed server actions.
+
+    Data flow:
+      1. inline code operation
+    """
+    # Step 1: Execute operation
+    lifecycle.unavailable_cdp_identity()
+
+
 def test_owned_cdp_reconnect_and_explicit_restart(lifecycle):
     """
     Real scenario: Approve once, reconnect the same page, submit once, then explicitly restart
@@ -68,9 +100,9 @@ def test_real_extension_installed_profile_start_disconnect_reconnect(
     lifecycle, configured_lifecycle_profile, installed_lifecycle_mode
 ):
     """
-    Real scenario: Launch a persistently installed extension profile without loading flags or a CDP port
+    Real scenario: Launch and explicitly restart a persistently installed extension profile without loading flags or a CDP port
 
-    Workflow: Persist login/installed extension -> explicit extension launch -> approve -> disconnect -> reconnect same tab/profile -> submit -> owned close
+    Workflow: Persist login/installed extension -> explicit extension launch -> approve -> disconnect -> reconnect same tab/profile -> submit -> explicit owned restart -> authenticated root -> reject stale input -> owned close
 
     User problem: Reuse the real profile's authenticated browser state and release/recover control without repeating a server submission.
 
@@ -104,7 +136,7 @@ def test_unsupported_modes_do_not_launch_or_replay(lifecycle):
     """
     Real scenario: Explain missing extension and unsupported attached headless without substituting a browser
 
-    Workflow: Discover help -> request unavailable profile -> inspect unsupported -> start correct CDP -> reject mode mutation -> approve once -> verify no duplicate
+    Workflow: Discover help -> request unavailable profile -> inspect unsupported -> start correct CDP -> reject mode mutation -> approve and submit once -> blocked URL reports navigation error -> reconnect same session and inspect state without replay
 
     User problem: A model needs accurate failure reasons and an explicit recovery decision, never an implicit transport/profile switch.
 
@@ -138,7 +170,7 @@ def test_real_extension_delayed_handshake_preserves_ownership(
     """
     Real scenario: Recover control after an explicit launch outlasts its handshake deadline
 
-    Workflow: Configured profile -> launch with zero wait -> retain PID -> connect same launched process -> authenticated approval -> submit once -> owned close
+    Workflow: Configured profile -> launch with zero wait -> retain PID -> connect same launched process -> verify extension nonce matches actual process arguments -> authenticated approval -> submit once -> owned close
 
     User problem: A slow handshake must preserve the real browser and its recorded ownership without launching a second process.
 

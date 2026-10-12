@@ -11,13 +11,19 @@ def main():
     parser.add_argument("--profile", type=Path)
     parser.add_argument("--extension", type=Path)
     parser.add_argument("--confirm-pid", type=int)
+    parser.add_argument("--minimize-pid", type=int)
     args = parser.parse_args()
-    if args.confirm_pid:
+    if args.confirm_pid or args.minimize_pid:
         from pywinauto import Desktop
 
         window = Desktop(backend="uia").window(
-            process=args.confirm_pid, title_re="Browser lifecycle acceptance.*"
+            process=args.confirm_pid or args.minimize_pid,
+            title_re="Browser lifecycle acceptance.*",
         )
+        if args.minimize_pid:
+            window.wait("exists", timeout=15)
+            window.minimize()
+            return
         window.wait("visible", timeout=15)
         window.set_focus()
         button = window.child_window(title="Confirm as user", control_type="Button")

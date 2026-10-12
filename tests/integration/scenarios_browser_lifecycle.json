@@ -13,6 +13,38 @@
   },
   "scenarios": [
     {
+      "name": "foreign_bridge_listener_is_preserved",
+      "title": "Reject an unrelated HTTP service on the bridge port and preserve the original Chrome",
+      "workflow": "Start real Chrome -> authenticated approval -> independent HTTP child announces its bound port -> refuse bridge disconnect -> verify HTTP service/PID -> reconnect original Chrome -> one submission",
+      "user_problem": "Disconnect must never kill an unrelated listener or its hosting process when the port does not identify an adb bridge.",
+      "fixtures": [
+        "lifecycle"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "lifecycle.foreign_bridge_listener()"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unavailable_cdp_identity_recovers_without_input_replay",
+      "title": "Report unavailable identity on a suspended real Chrome, then resume the same page",
+      "workflow": "Start real Chrome -> authenticated approval -> suspend its owned process -> structured metadata/reconnect failure -> resume -> same page -> one submission",
+      "user_problem": "A temporarily unresponsive Chrome must return a transient failure while preserving launch details and completed server actions.",
+      "fixtures": [
+        "lifecycle"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "lifecycle.unavailable_cdp_identity()"
+          ]
+        }
+      ]
+    },
+    {
       "name": "owned_cdp_reconnect_and_explicit_restart",
       "title": "Approve once, reconnect the same page, submit once, then explicitly restart",
       "workflow": "Start headless -> login -> user approval -> disconnect -> reconnect -> submit -> restart -> reject stale session",
@@ -30,8 +62,8 @@
     },
     {
       "name": "real_extension_installed_profile_start_disconnect_reconnect",
-      "title": "Launch a persistently installed extension profile without loading flags or a CDP port",
-      "workflow": "Persist login/installed extension -> explicit extension launch -> approve -> disconnect -> reconnect same tab/profile -> submit -> owned close",
+      "title": "Launch and explicitly restart a persistently installed extension profile without loading flags or a CDP port",
+      "workflow": "Persist login/installed extension -> explicit extension launch -> approve -> disconnect -> reconnect same tab/profile -> submit -> explicit owned restart -> authenticated root -> reject stale input -> owned close",
       "user_problem": "Reuse the real profile's authenticated browser state and release/recover control without repeating a server submission.",
       "fixtures": [
         "lifecycle",
@@ -66,7 +98,7 @@
     {
       "name": "unsupported_modes_do_not_launch_or_replay",
       "title": "Explain missing extension and unsupported attached headless without substituting a browser",
-      "workflow": "Discover help -> request unavailable profile -> inspect unsupported -> start correct CDP -> reject mode mutation -> approve once -> verify no duplicate",
+      "workflow": "Discover help -> request unavailable profile -> inspect unsupported -> start correct CDP -> reject mode mutation -> approve and submit once -> blocked URL reports navigation error -> reconnect same session and inspect state without replay",
       "user_problem": "A model needs accurate failure reasons and an explicit recovery decision, never an implicit transport/profile switch.",
       "fixtures": [
         "lifecycle"
@@ -100,7 +132,7 @@
     {
       "name": "real_extension_delayed_handshake_preserves_ownership",
       "title": "Recover control after an explicit launch outlasts its handshake deadline",
-      "workflow": "Configured profile -> launch with zero wait -> retain PID -> connect same launched process -> authenticated approval -> submit once -> owned close",
+      "workflow": "Configured profile -> launch with zero wait -> retain PID -> connect same launched process -> verify extension nonce matches actual process arguments -> authenticated approval -> submit once -> owned close",
       "user_problem": "A slow handshake must preserve the real browser and its recorded ownership without launching a second process.",
       "fixtures": [
         "lifecycle",

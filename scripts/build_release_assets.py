@@ -43,6 +43,10 @@ def build_assets(dist: Path, output: Path) -> None:
             "core/_extension_lifecycle.py",
             "tools/browser_reconnect.py",
             "tools/browser_restart.py",
+            "remote/cdp.py",
+            "remote/page.py",
+            "remote/page_view.js",
+            "remote/vnc.py",
         ):
             if f"ai_dev_browser/{name}" not in archive.namelist():
                 raise ValueError(f"Wheel is missing {name}")

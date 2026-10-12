@@ -182,6 +182,57 @@ class LifecycleJourneys:
             submissions=self.server.submissions,
         )
 
+    def unavailable_cdp_identity(self):
+        """Suspend only this test's real Chrome, then recover without input replay."""
+        from ai_dev_browser.core import _session
+        from ai_dev_browser.core.browser import _describe_cdp
+
+        started = self.start("--headless", "true", "--silent-stderr")
+        identity = started["session_id"]
+        self.page(identity)
+        self.approve(identity)
+        refreshed = self.cli("browser_reconnect", "--session-id", identity)
+        assert refreshed["pid"] == started["pid"]
+        record = _session.read(identity)
+        assert _session.same_process(record), {
+            "expected": record,
+            "actual": _session.process_info(record.get("pid")),
+        }
+        process = psutil.Process(started["pid"])
+        process.suspend()
+        try:
+            unavailable = _describe_cdp(
+                {**started, "message": "Browser started on the real debug port"}
+            )
+            assert unavailable["error_code"] == "transient"
+            assert unavailable["retryable"] and not unavailable["connected"]
+            assert not unavailable["browser_closed"]
+            assert unavailable["pid"] == started["pid"]
+            assert unavailable["message"] == "Browser started on the real debug port"
+            disconnected = self.cli(
+                "browser_reconnect", "--session-id", identity, exit_code=9
+            )
+            assert disconnected["error_code"] == "transient"
+            assert disconnected["retryable"] and not disconnected["reconnected"]
+            assert self.server.approvals == [{"trusted": True}]
+            assert self.server.submissions == []
+        finally:
+            # Never resume a recycled PID or a process outside this owned fixture.
+            assert process.create_time() == record["process_created"]
+            assert process.exe() == record["chrome_path"]
+            process.resume()
+        recovered = self.cli("browser_reconnect", "--session-id", identity)
+        assert recovered["reconnected"] and recovered["pid"] == started["pid"]
+        assert recovered["automation_target_id"] == started["automation_target_id"]
+        self.submit(identity, "After real Chrome suspension")
+        self.cli.evidence(
+            "cdp-unavailable-identity",
+            unavailable=unavailable,
+            resumed_pid=recovered["pid"],
+            approvals=self.server.approvals,
+            submissions=self.server.submissions,
+        )
+
     def installed_extension(self, configuration, headless):
         profile, binary, port, extension_id = configuration
         self.cli.env["AI_DEV_BROWSER_EXTENSION_BRIDGE_PORT"] = str(port)
@@ -215,6 +266,27 @@ class LifecycleJourneys:
             and any(arg.startswith("--headless") for arg in args) is headless
         )
         self.page(identity, self.server.url)
+        if not headless:
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "tests.integration.browser_lifecycle_ui",
+                    "--minimize-pid",
+                    str(pid),
+                ],
+                env=self.cli.env,
+                check=True,
+                timeout=30,
+            )
+            hidden = self.cli(
+                "js_evaluate",
+                "--session-id",
+                identity,
+                "--expression",
+                "document.visibilityState",
+            )
+            assert hidden["result"] == "hidden", hidden
         self.approve(identity)
         busy = self.cli(
             "browser_start",
@@ -252,9 +324,48 @@ class LifecycleJourneys:
             str(self.root / "extension-lifecycle.png"),
         )
         assert Path(shot["path"]).stat().st_size > 1000
+        restarted = self.cli("browser_restart", "--session-id", identity)
+        assert restarted["restarted"] and restarted["previous_session_id"] == identity
+        assert restarted["session_id"] != identity and restarted["pid"] != pid
+        assert restarted["profile_id"] == started["profile_id"]
+        assert restarted["headless"] is headless and restarted["owner"] == "adb"
+        self.sessions.append(restarted["session_id"])
+        assert not psutil.pid_exists(pid)
+        restart_args = psutil.Process(restarted["pid"]).cmdline()
+        assert f"--user-data-dir={profile}" in restart_args
+        assert all(
+            not arg.startswith(("--remote-debugging", "--load-extension"))
+            for arg in restart_args
+        )
+        # Visit the authenticated root, never the login endpoint: restarting
+        # must preserve the real profile cookie, without logging in again.
+        self.page(restarted["session_id"], self.server.url)
+        state = self.cli(
+            "js_evaluate",
+            "--session-id",
+            restarted["session_id"],
+            "--expression",
+            "window.serverState",
+        )["result"]
+        assert state["logged_in"] and state["approvals"] == [{"trusted": True}]
+        assert state["submissions"] == [
+            {"trusted": True, "name": "Profile login preserved"}
+        ]
+        stale = self.cli(
+            "click_by_html_id",
+            "--session-id",
+            identity,
+            "--html-id",
+            "submit",
+            exit_code=5,
+        )
+        assert stale["error_code"] == "session_changed"
+        assert len(self.server.approvals) == len(self.server.submissions) == 1
         self.cli.evidence(
             "extension-lifecycle",
             actual_launch_args=args,
+            restarted=restarted,
+            actual_restart_args=restart_args,
             approvals=self.server.approvals,
             submissions=self.server.submissions,
         )
@@ -415,6 +526,15 @@ class LifecycleJourneys:
         self.sessions.append(identity)
         assert connected["owner"] == "adb" and connected["pid"] == delayed["pid"]
         assert connected["user_data_dir"] == str(profile)
+        state = self.cli(
+            "cdp_send", "--session-id", identity, "--method", "AiDevBrowser.debugState"
+        )["result"]
+        marker = next(
+            arg
+            for arg in psutil.Process(delayed["pid"]).cmdline()
+            if arg.startswith(f"http://127.0.0.1:{port}/adb-launch/")
+        )
+        assert state["launchToken"] == marker.rsplit("/", 1)[1]
         self.page(identity, self.server.url)
         self.approve(identity)
         self.submit(identity, "Late handshake preserved ownership")
@@ -467,11 +587,123 @@ class LifecycleJourneys:
         self.page(identity)
         self.approve(identity)
         self.submit(identity, "Explicit choice")
+        failed = self.cli(
+            "page_goto",
+            "--session-id",
+            identity,
+            "--url",
+            "http://127.0.0.1:0/",
+            exit_code=1,
+        )
+        assert "ERR_UNSAFE_PORT" in failed["error"] and not failed["retryable"]
+        recovered = self.cli("browser_reconnect", "--session-id", identity)
+        assert recovered["pid"] == started["pid"]
+        self.page(identity, self.server.url)
+        assert len(self.server.approvals) == len(self.server.submissions) == 1
         self.cli.evidence(
             "unsupported-lifecycle",
             approvals=self.server.approvals,
             submissions=self.server.submissions,
         )
+
+    def foreign_bridge_listener(self):
+        from ai_dev_browser.core import _session
+        from ai_dev_browser.core.port import _open_chrome_http
+        import queue
+        import threading
+
+        started = self.start("--headless", "true", "--silent-stderr")
+        identity = started["session_id"]
+        self.page(identity)
+        self.approve(identity)
+        ready = queue.Queue()
+        log_path = self.root / "foreign-http-server.log"
+        program = """
+import sys, faulthandler
+faulthandler.dump_traceback_later(10)
+print('Independent actor started', file=sys.stderr, flush=True)
+import socketserver
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+print('HTTP imported', file=sys.stderr, flush=True)
+class LoopbackServer(ThreadingHTTPServer):
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        # This listener is explicitly loopback; no reverse DNS is needed.
+        self.server_name = '127.0.0.1'
+        self.server_port = self.server_address[1]
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args): pass
+    def do_GET(self):
+        body = b'Independent HTTP service'
+        self.send_response(200)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+server = LoopbackServer(('127.0.0.1', 0), Handler)
+faulthandler.cancel_dump_traceback_later()
+print(server.server_port, flush=True)
+server.serve_forever()
+"""
+        with log_path.open("w", encoding="utf-8") as log:
+            service = subprocess.Popen(
+                [sys.executable, "-I", "-S", "-u", "-c", program],
+                start_new_session=sys.platform != "win32",
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=log,
+                text=True,
+                encoding="utf-8",
+            )
+        observed = _session.process_info(service.pid)
+        assert observed
+        threading.Thread(
+            target=lambda: ready.put(service.stdout.readline()), daemon=True
+        ).start()
+        try:
+            try:
+                port = int(ready.get(timeout=20).strip())
+            except (queue.Empty, ValueError):
+                raise AssertionError(
+                    {
+                        "pid": service.pid,
+                        "exit_code": service.poll(),
+                        "stderr": log_path.read_text(encoding="utf-8"),
+                        "status": psutil.Process(service.pid).status()
+                        if service.poll() is None
+                        else None,
+                        "actual_process": _session.process_info(service.pid),
+                    }
+                ) from None
+            observed = _session.process_info(service.pid)
+            assert observed and service.poll() is None
+            url = f"http://127.0.0.1:{port}/"
+            with _open_chrome_http(url, "127.0.0.1", 2) as response:
+                assert response.status == 200
+                assert response.read() == b"Independent HTTP service"
+            foreign_cli = LifecycleCLI(
+                self.root / "foreign-listener",
+                AI_DEV_BROWSER_EXTENSION_BRIDGE_PORT=str(port),
+            )
+            refused = foreign_cli("browser_disconnect", exit_code=9)
+            assert not refused["disconnected"]
+            assert service.poll() is None and _session.same_process(observed)
+            with _open_chrome_http(url, "127.0.0.1", 2) as response:
+                assert response.status == 200
+            recovered = self.cli("browser_reconnect", "--session-id", identity)
+            assert recovered["pid"] == started["pid"]
+            self.submit(identity, "Unrelated listener preserved")
+            self.cli.evidence(
+                "foreign-listener",
+                refused=refused,
+                unrelated_pid=service.pid,
+                original_chrome_pid=started["pid"],
+                approvals=self.server.approvals,
+                submissions=self.server.submissions,
+            )
+        finally:
+            if _session.same_process(observed):
+                service.terminate()
+                service.wait(timeout=10)
 
     async def worker_oauth(self, extension):
         import asyncio

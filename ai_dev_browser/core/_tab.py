@@ -205,6 +205,13 @@ class Tab:
         point = None
         params = command.get("params", {})
         viewport_session = None
+        if command["method"].startswith("Input.") and params.get("type") not in (
+            "mouseReleased",
+            "keyUp",
+            "touchEnd",
+            "touchCancel",
+        ):
+            await self._prepare_input(allow_cached=params.get("type") == "mouseMoved")
         if command["method"] == "Emulation.setDeviceMetricsOverride":
             from ._demo import session
 
@@ -818,7 +825,11 @@ class Tab:
         if tab_new or new_window:
             if self._browser:
                 return await self._browser.get(url, tab_new, new_window)
-        frame_id, loader_id, *_ = await self.send(page.navigate(url))
+        frame_id, loader_id, error_text, *_ = await self.send(page.navigate(url))
+        if error_text:
+            raise ProtocolException(
+                f"Navigation failed: {error_text}", method="Page.navigate"
+            )
         await asyncio.sleep(0.5)
         return self
 
@@ -927,6 +938,37 @@ class Tab:
     async def bring_to_front(self):
         """Alias for activate()."""
         await self.activate()
+
+    async def _prepare_input(self, allow_cached: bool = False):
+        """Wake only the selected extension page before trusted input."""
+        if getattr(self._browser, "transport", "cdp") != "extension":
+            return
+        if (
+            allow_cached
+            and time.monotonic() - getattr(self, "_input_checked_at", 0) < 0.5
+        ):
+            return
+        visible = await self.evaluate("document.visibilityState === 'visible'")
+        if not visible:
+            await self.bring_to_front()
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                if await self.evaluate("document.visibilityState === 'visible'"):
+                    # Let the restored renderer paint before its first pointer event.
+                    await self.evaluate(
+                        "new Promise(resolve => requestAnimationFrame(() => resolve(true)))",
+                        await_promise=True,
+                        timeout=2,
+                    )
+                    break
+                await asyncio.sleep(0.05)
+            else:
+                from .errors import InputUnavailableError
+
+                raise InputUnavailableError(
+                    "The automation page is still hidden after activation; this input was not sent. Show its Chrome window, then inspect page state before retrying"
+                )
+        self._input_checked_at = time.monotonic()
 
     async def close(self):
         """Close this tab's WebSocket connection."""

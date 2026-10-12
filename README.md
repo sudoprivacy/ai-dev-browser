@@ -29,6 +29,10 @@ The authoritative mode guidance is in the core tool descriptions and actual
 `browser_start --help` / `browser_connect --help`. Hosts can forward those
 surfaces without maintaining their own browser strategy.
 
+For a host-provided remote view of the same browser, use the optional
+[page and X11 window adapters](docs/remote-views.md). The host supplies viewer
+authentication, target selection, control ownership and any tunnel or relay.
+
 | Intent | Tool | Resource effect |
 |--------|------|-----------------|
 | New isolated browser | `browser_start` | Creates an adb-owned CDP Chrome |
