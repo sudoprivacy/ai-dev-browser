@@ -55,6 +55,7 @@ async def test_vnc_pixels_input_and_owned_cleanup(tmp_path, remote_site):
                     browser_start,
                     headless=headless,
                     temp=True,
+                    silent_stderr=True,
                     extra_args=[
                         "--no-sandbox",
                         "--window-position=0,0",

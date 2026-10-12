@@ -83,6 +83,21 @@ Its private exception adapter maps generic transport errors to existing public
 business reasons. SudoWork will share its React BrowserPanel across Desktop and
 WebUI while using these adapters for the same adb session.
 
+The host must verify a painted target and a successful initial snapshot before
+starting the view stream. DOM load completion alone does not guarantee a
+headful compositor frame. Managed headful browsers need an explicit background
+rendering policy: an occluded window can stop painting. The live fixtures keep
+their owned Chrome painting without changing user Chrome defaults. An existing
+user browser needs an accurate capability/error report, rather than an implicit
+restart or repeated focus stealing. See Chromium's
+[window occlusion documentation](https://chromium.googlesource.com/chromium/src/+/master/docs/windows_native_window_occlusion_tracking.md).
+
+When embedding browser launch in a long-running Python host, use the existing
+`browser_start(silent_stderr=True)` option or actively drain Chrome's output.
+Its default diagnostic pipe can fill with GPU/Crashpad output and stall the
+browser. The two-browser live fixtures use that option while retaining all
+pixel, trusted-input and single-submission assertions.
+
 ## Real validation
 
 The `Remote browser view` CI job runs Chrome for Testing on Linux and Windows.

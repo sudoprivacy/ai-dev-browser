@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import sys
+import traceback
 from importlib.resources import files
 from io import BytesIO
 
@@ -99,6 +100,14 @@ async def remote_site():
                 await asyncio.sleep(0.1)
 
         pending = asyncio.create_task(frames())
+
+        def frame_completed(task):
+            if not task.cancelled() and (error := task.exception()):
+                # This owned fixture must expose a producer failure instead of
+                # reporting only an unrelated image-load timeout in the viewer.
+                traceback.print_exception(error)
+
+        pending.add_done_callback(frame_completed)
         try:
             async for message in ws:
                 if message.type != aiohttp.WSMsgType.TEXT:
@@ -169,9 +178,22 @@ async def test_remote_surface_submission_and_same_profile_reconnect(
                     browser_start,
                     headless=mode,
                     temp=True,
+                    # Chrome's GPU/Crashpad output must not fill an unread pipe
+                    # while these two real browsers stream snapshots.
+                    silent_stderr=True,
                     # These owned loopback fixtures also run on Ubuntu CI,
                     # where AppArmor prevents Chrome's user-namespace sandbox.
-                    extra_args=["--no-sandbox"] if sys.platform == "linux" else None,
+                    # Keep this owned headful fixture painting even when another
+                    # desktop window occludes it. User Chrome defaults stay intact.
+                    extra_args=[
+                        "--window-size=1024,1000",
+                        "--window-position=0,0",
+                        "--disable-backgrounding-occluded-windows",
+                        "--disable-renderer-backgrounding",
+                        "--disable-background-timer-throttling",
+                        "--disable-features=CalculateNativeWinOcclusion",
+                    ]
+                    + (["--no-sandbox"] if sys.platform == "linux" else []),
                 )
                 assert "error" not in result, result
                 browsers.append(result)
@@ -191,6 +213,13 @@ async def test_remote_surface_submission_and_same_profile_reconnect(
             await wait_for(
                 lambda: target.js("!!document.querySelector('#submit')"), bool
             )
+            await target.call("Page.bringToFront")
+            assert await target.js(
+                "new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))"
+            )
+            # Observe the painted page before streaming it to the real viewer.
+            # DOM readiness alone can precede the first headful compositor frame.
+            assert await view.capture(target)
             await client.call("Page.navigate", {"url": url + "/viewer"})
             await wait_for(
                 lambda: client.js("document.querySelector('#screen')?.naturalWidth"),
@@ -321,6 +350,10 @@ async def test_remote_surface_submission_and_same_profile_reconnect(
                     "document.readyState==='complete' && !!document.querySelector('#name')"
                 ),
                 bool,
+            )
+            await replacement.call("Page.bringToFront")
+            assert await replacement.js(
+                "new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))"
             )
             # Hand-back requires a fresh observation after navigation. DOM load
             # completion alone does not mean the new frame's hit-test data exists.
