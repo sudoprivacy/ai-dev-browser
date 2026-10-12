@@ -1,0 +1,118 @@
+{
+  "config": {
+    "imports": [
+      "from tests.integration.browser_lifecycle_support import LifecycleCLI, LifecycleServer"
+    ],
+    "call_style": "function",
+    "extract_style": "dict",
+    "required_env_vars": [],
+    "smoke_test_assertions": [
+      "LifecycleCLI is not None",
+      "LifecycleServer is not None"
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "owned_cdp_reconnect_and_explicit_restart",
+      "title": "Approve once, reconnect the same page, submit once, then explicitly restart",
+      "workflow": "Start headless -> login -> user approval -> disconnect -> reconnect -> submit -> restart -> reject stale session",
+      "user_problem": "An agent must preserve page/login identity and avoid duplicate server actions while recovering control; restart must be separate.",
+      "fixtures": [
+        "lifecycle"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "lifecycle.owned_cdp()"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "real_extension_installed_profile_start_disconnect_reconnect",
+      "title": "Launch a persistently installed extension profile without loading flags or a CDP port",
+      "workflow": "Persist login/installed extension -> explicit extension launch -> approve -> disconnect -> reconnect same tab/profile -> submit -> owned close",
+      "user_problem": "Reuse the real profile's authenticated browser state and release/recover control without repeating a server submission.",
+      "fixtures": [
+        "lifecycle",
+        "configured_lifecycle_profile",
+        "installed_lifecycle_mode"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "lifecycle.installed_extension(configured_lifecycle_profile, installed_lifecycle_mode)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "real_extension_existing_chrome_preserves_user_tabs",
+      "title": "Connect an existing Chrome and continue a user's trusted action in the same automation tab",
+      "workflow": "Existing logged-in Chrome -> connect -> human-side UI approval -> reject unauthorized restart -> reconnect -> submit -> disconnect -> inspect sentinel",
+      "user_problem": "Connecting and recovering must preserve browser PID/profile, the dedicated page and unrelated user tabs.",
+      "fixtures": [
+        "lifecycle",
+        "configured_lifecycle_profile"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "lifecycle.existing_extension(configured_lifecycle_profile)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unsupported_modes_do_not_launch_or_replay",
+      "title": "Explain missing extension and unsupported attached headless without substituting a browser",
+      "workflow": "Discover help -> request unavailable profile -> inspect unsupported -> start correct CDP -> reject mode mutation -> approve once -> verify no duplicate",
+      "user_problem": "A model needs accurate failure reasons and an explicit recovery decision, never an implicit transport/profile switch.",
+      "fixtures": [
+        "lifecycle"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "lifecycle.unsupported()"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "real_extension_worker_recovery_with_oauth_child",
+      "title": "Keep profile/session and OAuth child across a worker interruption",
+      "workflow": "Login -> trusted popup open -> stop/start worker -> same session -> trusted consent -> close owned child -> observe parent server state",
+      "user_problem": "An extension worker must recover the same parent and OAuth tab without losing profile identity or replaying consent.",
+      "async": true,
+      "fixtures": [
+        "lifecycle",
+        "live_extension"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "await lifecycle.worker_oauth(live_extension)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "real_extension_delayed_handshake_preserves_ownership",
+      "title": "Recover control after an explicit launch outlasts its handshake deadline",
+      "workflow": "Configured profile -> launch with zero wait -> retain PID -> connect same launched process -> authenticated approval -> submit once -> owned close",
+      "user_problem": "A slow handshake must preserve the real browser and its recorded ownership without launching a second process.",
+      "fixtures": [
+        "lifecycle",
+        "configured_lifecycle_profile"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "lifecycle.delayed_extension(configured_lifecycle_profile)"
+          ]
+        }
+      ]
+    }
+  ]
+}

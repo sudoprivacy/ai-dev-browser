@@ -1,6 +1,6 @@
 """Locate the bundled bridge extension and produce load instructions.
 
-Chrome 127+ silently ignores the `--load-extension` command-line switch, so the
+Branded Chrome 137+ removes the `--load-extension` command-line switch, so the
 extension transport can't be auto-activated — it needs a one-time manual "Load
 unpacked". This module gives the caller (and, via the failure hint on
 `browser_connect --transport extension`, the LLM) the exact on-disk path the
@@ -10,10 +10,15 @@ package ships and the steps to relay to the user.
 from __future__ import annotations
 
 from pathlib import Path
+import os
 
 # Fixed local port the extension's background.js dials and the adb-side bridge
 # listens on. Shared convention between JS and Python — keep both in sync.
-EXTENSION_BRIDGE_PORT = 9522
+EXTENSION_BRIDGE_PORT = int(
+    os.environ.get("AI_DEV_BROWSER_EXTENSION_BRIDGE_PORT", "9522")
+)
+if not 1 <= EXTENSION_BRIDGE_PORT <= 65535:
+    raise ValueError("AI_DEV_BROWSER_EXTENSION_BRIDGE_PORT must be 1..65535")
 
 
 def extension_dir() -> Path:

@@ -236,6 +236,11 @@ def _generate_parser(
     # select the *target* of a call, they are not parameters of the action.
     if requires_tab:
         parser.add_argument(
+            "--session-id",
+            default=None,
+            help="Bind to the browser/profile returned by start/connect; also AI_DEV_BROWSER_SESSION_ID. Refuses changed sessions before input.",
+        )
+        parser.add_argument(
             "--port",
             "-p",
             type=int,
@@ -248,7 +253,8 @@ def _generate_parser(
             default=None,
             help=(
                 "Act on the tab whose URL contains this substring (e.g. ':5173'). "
-                "Without it, a browser with several page targets — Electron "
+                "With --session-id, omission selects the original automation page. "
+                "Without a session or URL, a browser with several page targets — Electron "
                 "windows, a many-tab Chrome — is a guess. Settable process-wide "
                 "via AI_DEV_BROWSER_TAB_URL."
             ),
@@ -419,18 +425,28 @@ def as_cli(requires_tab: bool = True):
 
                 async def run():
                     try:
+                        session_id = args.session_id or os.environ.get(
+                            "AI_DEV_BROWSER_SESSION_ID"
+                        )
+                        transport = resolve_transport(getattr(args, "transport", None))
+                        if session_id:
+                            from ai_dev_browser.core import _session
+
+                            record = _session.read(session_id)
+                            if args.transport and args.transport != record["transport"]:
+                                raise ValueError("transport does not match session_id")
+                            transport = record["transport"]
                         # Transport is a connection-scope choice (like --port):
                         # cdp attaches to a Chrome; extension drives the user's
                         # real browser via the bridge extension.
-                        if (
-                            resolve_transport(getattr(args, "transport", None))
-                            == "extension"
-                        ):
+                        if transport == "extension":
                             from ai_dev_browser.core.connection import connect_extension
 
-                            browser = await connect_extension()
+                            browser = await connect_extension(session_id=session_id)
                         else:
-                            browser = await connect_browser(port=args.port)
+                            browser = await connect_browser(
+                                port=args.port, session_id=session_id
+                            )
                         # Same tab-selection path for both transports — the
                         # bridge is a real BrowserClient, so get_active_tab /
                         # --tab-url work identically.
@@ -441,7 +457,7 @@ def as_cli(requires_tab: bool = True):
                         kwargs = {
                             k.replace("-", "_"): v
                             for k, v in vars(args).items()
-                            if k not in ("port", "tab_url", "transport")
+                            if k not in ("port", "tab_url", "transport", "session_id")
                         }
 
                         result = await func(tab, **kwargs)
@@ -454,7 +470,10 @@ def as_cli(requires_tab: bool = True):
                     except SystemExit:
                         raise
                     except Exception as e:
-                        out = _augment_failure({"error": str(e)}, str(e))
+                        out = _exception_failure(
+                            e,
+                            "Inspect the session/page state before continuing. Reconnect the same session without restarting or replaying input.",
+                        )
                         print(json.dumps(out, ensure_ascii=False, indent=2))
                         sys.exit(_exit_code_for_result(out))
 
@@ -526,6 +545,9 @@ _EXIT_BY_CODE = {
     "not_found": 4,
     "no_target": 4,
     "conflict": 5,
+    "session_changed": 5,
+    "unsupported": 6,
+    "target_closed": 4,
     "auth_failed": 7,
     "rate_limited": 8,
     "transient": 9,

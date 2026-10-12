@@ -31,6 +31,9 @@ import asyncio
 import itertools
 import json
 import logging
+from http import HTTPStatus
+import re
+from urllib.parse import parse_qs, urlsplit
 
 import websockets
 
@@ -54,6 +57,7 @@ def _conn_path(ws) -> str:
 def _target_id_from_path(path: str) -> str | None:
     """`/devtools/page/<targetId>` → `<targetId>`; anything else → None
     (browser-level: `/devtools/browser`, `/`, the status probe)."""
+    path = urlsplit(path).path
     marker = "/devtools/page/"
     if marker in path:
         return path.rsplit("/", 1)[-1] or None
@@ -64,6 +68,7 @@ class _Bridge:
     def __init__(self) -> None:
         self.extension: object | None = None  # single ws to the extension
         self.account: str | None = None  # profile email from the extension hello
+        self.identity: dict = {}
         self._gid = itertools.count(1)  # global id namespace across all drivers
         # gid -> (driver_ws, original_id): where each in-flight command's
         # response must be delivered.
@@ -96,8 +101,22 @@ class _Bridge:
 
     # ------------------------------------------------------------------ extension
     async def _extension(self, ws, hello):
+        # A second profile must not steal a live driver or recorder's browser.
+        if self.extension is not None and self.extension is not ws:
+            await ws.close(code=1008, reason="Another extension profile is connected")
+            return
         self.extension = ws
         self.account = hello.get("account")
+        self.identity = {
+            key: hello.get(key)
+            for key in (
+                "profile_id",
+                "session_id",
+                "launch_token",
+                "automation_target_id",
+                "browser_version",
+            )
+        }
         logger.info("extension connected (account=%s)", self.account)
         try:
             async for raw in ws:
@@ -126,12 +145,14 @@ class _Bridge:
                     )
                 elif "_hello" in m:
                     self.account = m.get("account")
+                    self.identity.update({key: m.get(key) for key in self.identity})
         except websockets.exceptions.ConnectionClosed:
             pass  # extension disconnected — normal
         finally:
             if self.extension is ws:
                 self.extension = None
                 self.account = None
+                self.identity = {}
                 # Fail every in-flight command so no driver hangs.
                 for gid, (driver_ws, orig_id) in list(self._pending.items()):
                     try:
@@ -176,12 +197,16 @@ class _Bridge:
 
     async def _driver(self, ws, path, first):
         target_id = _target_id_from_path(path)
+        expected = parse_qs(urlsplit(path).query).get("session", [None])[0]
+        # Bind each driver's lifetime. A reconnect cannot redirect pending input
+        # to a different Chrome/profile, even when its tab ids happen to match.
+        bound = expected or self.identity.get("session_id")
         if target_id is not None:
             self._tab_conns.setdefault(target_id, set()).add(ws)
         try:
-            await self._forward(ws, target_id, first)
+            await self._forward(ws, target_id, first, bound)
             async for raw in ws:
-                await self._forward(ws, target_id, raw)
+                await self._forward(ws, target_id, raw, bound)
         except websockets.exceptions.ConnectionClosed:
             pass  # the adb CLI process exited — normal per-call lifecycle
         finally:
@@ -191,7 +216,7 @@ class _Bridge:
                 if not connections:
                     self._tab_conns.pop(target_id, None)
 
-    async def _forward(self, ws, target_id, raw):
+    async def _forward(self, ws, target_id, raw, expected_session=None):
         try:
             msg = json.loads(raw)
         except Exception:
@@ -210,6 +235,20 @@ class _Bridge:
                             "extension_connected": self.extension is not None,
                             "account": self.account,
                             "concurrent_events": True,
+                            **self.identity,
+                        },
+                    }
+                )
+            )
+            return
+
+        if expected_session and self.identity.get("session_id") != expected_session:
+            await ws.send(
+                json.dumps(
+                    {
+                        "id": mid,
+                        "error": {
+                            "message": "Browser session changed; reconnect explicitly and inspect state before further input"
                         },
                     }
                 )
@@ -315,10 +354,37 @@ async def wait_for_extension(
     return None
 
 
+def _launch_page(connection_or_path, request_or_headers):
+    """Keep the nonce URL observable while a cold extension worker starts."""
+    legacy = isinstance(connection_or_path, str)
+    path = connection_or_path if legacy else request_or_headers.path
+    if not re.fullmatch(r"/adb-launch/[a-f0-9]{32}", path):
+        return None
+    body = "<!doctype html><meta charset=utf-8><title>Connecting AI Dev Browser</title><p>Waiting for the configured browser extension.</p>"
+    if legacy:
+        return (
+            HTTPStatus.OK,
+            [
+                ("Content-Type", "text/html; charset=utf-8"),
+                ("Cache-Control", "no-store"),
+            ],
+            body.encode(),
+        )
+    response = connection_or_path.respond(HTTPStatus.OK, body)
+    response.headers["Content-Type"] = "text/html; charset=utf-8"
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 async def run_bridge(port: int = EXTENSION_BRIDGE_PORT):
     """Serve the bridge until cancelled. Returns (server, bridge) for tests."""
     bridge = _Bridge()
-    server = await websockets.serve(bridge.handler, "127.0.0.1", port)
+    server = await websockets.serve(
+        bridge.handler,
+        "127.0.0.1",
+        port,
+        process_request=_launch_page,
+    )
     logger.info("extension bridge listening on 127.0.0.1:%d", port)
     return server, bridge
 

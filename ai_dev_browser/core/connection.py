@@ -166,6 +166,8 @@ class BrowserClient:
         # connect_extension); None for a normal CDP Chrome. get_active_tab reads
         # it to skip page-only setup that's meaningless against a real browser.
         self.transport: str | None = None
+        self._session_query = ""
+        self._automation_target_id: str | None = None
 
     @classmethod
     async def connect(
@@ -185,7 +187,17 @@ class BrowserClient:
 
         # Reuse existing connection if alive
         existing = cls._instances.get(key)
-        if existing and existing.connection and not existing.connection.closed:
+        requested_session = (
+            "?session=" + ws_url.split("?session=", 1)[1]
+            if ws_url and "?session=" in ws_url
+            else ""
+        )
+        if (
+            existing
+            and existing.connection
+            and not existing.connection.closed
+            and existing._session_query == requested_session
+        ):
             # Refresh target list
             await existing.update_targets()
             return existing
@@ -195,6 +207,8 @@ class BrowserClient:
             await existing.close()
 
         instance = cls(host, port)
+        if ws_url and "?session=" in ws_url:
+            instance._session_query = "?session=" + ws_url.split("?session=", 1)[1]
 
         # 1. Get WebSocket URL (or use the caller-supplied one, e.g. the bridge)
         ws_url = ws_url or await instance._get_ws_url()
@@ -301,7 +315,7 @@ class BrowserClient:
                         break
             else:
                 # Create new Tab for this target
-                ws = f"ws://{self.host}:{self.port}/devtools/page/{tid}"
+                ws = f"ws://{self.host}:{self.port}/devtools/page/{tid}{self._session_query}"
                 tab = Tab(ws, target=info, browser=self)
                 self.targets.append(tab)
 
@@ -354,6 +368,7 @@ def _resolve_port(port: int | None) -> int:
 async def connect_browser(
     host: str = DEFAULT_DEBUG_HOST,
     port: int | None = None,
+    session_id: str | None = None,
 ) -> BrowserClient:
     """Connect to an existing Chrome instance.
 
@@ -369,6 +384,8 @@ async def connect_browser(
     Args:
         host: Chrome debugging host.
         port: Chrome debugging port. None → auto-detect.
+        session_id: Bind to a lifecycle identity from browser_start/connect;
+            refuses a replaced browser or closed original page before input.
 
     Returns:
         BrowserClient instance (also usable as async context manager).
@@ -376,11 +393,43 @@ async def connect_browser(
     Raises:
         ConnectionError: If unable to connect.
     """
+    expected = None
+    if session_id:
+        from . import _session
+        from .errors import SessionError
+        from .port import _query_chrome_guid
+
+        expected = _session.read(session_id)
+        if expected["transport"] != "cdp" or (
+            port is not None and port != expected["port"]
+        ):
+            raise ValueError("CDP port/transport does not match session_id")
+        port = expected["port"]
+        if (
+            host != DEFAULT_DEBUG_HOST
+            or "cdp-" + (_query_chrome_guid(port) or "") != session_id
+        ):
+            raise SessionError(
+                "The original CDP browser is gone or replaced; no input replayed"
+            )
     resolved_port = _resolve_port(port)
     try:
         browser = await BrowserClient.connect(host=host, port=resolved_port)
+        browser._automation_target_id = (expected or {}).get("automation_target_id")
+        if (
+            expected
+            and expected.get("automation_target_id")
+            and expected["automation_target_id"]
+            not in {str(t._target.target_id) for t in browser.tabs}
+        ):
+            await browser.close()
+            raise SessionError(
+                "Original page target is closed; inspect current state", "target_closed"
+            )
         return browser
     except Exception as e:
+        if getattr(e, "error_code", None):
+            raise
         raise ConnectionError(
             f"Failed to connect to Chrome on {host}:{resolved_port}: {e}"
         ) from e
@@ -397,6 +446,10 @@ async def get_active_tab(
     scripts collapse `browser = await connect_browser(); tab = await
     get_active_tab(browser)` into a single `tab = await
     get_active_tab()` when they don't need to hold the browser handle.
+
+    A browser bound by session_id selects its original automation target by
+    default. An explicit url_contains selects another page, including an OAuth
+    child. A closed original target raises SessionError before input.
 
     **There is no "active tab" in CDP.** Nothing in the protocol reports which
     window has focus, so with more than one page target the choice is a guess:
@@ -529,6 +582,15 @@ async def get_active_tab(
         return u.split("#", 1)[0].split("?", 1)[0]
 
     wanted = url_contains or os.environ.get(TAB_URL_ENV) or ""
+    if not wanted and browser._automation_target_id:
+        from .errors import SessionError
+
+        for target in page_targets:
+            if str(target._target.target_id) == browser._automation_target_id:
+                return await _prepared(target)
+        raise SessionError(
+            "Original page target is closed; inspect current state", "target_closed"
+        )
     if wanted:
         # Prefer a match in the URL's scheme+host+path over one that only hits
         # the query string. Otherwise a substring buried in an OAuth
@@ -559,7 +621,7 @@ async def get_active_tab(
     return await _prepared(await browser.get("about:blank"))
 
 
-async def connect_extension() -> BrowserClient:
+async def connect_extension(session_id: str | None = None) -> BrowserClient:
     """Attach to the user's REAL browser via the bridge extension.
 
     Ensures the local bridge daemon is running and an extension has dialed in,
@@ -592,13 +654,32 @@ async def connect_extension() -> BrowserClient:
     # Wait for the extension to dial in (auto-started daemon; a just-reloaded
     # extension reconnects within a few seconds). Fail with honest guidance —
     # "no extension connected" — rather than a cryptic first-command error.
-    if not await wait_for_extension(timeout=6.0):
+    status = await wait_for_extension(timeout=6.0)
+    if not status:
         raise ConnectionError(
             "Extension transport isn't ready — no extension has connected to the "
             "bridge. Load/enable the ai-dev-browser extension in a running Chrome "
             "(if you just reloaded it, wait a moment and retry).\n\n"
             + extension_load_instructions()
         )
+    if session_id:
+        from . import _session
+        from .errors import SessionError
+
+        expected = _session.read(session_id)
+        if expected["transport"] != "extension":
+            raise ValueError("session_id does not belong to extension transport")
+        if "extension-" + (status.get("session_id") or "") != session_id or status.get(
+            "profile_id"
+        ) != expected.get("profile_id"):
+            raise SessionError(
+                "Connected Chrome/profile differs from the requested session; no input replayed"
+            )
+        if expected.get("automation_target_id") != status.get("automation_target_id"):
+            raise SessionError(
+                "Original automation tab was closed or detached; inspect current state",
+                "target_closed",
+            )
     try:
         # The bridge serves no HTTP; hand BrowserClient the fixed browser-level
         # WS URL so it skips /json/version discovery. Everything else is the
@@ -606,14 +687,28 @@ async def connect_extension() -> BrowserClient:
         browser = await BrowserClient.connect(
             host="127.0.0.1",
             port=EXTENSION_BRIDGE_PORT,
-            ws_url=f"ws://127.0.0.1:{EXTENSION_BRIDGE_PORT}/devtools/browser",
+            ws_url=f"ws://127.0.0.1:{EXTENSION_BRIDGE_PORT}/devtools/browser"
+            + (f"?session={status['session_id']}" if status.get("session_id") else ""),
         )
         # Mark the transport so get_active_tab can skip page-only setup (the
         # render-viewport override) that is meaningless / unroutable against the
         # user's real browser — see _prepared.
         browser.transport = "extension"
+        browser._automation_target_id = (
+            expected.get("automation_target_id") if session_id else None
+        )
+        if session_id and expected.get("automation_target_id") not in {
+            str(t._target.target_id) for t in browser.tabs
+        }:
+            await browser.close()
+            raise SessionError(
+                "Original automation target is closed; inspect current state",
+                "target_closed",
+            )
         return browser
     except Exception as e:
+        if getattr(e, "error_code", None):
+            raise
         raise ConnectionError(
             "Extension transport isn't ready (the bridge extension isn't "
             f"connected): {e}\n\n{extension_load_instructions()}"

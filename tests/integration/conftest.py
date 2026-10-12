@@ -21,6 +21,52 @@ from ai_dev_browser.core.extension import extension_dir
 
 
 @pytest.fixture
+def lifecycle(tmp_path):
+    from .browser_lifecycle_support import LifecycleServer
+    from .browser_lifecycle_journeys import LifecycleJourneys
+
+    server = LifecycleServer()
+    journeys = LifecycleJourneys(tmp_path, server)
+    try:
+        yield journeys
+    finally:
+        journeys.cli.evidence(
+            "lifecycle-trace",
+            approvals=server.approvals,
+            submissions=server.submissions,
+            attempts=server.attempts,
+        )
+        journeys.cleanup()
+        server.close()
+
+
+@pytest.fixture
+def configured_lifecycle_profile(tmp_path, lifecycle):
+    from .browser_lifecycle_support import free_port, prepare_profile
+
+    binary = os.environ.get("AI_DEV_BROWSER_TEST_EXTENSION_CHROME")
+    if not binary:
+        pytest.skip(
+            "Set AI_DEV_BROWSER_TEST_EXTENSION_CHROME for installed-profile live tests"
+        )
+    port = free_port()
+    profile, extension_id = prepare_profile(
+        tmp_path, binary, port, lifecycle.server.url + "/login"
+    )
+    try:
+        yield profile, binary, port, extension_id
+    finally:
+        # Release only this fixture's bridge; do not touch a user's default port.
+        lifecycle.cli.env["AI_DEV_BROWSER_EXTENSION_BRIDGE_PORT"] = str(port)
+        lifecycle.cli("browser_disconnect")
+
+
+@pytest.fixture(params=[True, False], ids=["headless", "headful"])
+def installed_lifecycle_mode(request):
+    return request.param
+
+
+@pytest.fixture
 def cli(tmp_path):
     """Every invocation is a fresh process, with stdout/stderr checked separately."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("AI_DEV_BROWSER_")}
@@ -198,7 +244,7 @@ class _LiveExtension:
         self.chrome_port = chrome_port
         self.bridge = bridge
 
-    async def call(self, function, **kwargs):
+    async def call(self, function, tab_url=None, **kwargs):
         # Fresh acquisition each time, matching the CLI's per-call lifetime.
         browser = await BrowserClient.connect(
             "127.0.0.1",
@@ -207,7 +253,7 @@ class _LiveExtension:
         )
         browser.transport = "extension"
         try:
-            tab = await get_active_tab(browser)
+            tab = await get_active_tab(browser, url_contains=tab_url)
             result = await function(tab, **kwargs)
             print(f"EXT {function.__name__}: {result}", flush=True)
             return result

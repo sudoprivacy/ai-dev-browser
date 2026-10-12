@@ -34,6 +34,8 @@ from .browser import (
     browser_connect,
     browser_disconnect,
     browser_list,
+    browser_reconnect,
+    browser_restart,
     browser_start,
     browser_stop,
 )
@@ -156,6 +158,8 @@ __all__ = [
     "browser_list",
     "browser_connect",
     "browser_disconnect",
+    "browser_reconnect",
+    "browser_restart",
     "browser_cleanup",
     # Config
     "DEFAULT_BASE_DIR",

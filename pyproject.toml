@@ -30,6 +30,7 @@ dependencies = [
     "websocket-client>=1.0",  # For CDP in-use detection (sync)
     "Pillow>=10.0",  # For screenshot CSS scaling
     "deprecated>=1.2",  # For vendored CDP protocol module
+    "psutil>=5.9",  # Verify process/profile ownership before lifecycle operations
 ]
 
 [project.optional-dependencies]
@@ -37,13 +38,13 @@ dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
     "pydantic>=2.0",  # Real typed-result checkpoint regression
+    "playwright>=1.40",  # Prepare real installed-extension test profiles over CDP pipe
+    "pywinauto>=0.6.9; sys_platform == 'win32'",  # Owned native folder-picker UI
 ]
 fuzzy = [
     "rapidfuzz>=3.0",  # Fast C-based Levenshtein for fuzzy_find/fuzzy_click
 ]
-cleanup = [
-    "psutil>=5.9",  # For browser_cleanup orphan-process scan
-]
+cleanup = []  # Compatibility extra; process inspection is now a base capability.
 osinput = [
     "pyautogui>=0.9",  # For the OS-level real-cursor click fallback (click os_click)
 ]
