@@ -5,6 +5,8 @@ import base64
 import json
 import sys
 import traceback
+import urllib.error
+import urllib.request
 from importlib.resources import files
 from io import BytesIO
 
@@ -14,6 +16,14 @@ from aiohttp import web
 from PIL import Image
 
 from ai_dev_browser.core.browser import browser_start, browser_stop
+from ai_dev_browser.core.connection import connect_browser, get_active_tab
+from ai_dev_browser.core.port import (
+    _open_chrome_http,
+    _query_chrome_cmdline,
+    _query_chrome_guid,
+    _query_chrome_version,
+    is_port_in_use,
+)
 from ai_dev_browser.remote.cdp import CDP
 from ai_dev_browser.remote.page import PageView
 
@@ -157,6 +167,118 @@ async def connect_page(http, port):
     await cdp.call("Page.enable")
     await cdp.call("Page.bringToFront")
     return cdp, target["id"]
+
+
+async def test_owned_browser_identity_and_close_with_outbound_proxy(
+    remote_site, monkeypatch, tmp_path
+):
+    """An outbound proxy must not intercept owned Chrome's local control path."""
+    requests = []
+
+    async def reject(request):
+        requests.append(request.raw_path)
+        return web.Response(status=502, text="fixture proxy rejects control")
+
+    app = web.Application()
+    app.router.add_route("*", "/{path:.*}", reject)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    proxy = web.TCPSite(runner, "127.0.0.1", 0)
+    await proxy.start()
+    proxy_url = f"http://127.0.0.1:{proxy._server.sockets[0].getsockname()[1]}"
+    for name in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
+        monkeypatch.setenv(name, proxy_url)
+    for name in ("NO_PROXY", "no_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    # urllib caches its default opener; isolate the fixture from earlier tests.
+    monkeypatch.setattr(urllib.request, "_opener", None)
+    browser = None
+    try:
+        # Prove the proxy is active for remote hosts, then watch for any local
+        # HTTP or WebSocket control request escaping to it during the journey.
+        with pytest.raises(urllib.error.HTTPError) as rejected:
+            await asyncio.to_thread(
+                _open_chrome_http,
+                "http://proxy-check.invalid/json/version",
+                "proxy-check.invalid",
+                2,
+            )
+        assert rejected.value.code == 502
+        assert requests == ["http://proxy-check.invalid/json/version"]
+        requests.clear()
+
+        browser = await asyncio.to_thread(
+            browser_start,
+            headless=True,
+            stealth=False,
+            temp=True,
+            silent_stderr=True,
+            extra_args=["--no-sandbox"] if sys.platform == "linux" else [],
+        )
+        assert "error" not in browser, browser
+        assert browser["connected"] is True
+        port = browser["port"]
+        guid = await asyncio.to_thread(_query_chrome_guid, port)
+        assert browser["session_id"] == "cdp-" + guid
+        version = await asyncio.to_thread(_query_chrome_version, port)
+        assert version["Browser"] == browser["browser_version"]
+        args = await asyncio.to_thread(_query_chrome_cmdline, port)
+        assert f"--remote-debugging-port={port}" in args
+
+        async with aiohttp.ClientSession() as http:
+            page, target_id = await connect_page(http, port)
+            try:
+                assert target_id == browser["automation_target_id"]
+                await page.call("Page.navigate", {"url": remote_site[0]})
+                await wait_for(lambda: page.js("document.cookie"), bool)
+                assert "profile=isolated" in await page.js("document.cookie")
+            finally:
+                await page.close()
+        controller = await connect_browser(port=port, session_id=browser["session_id"])
+        try:
+            current = await get_active_tab(controller)
+            assert str(current._target.target_id) == browser["automation_target_id"]
+            assert "profile=isolated" in await current.evaluate(
+                "document.cookie", return_by_value=True
+            )
+        finally:
+            await controller.close()
+        stopped = await asyncio.to_thread(
+            browser_stop, session_id=browser["session_id"]
+        )
+        assert stopped["stopped"] is True and stopped["count"] == 1, stopped
+        assert stopped["browsers"][0]["pid"] == browser["pid"]
+        # Windows can finish child-process teardown after the stop result; wait
+        # for the owned debug listener to disappear before asserting cleanup.
+        await wait_for(
+            lambda: asyncio.to_thread(is_port_in_use, port=port),
+            lambda listening: not listening,
+        )
+        browser = None
+        # Chromium on Linux can legitimately inherit the outbound proxy for
+        # its own background website requests. Only local control is direct.
+        local_control = [
+            request
+            for request in requests
+            if request.startswith(("http://127.0.0.1:", "127.0.0.1:"))
+        ]
+        assert local_control == [], local_control
+        (tmp_path / "proxy-identity-evidence.json").write_text(
+            json.dumps(
+                {
+                    "browser_version": version["Browser"],
+                    "same_automation_target": True,
+                    "local_control_proxy_requests": len(local_control),
+                    "outbound_proxy_requests": len(requests),
+                    "owned_close": stopped,
+                }
+            ),
+            encoding="utf-8",
+        )
+    finally:
+        if browser and browser.get("session_id"):
+            await asyncio.to_thread(browser_stop, session_id=browser["session_id"])
+        await runner.cleanup()
 
 
 @pytest.mark.parametrize("headless", [True, False])
