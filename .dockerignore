@@ -1,0 +1,10 @@
+**
+!ai_dev_browser/
+!ai_dev_browser/**
+!deploy/
+!deploy/managed-chrome/
+!deploy/managed-chrome/**
+**/__pycache__/
+**/*.pyc
+**/*.pem
+**/*.crx

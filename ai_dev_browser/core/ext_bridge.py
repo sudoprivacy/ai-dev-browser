@@ -415,8 +415,26 @@ async def wait_for_extension(
 
 
 def _launch_page(connection_or_path, request_or_headers):
-    """Keep the nonce URL observable while a cold extension worker starts."""
+    """Allow native drivers/extensions, and serve the launch readiness page."""
     legacy = isinstance(connection_or_path, str)
+    headers = request_or_headers if legacy else request_or_headers.headers
+    origins = headers.get_all("Origin")
+    if origins and (
+        len(origins) != 1
+        or not re.fullmatch(r"chrome-extension://[a-p]{32}", origins[0])
+    ):
+        # A web page can otherwise open the loopback bridge and send raw CDP,
+        # bypassing a host's control lease. Native SDK drivers omit Origin;
+        # Chrome supplies the extension Origin itself for the real bridge.
+        if legacy:
+            return (
+                HTTPStatus.FORBIDDEN,
+                [("Content-Type", "text/plain")],
+                b"Browser page origin forbidden",
+            )
+        return connection_or_path.respond(
+            HTTPStatus.FORBIDDEN, "Browser page origin forbidden"
+        )
     path = connection_or_path if legacy else request_or_headers.path
     if not re.fullmatch(r"/adb-launch/[a-f0-9]{32}", path):
         return None

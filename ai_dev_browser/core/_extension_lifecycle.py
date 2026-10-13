@@ -195,6 +195,24 @@ async def start(
         if process.poll() is not None:
             break
         await asyncio.sleep(0.1)
+    # Linux's google-chrome entry point is a shell wrapper that execs Chrome.
+    # Sampling immediately after Popen can record /usr/bin/dash as the physical
+    # executable. Refresh only the same process birth and exact launched root;
+    # the nonce handshake still binds extension ownership to this launch.
+    current = _session.process_info(process.pid)
+    if (
+        current
+        and process.poll() is None
+        and (
+            not observed
+            or current.get("process_created") == observed.get("process_created")
+        )
+        and f"--user-data-dir={root}" in current.get("launch_args", [])
+        and not any(arg.startswith("--type=") for arg in current.get("launch_args", []))
+    ):
+        observed = current
+        record.update(current)
+        _session.remember_launch(token, record)
     if (
         not status
         or status.get("launch_token") != token
@@ -209,6 +227,7 @@ async def start(
             "Chrome launched but the selected profile did not complete the expected extension handshake. Check extension/version/profile and reload the bridge; the launched browser was left running",
             transport="extension",
             pid=process.pid,
+            launch_token=token,
             user_data_dir=str(root),
             profile_directory=profile_directory,
             headless=headless,
