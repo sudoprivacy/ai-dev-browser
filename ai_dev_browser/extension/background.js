@@ -40,6 +40,7 @@ let launchToken = null; // proves an explicitly launched profile answered
 // Automation session state. targetId (string) == chrome tabId as a string.
 let mainTabId = null; // the DEDICATED tab we create (never a user's tab)
 const autoTabs = new Set(); // chrome tabIds we own + have attached debugger to
+const recoveringTabs = new Map();
 const attached = new Set(); // subset of autoTabs with a live chrome.debugger
 
 const dbg = (tid) => ({ tabId: Number(tid) });
@@ -130,9 +131,10 @@ async function attachTab(tabId) {
 // can reject the first attach while it's still committing its first navigation.
 async function followTab(tabId) {
   for (let i = 0; i < 6; i++) {
-    try { await attachTab(tabId); return; }
+    try { await attachTab(tabId); return true; }
     catch { await new Promise((r) => setTimeout(r, 250)); }
   }
+  return false;
 }
 
 function forget(tabId) {
@@ -346,6 +348,7 @@ async function handleCommand(gid, tab, method, params) {
     let result = await browserLevel(method, params || {}, tab);
     if (result === undefined) {
       if (tab == null) throw new Error(`no target for ${method}`);
+      if (recoveringTabs.has(Number(tab))) await recoveringTabs.get(Number(tab));
       if (!autoTabs.has(Number(tab))) throw new Error("Target is not an owned automation tab");
       await attachTab(Number(tab)); // ensure the tab is attached before driving it
       result = await chrome.debugger.sendCommand(dbg(tab), method, params || {});
@@ -422,13 +425,34 @@ chrome.tabs.onCreated.addListener(async (tab) => {
 // Target.getTargets no longer lists it; get_active_tab falls back to the opener.
 chrome.tabs.onRemoved.addListener((tabId) => forget(tabId));
 
-// Debugger detached out from under us (devtools opened on that tab, tab crash,
-// user cancelled the debugging banner) → forget it.
+// Headless branded Chrome may replace the debugger target on cross-process
+// navigation while retaining the SAME authorized tab. Wait for its new target;
+// never replay a command or adopt a different/user tab. Explicit cancellation
+// and an actual closed tab still release ownership.
 chrome.debugger.onDetach.addListener((src, reason) => {
-  if (ws && ws.readyState === 1 && src.tabId != null && autoTabs.has(src.tabId)) {
-    ws.send(JSON.stringify({ _event_tab: String(src.tabId), method: "Inspector.detached", params: { reason } }));
-  }
-  if (src.tabId != null) forget(src.tabId);
+  const tabId = src.tabId;
+  if (tabId == null || !autoTabs.has(tabId)) return;
+  if (recoveringTabs.has(tabId)) return;
+  const recovery = (async () => {
+    let tabPresent = false;
+    try { await chrome.tabs.get(tabId); tabPresent = true; }
+    catch { /* Closed Chrome tab. */ }
+    if (reason === "target_closed" && tabPresent) {
+      attached.delete(tabId);
+      if (await followTab(tabId)) {
+        try {
+          await chrome.debugger.sendCommand(dbg(tabId), "Page.enable", {});
+          return;
+        } catch { /* Reattachment failed: release below. */ }
+      }
+    }
+    if (ws && ws.readyState === 1 && autoTabs.has(tabId)) {
+      ws.send(JSON.stringify({ _event_tab: String(tabId), method: "Inspector.detached", params: { reason, tabPresent } }));
+    }
+    forget(tabId);
+  })();
+  recoveringTabs.set(tabId, recovery);
+  recovery.finally(() => recoveringTabs.delete(tabId));
 });
 
 // extension -> adb: relay CDP events, tagged with the tab they came from. The

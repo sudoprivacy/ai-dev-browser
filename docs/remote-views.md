@@ -95,6 +95,55 @@ or profile storage. Headless sessions run no X display/VNC services. A headful
 session can acquire `VncView` only when its window viewer is requested. A frame
 producer can follow the same lifetime so idle automation performs no encoding.
 
+## A shared browser session
+
+`remote.session.BrowserSession` binds the selected target, control lease and
+lazy viewers to an already authorized `BrowserClient`. The host supplies trusted
+viewer/controller identities. `take()` drains in-flight writes; `give_back()`
+requires a current screenshot and accessibility tree. Agent CDP commands,
+including JavaScript evaluation, pass through the same lease. Switching a tab
+invalidates queued inputs and frames through the target epoch. Disconnecting a
+viewer retains both the browser and human ownership.
+
+The host still owns authorization, durable state, tenant isolation and endpoint
+access. Keep raw CDP/extension endpoints outside the agent's execution namespace;
+calling this session API alone cannot constrain a separate unrestricted shell.
+The extension bridge refuses browser-page WebSocket origins so a page cannot
+open the loopback driver and bypass the host boundary.
+
+For a host-owned initially empty cloud profile,
+`remote.provision.prepare_managed_extension_profile()` verifies installation
+through Chrome's machine policy and a signed extension update server, then
+stops the bootstrap browser before normal extension launch. It checks the exact
+extension ID, preserves background networking for policy installation and
+refuses arbitrary existing profiles. The host provides the policy/update server
+and exclusive profile ownership; the SDK does not modify extension preferences
+or install unpacked code into a user's browser.
+
+### Managed Chrome image
+
+`deploy/managed-chrome/Dockerfile` is the shared Linux runtime for consuming
+hosts. It installs branded stable Chrome and packages the bridge using Chrome's
+supported signing/policy installation. The caller supplies a stable signing key
+as a BuildKit secret; it is never copied into an image layer. Reuse that key for
+updates to persistent profiles.
+
+```sh
+docker build -f deploy/managed-chrome/Dockerfile \
+  --secret id=extension_key,src=/private/extension-signing.pem \
+  --build-arg SOURCE_REVISION=<validated-git-commit> -t managed-chrome .
+```
+
+The host serves `/opt/browser/extension/update.xml` and `bridge.crx` on container
+loopback port 8080 during installation and updates. The image launches no HTTP,
+X11 or VNC service by default; hosts provide their authorized session API and
+start display resources when required. Chrome runs as UID 10001. Persist its
+host-owned profile separately from the image, enforce one runtime owner, and
+pin production images by digest after validating their recorded Chrome version.
+The `Managed branded Chrome` CI job uses an isolated fixture signing key and
+real installed headless extension to exercise the same shared-session workflow
+as CDP, including trusted input, handoff and stale-target rejection.
+
 ## Full window view
 
 Install system `xvfb`, `x11vnc`, `novnc`, `websockify` and `xauth`. Launch Chrome

@@ -1,0 +1,7 @@
+# Pre-commit requires LF, including staged checkouts on Windows.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.gif binary
+*.crx binary
+*.sig binary
