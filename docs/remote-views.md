@@ -51,9 +51,49 @@ surface.dispose();
 The application supplies accessible controls for Unicode/IME text insertion,
 dialogs and supported keys. `PageSurface` is a rendering/input adapter, not a
 complete tab bar, toolbar, WebSocket authorization protocol or React panel.
-The initial adapter uses viewport JPEG snapshots. Interactive streaming,
-drag/clipboard, frame epochs and session-wide AI/human arbitration require
-additional integration; this extraction does not claim those capabilities.
+The initial adapter uses viewport JPEG snapshots. Interactive streaming and
+drag/clipboard require additional integration. The control primitive below
+supports session-wide arbitration; hosts still wire its epochs into frames,
+tool execution and viewer input.
+
+## AI and human control
+
+`remote.control.BrowserControl` serializes operations across every agent and
+viewer attached to one browser. Hosts supply authenticated actor identities,
+isolate the raw browser endpoint and share one instance across all targets.
+
+```python
+from ai_dev_browser.remote.control import BrowserControl, SharedViewer
+
+control = BrowserControl()
+await control.run("ai", control.epoch, control.target_epoch, browser_operation)
+human_state = await control.take(authenticated_controller_id)
+# take() blocks new AI writes immediately and drains the current operation.
+await control.run(authenticated_controller_id, control.epoch,
+                  control.target_epoch, trusted_human_input)
+state, fresh_page = await control.give_back(authenticated_controller_id,
+                                          fresh_observation)
+```
+
+After a transfer or target change, operations carrying an old epoch are
+rejected, including those already queued behind another operation. Arbitrary
+JavaScript evaluation must not be marked as an observation. The host permits
+only an exact read-only allowlist. An interrupted takeover keeps execution
+stopped; a failed or canceled return observation retains human control.
+Viewer disconnect never calls `give_back`. A different viewer does not replace
+the controller without an explicit authorized transfer.
+
+The operation lock covers complete atomic input sequences, including releasing
+pressed input. A host with unrestricted agent shell access must also pause and
+drain those agents; the Python operation gate alone cannot stop a shell from
+calling Chrome directly. Real agent/runtime acceptance remains a consumer test.
+
+`SharedViewer(create_view, close_view)` shares one lazy adapter across viewer
+identities. `attach(id)` creates it only on first use; `detach(id)` closes it
+after the last viewer leaves. Its callbacks own display resources, not Chrome
+or profile storage. Headless sessions run no X display/VNC services. A headful
+session can acquire `VncView` only when its window viewer is requested. A frame
+producer can follow the same lifetime so idle automation performs no encoding.
 
 ## Full window view
 
