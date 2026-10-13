@@ -24,6 +24,7 @@ class _FakeProc:
 def _stub_success_path(monkeypatch):
     monkeypatch.setattr(b, "_kill_process_tree", lambda pid: None)
     monkeypatch.setattr(b, "_query_chrome_guid", lambda port: "guid")
+    monkeypatch.setattr(b, "_query_initial_page", lambda port: "initial-page")
     monkeypatch.setattr(b.registry, "register_instance", lambda **kw: None)
 
 

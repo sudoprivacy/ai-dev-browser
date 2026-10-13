@@ -503,18 +503,21 @@ def browser_start(
             **launch_options,
         )
 
-        # A listening socket can precede Chrome's CDP identity on a loaded host.
-        # Wait for that read-only handshake before registering this launch.
+        # Browser identity can precede the first page on a loaded host.
+        # Wait for both read-only handshakes before reporting a usable session.
         bound = False
         ready_guid = None
+        ready_target = None
         elapsed = 0.0
         wait_started = time.monotonic()
         while elapsed < startup_timeout:
             if is_port_in_use(port=port):
                 ready_guid = _query_chrome_guid(port)
                 if ready_guid:
-                    bound = True
-                    break
+                    ready_target = _query_initial_page(port)
+                    if ready_target:
+                        bound = True
+                        break
             if process.poll() is not None:
                 stderr = process.stderr.read() if process.stderr else ""
                 if not stderr:
@@ -537,7 +540,7 @@ def browser_start(
             last_error = {
                 "error": (
                     f"Chrome started (PID {orphan_pid}) but port {port} not "
-                    f"ready with a CDP browser identity after {startup_timeout}s — process killed to "
+                    f"ready with a CDP browser identity and initial page after {startup_timeout}s — process killed to "
                     f"release profile lockfile. Retry with startup_timeout=<larger> "
                     f"if your environment is slow (Windows + main Chrome running, "
                     f"first-time profile init, AV scanning, etc.)."
@@ -621,6 +624,7 @@ def browser_start(
         "headless": headless_resolved,
         "url": start_url,
         "profile": profile_name,
+        "automation_target_id": ready_target,
         "reused": False,
         "message": f"Browser started on port {port}",
     }
@@ -655,6 +659,22 @@ def browser_start(
         # executable we actually launched; retain the observed path for PID checks.
         start_options["chrome_path"] = str(spawned_args[0])
     return _describe_cdp(result, start_options=start_options, guid=ready_guid)
+
+
+def _query_initial_page(port: int) -> str | None:
+    """A listening browser endpoint does not prove its initial page exists."""
+    import json
+
+    try:
+        with _open_chrome_http(
+            f"http://127.0.0.1:{port}/json/list", "127.0.0.1", 2
+        ) as response:
+            pages = [
+                target for target in json.load(response) if target.get("type") == "page"
+            ]
+        return pages[0].get("id") if pages else None
+    except (OSError, ValueError):
+        return None
 
 
 def _describe_cdp(
@@ -702,21 +722,9 @@ def _describe_cdp(
     record["browser_version"] = version.get("Browser")
     record["profile_id"] = record.get("user_data_dir")
     if not record.get("automation_target_id"):
-        import json
-
-        try:
-            with _open_chrome_http(
-                f"http://127.0.0.1:{port}/json/list", "127.0.0.1", 2
-            ) as response:
-                pages = [
-                    target
-                    for target in json.load(response)
-                    if target.get("type") == "page"
-                ]
-            if pages:
-                record["automation_target_id"] = pages[0]["id"]
-        except (OSError, ValueError):
-            pass
+        record["automation_target_id"] = result.get(
+            "automation_target_id"
+        ) or _query_initial_page(port)
     if start_options:
         record["start_options"] = {
             **start_options,
