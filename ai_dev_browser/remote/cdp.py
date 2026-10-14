@@ -12,6 +12,7 @@ class BrowserViewError(Exception):
 
     def __init__(self, code):
         self.code = code
+        self.details = None
         super().__init__(code)
 
 
@@ -41,7 +42,12 @@ class CDP:
                 future = self.pending.pop(value.get("id"), None)
                 if future and not future.done():
                     if "error" in value:
-                        future.set_exception(self.error_factory("operation_failed"))
+                        error = self.error_factory("operation_failed")
+                        if isinstance(error, BrowserViewError):
+                            # Private host diagnostics; the public message stays
+                            # the generic code and never includes protocol data.
+                            error.details = value["error"]
+                        future.set_exception(error)
                     else:
                         future.set_result(value.get("result", {}))
                 elif self.on_event and value.get("method"):

@@ -226,6 +226,46 @@ pixel, trusted-input and single-submission assertions.
 
 ## Real validation
 
+### Uploads and downloads in the shared session
+
+`remote.files.BrowserFiles` stores uploads and completed downloads in an
+isolated host directory. Clients receive opaque IDs, filenames, sizes and
+SHA-256 values. The host authenticates access, enforces account quotas and
+serializes file operations with its profile lease and browser control gate.
+File IDs from another store cannot resolve to a local path. Partial downloads,
+symbolic links and changed file contents are rejected.
+
+For an idle host-owned profile, `files.configure_managed_profile(profile)`
+sets its download directory and disables the save-location prompt. This leaves
+extension settings intact and refuses a running profile. Prepare a signed
+managed extension profile first, then configure downloads before the final
+Chrome launch. Existing user Chrome keeps its own profile settings.
+
+Extension uploads also require Chrome's local file access setting. For an idle
+host-owned signed profile, explicitly call
+`configure_managed_extension_file_access(..., enabled=True)`; this uses Chrome's
+settings API and verifies its active state. A remote host must expose uploads
+through approved file IDs and restrict agent commands that accept arbitrary
+local paths or file URLs. Keep host credentials outside the browser's readable
+files. The extension debugger's file access check is documented in
+[Chromium's debugger implementation](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/browser/extensions/api/debugger/debugger_api.cc).
+
+Pass `files=files` to `BrowserSession` to intercept native file pickers. State
+and observations expose a `fileChooser` with an opaque request ID and single/
+multiple mode. Stage an authenticated upload with `files.receive(name, bytes)`,
+then send `upload-files` with `chooserId` and `fileIds` through the session's
+normal actor/epoch gate. Selection applies to that browser target exactly once;
+navigation, target changes and consumed chooser IDs invalidate old requests.
+The host keeps the file paths private. The default session remains unchanged
+when no file store is supplied.
+
+`files.collect_downloads()` lists completed stable files, and `files.path(id)`
+verifies their current contents before the host streams bytes to the authorized
+user. Application UI, account checks and network transfer stay in the consuming
+host. The actual Chrome workflow in `test_browser_files_live.py` verifies
+trusted file selection, cookie persistence, exact upload/download contents,
+foreign-file refusal and rejection of a repeated chooser operation.
+
 The `Remote browser view` CI job runs Chrome for Testing on Linux and Windows.
 It exercises a separate real viewer and target browser: scaled pointer input,
 Unicode text, a trusted server-confirmed submission, reconnection to the same

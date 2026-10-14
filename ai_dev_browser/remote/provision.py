@@ -7,12 +7,14 @@ invoke it. It is intended for a host-owned, initially empty cloud profile.
 """
 
 import asyncio
+import json
 import re
 import time
 from pathlib import Path
 
 from ..cdp import runtime
 from ..core._extension_lifecycle import configured_extension
+from ..core._session import profile_processes
 from ..core.browser import browser_start, browser_stop
 from ..core.connection import connect_browser, get_active_tab
 from ..core.ext_bridge import bridge_status, ensure_bridge_running
@@ -133,3 +135,68 @@ async def prepare_managed_extension_profile(
         or not compatible(installed.get("extension_version"))
     ):
         raise ControlError("managed_extension_install_not_verified")
+
+
+async def configure_managed_extension_file_access(
+    user_data_dir: str,
+    *,
+    extension_id: str,
+    enabled: bool,
+    chrome_path: str | None = None,
+    extra_args: list[str] | None = None,
+):
+    """Apply an explicit file-upload permission in an idle host-owned profile.
+
+    Uses Chrome's extension settings API and verifies its actual state. The
+    host must hold this profile's exclusive lease. Ordinary user Chrome
+    connection does not call this helper or change its permissions.
+    """
+    if type(enabled) is not bool:
+        raise TypeError("enabled must be a boolean")
+    root = Path(user_data_dir).resolve()
+    installed = configured_extension(root, "Default")
+    if not installed or installed["extension_id"] != extension_id:
+        raise ControlError("managed_extension_identity_changed")
+    if profile_processes(root):
+        raise ControlError("managed_browser_profile_process_still_running")
+    launched = await asyncio.to_thread(
+        browser_start,
+        profile=str(root),
+        headless=True,
+        chrome_path=chrome_path,
+        override_default_args={
+            "--disable-extensions": None,
+            "--disable-background-networking": None,
+        },
+        extra_args=extra_args,
+        stealth=False,
+        silent_stderr=True,
+    )
+    if "error" in launched:
+        raise ControlError("managed_profile_bootstrap_failed")
+    client = None
+    try:
+        client = await connect_browser(session_id=launched["session_id"])
+        tab = await get_active_tab(client)
+        await page_goto(tab, "chrome://extensions/")
+        update = json.dumps({"extensionId": extension_id, "fileAccess": enabled})
+        identity = json.dumps(extension_id)
+        expression = (
+            f"chrome.developerPrivate.updateExtensionConfiguration({update})"
+            ".then(()=>chrome.developerPrivate.getExtensionsInfo({includeDisabled:true}))"
+            f".then(items=>items.find(item=>item.id==={identity})?.fileAccess?.isActive)"
+        )
+        result, exception = await tab.send(
+            runtime.evaluate(expression, await_promise=True, return_by_value=True)
+        )
+        if exception or result.value is not enabled:
+            raise ControlError("managed_extension_file_access_not_verified")
+        return {"extensionId": extension_id, "fileAccess": enabled}
+    finally:
+        if client:
+            await client.close()
+        stopped = await asyncio.to_thread(
+            browser_stop, session_id=launched["session_id"]
+        )
+        if stopped.get("stopped") is not True:
+            raise ControlError("managed_profile_bootstrap_not_stopped")
