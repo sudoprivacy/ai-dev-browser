@@ -11,9 +11,12 @@ import re
 import time
 from pathlib import Path
 
+from ..cdp import runtime
 from ..core._extension_lifecycle import configured_extension
 from ..core.browser import browser_start, browser_stop
+from ..core.connection import connect_browser, get_active_tab
 from ..core.ext_bridge import bridge_status, ensure_bridge_running
+from ..core.navigation import page_goto
 from .control import ControlError
 
 
@@ -69,11 +72,38 @@ async def prepare_managed_extension_profile(
         },
         extra_args=extra_args,
         stealth=False,
-        silent_stderr=True,
+        # Bootstrap is short lived; retain exit-time diagnostics for an update
+        # failure. Long-running host-owned Chrome keeps its own logging policy.
+        silent_stderr=False,
     )
     if "error" in browser:
-        raise ControlError("managed_profile_bootstrap_failed")
+        raise ControlError(
+            "managed_profile_bootstrap_failed",
+            details={
+                key: browser.get(key)
+                for key in ("error", "error_code", "pid", "port", "started", "reused")
+            },
+        )
     try:
+        if installed:
+            # Use Chrome's own Update action for the host-owned profile. Its
+            # background update schedule is insufficient for a bounded upgrade.
+            # Chromium extensions/service.ts uses this same native API.
+            client = await connect_browser(session_id=browser["session_id"])
+            try:
+                tab = await get_active_tab(client)
+                await page_goto(tab, "chrome://extensions/")
+                result, exception = await tab.send(
+                    runtime.evaluate(
+                        "chrome.developerPrivate.autoUpdate().then(()=>true)",
+                        await_promise=True,
+                        return_by_value=True,
+                    )
+                )
+                if exception or result.value is not True:
+                    raise ControlError("managed_extension_update_request_failed")
+            finally:
+                await client.close()
         deadline = time.monotonic() + timeout
         while True:
             status = await bridge_status()

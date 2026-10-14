@@ -71,7 +71,6 @@ policy = {
             "installation_mode": "force_installed",
             "update_url": "http://127.0.0.1:8080/update.xml",
             "override_update_url": True,
-            "minimum_version_required": version,
         }
     },
 }

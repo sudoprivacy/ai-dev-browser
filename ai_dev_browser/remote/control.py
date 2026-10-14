@@ -13,8 +13,9 @@ ControlState = Literal["ai", "pausing", "human", "observing", "error"]
 
 
 class ControlError(RuntimeError):
-    def __init__(self, code: str):
+    def __init__(self, code: str, *, details: dict[str, Any] | None = None):
         self.code = code
+        self.details = details
         super().__init__(code)
 
 

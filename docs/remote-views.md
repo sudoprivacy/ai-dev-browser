@@ -166,12 +166,17 @@ target_epoch)` under the authenticated human identity. A tab switch invalidates
 old coordinates and updates the target used by AI's fresh observation. The
 machine-managed image explicitly sets `ManagedBrowserProfile` to share every
 tab in its isolated profile. Ordinary installed extensions continue to expose
-only dedicated automation tabs. Machine policy also requires the image's
-extension version; profile preparation can enforce `minimum_version` without
-replacing the persistent profile.
+only dedicated automation tabs. Profile preparation enforces `minimum_version`
+before the host exposes normal agent control. An older installation is updated
+through Chrome's native Update action, then verified against its installed
+version and bridge handshake while preserving the same persistent profile.
 
 This uses Chrome's [managed storage schema](https://developer.chrome.com/docs/extensions/reference/manifest/storage)
-and [minimum extension version policy](https://support.google.com/chrome/a/answer/9867568?hl=en).
+and the [extension manager's native update API](https://chromium.googlesource.com/chromium/src/%2B/4c400b5eade7/chrome/browser/resources/extensions/service.ts).
+Version enforcement belongs to the host's preparation step. In the actual
+Chrome 155 migration fixture, setting Chrome's minimum-version policy disabled
+the older extension and crashed bootstrap; the host check preserves the version
+requirement while allowing Chrome to perform the signed update.
 
 `WindowView.input` supports native `AddressBar`, `NewTab`, `NextTab`,
 `PreviousTab` and `CloseTab` keys alongside the page input keys. Hosts should
