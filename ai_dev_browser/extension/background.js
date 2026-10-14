@@ -12,9 +12,10 @@
 // ordinary tab machinery (tab_list / tab_switch / get_active_tab) work here
 // unchanged.
 //
-// Multi-tab: we drive a DEDICATED automation tab and FOLLOW tabs our automation
-// opens (an OAuth "Continue with Google" popup, a magic-link new tab) — but we
-// NEVER attach to a tab the user opened. A new tab is followed only if the tab
+// Ordinary profiles use a DEDICATED automation tab and FOLLOW tabs automation
+// opens (an OAuth "Continue with Google" popup, a magic-link new tab). A
+// machine-managed isolated profile can explicitly share all its tabs. Without
+// that administrator policy, a new tab is followed only if the tab
 // whose content opened it is one we already drive — keyed on webNavigation's
 // sourceTabId (reliable for a backgrounded caller), with tabs.onCreated's
 // openerTabId as a fallback.
@@ -197,6 +198,7 @@ async function announce() {
     _hello: true, account: await profileAccount(), profile_id: profileId,
     session_id: sessionId, launch_token: launchToken,
     automation_target_id: mainTabId == null ? null : String(mainTabId), browser_version: navigator.userAgent,
+    extension_version: chrome.runtime.getManifest().version,
   }));
 }
 
@@ -247,8 +249,11 @@ function toCdpCookie(c) {
 }
 
 async function targetInfos() {
-  // The automation tabs we own, as CDP TargetInfos. Only OUR tabs are ever
-  // exposed — adb never sees (or can touch) the user's other tabs.
+  if (await managedProfile()) {
+    for (const tab of await chrome.tabs.query({})) autoTabs.add(tab.id);
+  }
+  // Managed isolated profiles explicitly share their tabs. Ordinary profiles
+  // expose only automation tabs, preserving the user's unrelated tabs.
   const infos = [];
   for (const tabId of [...autoTabs]) {
     let t;
@@ -267,6 +272,60 @@ async function targetInfos() {
   return infos;
 }
 
+let managedPolicyValue = null;
+let managedPolicyRead = null;
+let managedPolicyGeneration = 0;
+let managedPolicyPending = false;
+let managedPolicyRetryAt = 0;
+async function managedProfile() {
+  if (managedPolicyValue !== null) {
+    if (managedPolicyValue || managedPolicyPending || Date.now() < managedPolicyRetryAt) return managedPolicyValue;
+    managedPolicyValue = null;
+    managedPolicyRead = null;
+  }
+  const generation = managedPolicyGeneration;
+  if (!managedPolicyRead) {
+    // Some ordinary Windows profiles never settle managed storage reads. Tab
+    // discovery must still work without granting access to unrelated user tabs.
+    managedPolicyPending = true;
+    managedPolicyRead = Promise.resolve()
+      .then(() => chrome.storage.managed.get({ ManagedBrowserProfile: false }))
+      .then(policy => {
+        if (generation !== managedPolicyGeneration) return false;
+        managedPolicyPending = false;
+        managedPolicyRetryAt = Date.now() + 250;
+        return managedPolicyValue = policy.ManagedBrowserProfile === true;
+      })
+      .catch(() => {
+        if (generation === managedPolicyGeneration) {
+          managedPolicyPending = false;
+          managedPolicyRetryAt = Date.now() + 250;
+          managedPolicyValue = false;
+        }
+        return false;
+      });
+  }
+  let timer;
+  try {
+    return await Promise.race([
+      managedPolicyRead,
+      new Promise(resolve => { timer = setTimeout(() => {
+        if (generation === managedPolicyGeneration) managedPolicyValue = false;
+        resolve(false);
+      }, 1000); }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+if (chrome.storage.onChanged) chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "managed") {
+    managedPolicyGeneration++;
+    managedPolicyValue = null;
+    managedPolicyRead = null;
+    managedPolicyPending = false;
+    managedPolicyRetryAt = 0;
+  }
+});
+
 // Browser-level CDP a per-tab chrome.debugger can't answer — served via the
 // sanctioned extension APIs. Returns undefined for anything not shimmed, so the
 // caller falls through to chrome.debugger.
@@ -277,6 +336,12 @@ async function browserLevel(method, params, tab) {
       return {};
     case "Target.getTargets":
       return { targetInfos: await targetInfos() };
+    case "AiDevBrowser.getActiveTarget": {
+      await targetInfos();
+      const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      const active = tabs.find(tab => autoTabs.has(tab.id));
+      return { targetId: active ? String(active.id) : null };
+    }
     case "Target.getTargetInfo": {
       const id = (params && params.targetId) || tab;
       const all = await targetInfos();
@@ -314,7 +379,7 @@ async function browserLevel(method, params, tab) {
     case "AiDevBrowser.debugState":
       // Introspection for field support (not a real CDP method): which tabs
       // does the extension think it owns / has attached right now?
-      return { mainTabId, autoTabs: [...autoTabs], attached: [...attached], profileId, sessionId, launchToken };
+      return { mainTabId, autoTabs: [...autoTabs], attached: [...attached], profileId, sessionId, launchToken, managedProfile: await managedProfile(), extensionVersion: chrome.runtime.getManifest().version };
     case "AiDevBrowser.closeBrowser":
       // The Python lifecycle layer verifies PID ownership/authorization first.
       // This is explicit process-wide close; disconnect never calls it.

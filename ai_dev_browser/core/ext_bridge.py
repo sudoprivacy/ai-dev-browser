@@ -117,6 +117,7 @@ class _Bridge:
                 "launch_token",
                 "automation_target_id",
                 "browser_version",
+                "extension_version",
             )
         }
         logger.info("extension connected (account=%s)", self.account)

@@ -35,6 +35,7 @@ def main():
                 "-o",
                 "cache_dir=/tmp/managed-pytest-cache",
                 "tests/integration/test_browser_session_live.py",
+                "tests/integration/test_remote_window_live.py",
                 "--basetemp",
                 "/tmp/managed-results",
             ]

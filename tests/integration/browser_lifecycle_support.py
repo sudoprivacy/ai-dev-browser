@@ -177,7 +177,11 @@ class LifecycleCLI:
             return run.stdout
         assert run.stdout.strip(), (tool, run.returncode, run.stderr)
         result = json.loads(run.stdout)
-        if tool == "browser_start" and result.get("pid") and not result.get("reused"):
+        if (
+            tool in ("browser_start", "browser_restart")
+            and result.get("pid")
+            and not result.get("reused")
+        ):
             from ai_dev_browser.core import _session
 
             observed = _session.process_info(result["pid"])
@@ -346,7 +350,9 @@ def prepare_profile(root, binary, port, login_url=None):
                 page.evaluate(
                     "window.adbInstalled=false;chrome.developerPrivate.loadUnpacked({},()=>window.adbInstalled=chrome.runtime.lastError?chrome.runtime.lastError.message:true)"
                 )
-                stdout, stderr = selected.communicate(timeout=25)
+                # A cold Windows UI Automation/COM import can consume much of
+                # the folder picker's own 20s deadline before it starts.
+                stdout, stderr = selected.communicate(timeout=60)
                 assert selected.returncode == 0, (stdout, stderr)
                 deadline = time.monotonic() + 10
                 while (
@@ -373,6 +379,11 @@ def prepare_profile(root, binary, port, login_url=None):
             assert len(expected) == 1, [
                 (e.get("name"), e.get("path")) for e in installed
             ]
+            # Capture installation evidence in a dedicated tab, separated from
+            # Chrome's initial extension bootstrap tab. The profile/extension
+            # assertions still apply to the browser actually installed above.
+            page = context.new_page()
+            page.goto("chrome://extensions")
             page.screenshot(path=str(root / "installed-extension.png"))
             if login_url:
                 page.goto(login_url)
