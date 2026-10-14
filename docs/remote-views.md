@@ -156,8 +156,12 @@ an Xvfb framebuffer alone does not provide those desktop behaviors.
 For an authenticated host that already transports page frames and typed input,
 `ai_dev_browser.remote.window.WindowView(display=isolated_display)` captures the
 same isolated X11 Chrome window as JPEG frames and accepts native mouse, text
-and keyboard input. Install `xdotool` and Pillow. Text travels through stdin;
+and keyboard input. Install `xdotool`, `xclip` and Pillow. Text travels through stdin;
 input is bounded and never retried. Wrap every call in the host's control lease.
+Unicode text uses a native paste on this isolated display, avoiding temporary
+keyboard mappings that can drop characters under load. Clipboard ownership
+lasts until the next text insertion or `await view.close()`. Close each window
+view before its display. The user's local desktop clipboard is never accessed.
 This adapter starts no display, browser or listening service. The host can
 reuse `PageSurface` for both page and window pixels.
 

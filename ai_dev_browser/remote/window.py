@@ -7,6 +7,7 @@ import math
 import os
 import re
 import shutil
+from contextlib import suppress
 
 from PIL import ImageGrab
 
@@ -117,6 +118,8 @@ class WindowView:
             raise ValueError("Window view requires valid limits and xdotool")
         self.display, self.quality, self.max_text = display, quality, max_text
         self.width = self.height = 0
+        self._clipboard = None
+        self._clipboard_reader = None
 
     async def capture(self):
         def grab():
@@ -156,6 +159,81 @@ class WindowView:
             raise
         if process.returncode:
             raise RuntimeError("Window input failed; input was not replayed")
+
+    async def _paste(self, text):
+        # Only this host-owned X display is touched. Unicode keyboard mapping
+        # changes can race Chrome's key processing and drop characters. A
+        # native paste sends the exact UTF-8 bytes in one selection transfer.
+        if not shutil.which("xclip"):
+            raise RuntimeError("Native Unicode input requires xclip")
+        process = await asyncio.create_subprocess_exec(
+            "xclip",
+            "-selection",
+            "clipboard",
+            "-in",
+            "-loops",
+            "0",
+            "-verbose",
+            env={**os.environ, "DISPLAY": self.display, "LC_ALL": "C.UTF-8"},
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            process.stdin.write(text.encode("utf-8"))
+            await process.stdin.drain()
+            process.stdin.close()
+            await process.stdin.wait_closed()
+
+            async def ready():
+                while True:
+                    line = await process.stderr.readline()
+                    if not line:
+                        raise RuntimeError("Native clipboard did not become ready")
+                    if b"Waiting for selection requests" in line:
+                        return
+
+            await asyncio.wait_for(ready(), 5)
+            previous, previous_reader = self._clipboard, self._clipboard_reader
+            self._clipboard = process
+
+            async def drain():
+                while await process.stderr.read(4096):
+                    pass
+
+            self._clipboard_reader = asyncio.create_task(drain())
+            await self._close_clipboard(previous, previous_reader)
+            await self._run("key", "--clearmodifiers", "ctrl+v")
+            # Chrome also reads the selection proactively. Retain ownership
+            # until the next text or viewer close, so that such a read cannot
+            # consume the clipboard before the actual paste arrives.
+            if process.returncode is not None:
+                raise RuntimeError("Native clipboard closed; no input was replayed")
+        except BaseException:
+            if self._clipboard is process:
+                await self.close()
+            else:
+                await self._close_clipboard(process, None)
+            raise
+
+    @staticmethod
+    async def _close_clipboard(process, reader):
+        if process and process.returncode is None:
+            with suppress(ProcessLookupError):
+                process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), 2)
+            except TimeoutError:
+                with suppress(ProcessLookupError):
+                    process.kill()
+                await process.wait()
+        if reader:
+            await reader
+
+    async def close(self):
+        process, self._clipboard = self._clipboard, None
+        reader, self._clipboard_reader = self._clipboard_reader, None
+        await self._close_clipboard(process, reader)
 
     async def input(self, event):
         if not isinstance(event, dict):
@@ -203,14 +281,15 @@ class WindowView:
                 or any(ord(char) < 32 for char in text)
             ):
                 return False
-            # Stdin keeps passwords out of process arguments. Unicode symbols
-            # temporarily change X11 key mappings. Space those changes so Chrome
-            # consumes each key before libxdo restores/reuses its mapping.
+            if not text.isascii():
+                await self._paste(text)
+                return True
+            # Stdin keeps passwords out of process arguments.
             await self._run(
                 "type",
                 "--clearmodifiers",
                 "--delay",
-                "25" if not text.isascii() else "1",
+                "1",
                 "--file",
                 "-",
                 text=text,

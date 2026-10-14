@@ -206,7 +206,8 @@ class Worker:
             raise ControlError("browser_window_view_unavailable")
         return WindowView(display=self.display.display)
 
-    async def close_window(self, _view):
+    async def close_window(self, view):
+        await view.close()
         self.window_frame = None
 
     @staticmethod
