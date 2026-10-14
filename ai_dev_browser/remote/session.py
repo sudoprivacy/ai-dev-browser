@@ -7,6 +7,7 @@ its connections and viewers; disconnecting it never stops Chrome.
 
 import logging
 import time
+import uuid
 from typing import Any
 
 import aiohttp
@@ -17,7 +18,9 @@ from .page import PageView
 
 
 class BrowserSession:
-    def __init__(self, browser, http: aiohttp.ClientSession, *, control=None):
+    def __init__(
+        self, browser, http: aiohttp.ClientSession, *, control=None, files=None
+    ):
         self.browser = browser
         self.http = http
         self.control = control or BrowserControl()
@@ -25,6 +28,8 @@ class BrowserSession:
         self._page = None
         self._browser = None
         self._dialog = None
+        self.files = files
+        self._file_chooser = None
         self._size = (1280, 900)
         self._viewers: set[str] = set()
         self._frame: dict[str, Any] | None = None
@@ -45,13 +50,31 @@ class BrowserSession:
         self._viewers.discard(viewer)
         await self._view.detach(viewer)
 
+    def file_chooser(self):
+        chooser = self._file_chooser
+        return {key: chooser[key] for key in ("id", "mode")} if chooser else None
+
     def _event(self, method, params):
         if method == "Page.javascriptDialogOpening":
             self._dialog = params
         elif method == "Page.javascriptDialogClosed":
             self._dialog = None
+        elif method == "Page.fileChooserOpened" and self.files is not None:
+            node = params.get("backendNodeId")
+            mode = params.get("mode")
+            if (
+                type(node) is int
+                and node > 0
+                and mode in ("selectSingle", "selectMultiple")
+            ):
+                self._file_chooser = {
+                    "id": uuid.uuid4().hex,
+                    "mode": mode,
+                    "node": node,
+                }
         elif method in ("Page.frameNavigated", "Page.loadEventFired"):
             self._frame = None
+            self._file_chooser = None
         elif method == "Inspector.detached":
             logging.getLogger(__name__).warning("Browser debugger detached: %s", params)
             self._frame = None
@@ -78,6 +101,7 @@ class BrowserSession:
             self._page = None
         self.target_id = target_id
         self._dialog = None
+        self._file_chooser = None
         self._frame = None
         self.control.change_target()
 
@@ -101,6 +125,12 @@ class BrowserSession:
         # A lost input socket is not silently reconnected/replayed.
         if self._page.disconnected:
             raise ControlError("browser_disconnected")
+        if self.files is not None:
+            # Extension Chrome may replace its debugger attachment during a
+            # navigation. Keep this session-scoped setting on the current one.
+            await self._page.call(
+                "Page.setInterceptFileChooserDialog", {"enabled": True}
+            )
         return self._page
 
     async def _connect_browser(self):
@@ -127,6 +157,11 @@ class BrowserSession:
                 "activeTargetId": self.target_id,
                 "tabs": tabs,
                 "dialog": self._dialog,
+                **(
+                    {"fileChooser": self.file_chooser()}
+                    if self.files is not None
+                    else {}
+                ),
             }
 
         return await self.control.run(
@@ -182,6 +217,7 @@ class BrowserSession:
             "tabs": tabs,
             "accessibility": tree.get("nodes", []),
             "dialog": self._dialog,
+            **({"fileChooser": self.file_chooser()} if self.files is not None else {}),
             "frame": {
                 "data": data,
                 "width": width,
@@ -232,7 +268,34 @@ class BrowserSession:
                         await self._refresh()
                 return
             page = await self._connect_page()
-            if kind == "input":
+            if kind == "upload-files":
+                chooser = self._file_chooser
+                if (
+                    self.files is None
+                    or not chooser
+                    or action.get("chooserId") != chooser["id"]
+                ):
+                    raise ControlError("browser_file_chooser_changed")
+                file_ids = action.get("fileIds")
+                if (
+                    not isinstance(file_ids, list)
+                    or not 1 <= len(file_ids) <= 20
+                    or any(not isinstance(value, str) for value in file_ids)
+                ):
+                    raise ControlError("browser_files_invalid_selection")
+                if len(set(file_ids)) != len(file_ids):
+                    raise ControlError("browser_files_invalid_selection")
+                if chooser["mode"] == "selectSingle" and len(file_ids) != 1:
+                    raise ControlError("browser_files_invalid_selection")
+                paths = [
+                    str(self.files.path(file_id, kind="upload")) for file_id in file_ids
+                ]
+                await page.call(
+                    "DOM.setFileInputFiles",
+                    {"backendNodeId": chooser["node"], "files": paths},
+                )
+                self._file_chooser = None
+            elif kind == "input":
                 width, height = await self._dimensions(page)
                 if not await PageView().input(
                     page,

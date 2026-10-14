@@ -5,9 +5,9 @@ empty /profile is used; no developer/user Chrome installation is modified.
 """
 
 import functools
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import os
 import threading
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
@@ -36,6 +36,7 @@ def main():
                 "cache_dir=/tmp/managed-pytest-cache",
                 "tests/integration/test_browser_session_live.py",
                 "tests/integration/test_remote_window_live.py",
+                "tests/integration/test_browser_files_live.py",
                 "--basetemp",
                 "/tmp/managed-results",
             ]
