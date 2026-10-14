@@ -25,6 +25,12 @@ jobs:
       - name: Install build tooling
         run: python -m pip install --upgrade build twine
 
+      - name: Bind the package version to the requested release tag
+        run: |
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
+          echo "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_AI_DEV_BROWSER=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
       - name: Build distributions
         run: python -m build
 
@@ -32,7 +38,7 @@ jobs:
         run: python -m twine check dist/*
 
       - name: Package the bundled extension and artifact checksums
-        run: python scripts/build_release_assets.py --dist dist --output release-assets
+        run: python scripts/build_release_assets.py --dist dist --output release-assets --expected-version "${GITHUB_REF_NAME#v}"
 
       - uses: actions/upload-artifact@v4
         with:
