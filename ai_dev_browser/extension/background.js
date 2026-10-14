@@ -275,20 +275,33 @@ async function targetInfos() {
 let managedPolicyValue = null;
 let managedPolicyRead = null;
 let managedPolicyGeneration = 0;
+let managedPolicyPending = false;
+let managedPolicyRetryAt = 0;
 async function managedProfile() {
-  if (managedPolicyValue !== null) return managedPolicyValue;
+  if (managedPolicyValue !== null) {
+    if (managedPolicyValue || managedPolicyPending || Date.now() < managedPolicyRetryAt) return managedPolicyValue;
+    managedPolicyValue = null;
+    managedPolicyRead = null;
+  }
   const generation = managedPolicyGeneration;
   if (!managedPolicyRead) {
     // Some ordinary Windows profiles never settle managed storage reads. Tab
     // discovery must still work without granting access to unrelated user tabs.
+    managedPolicyPending = true;
     managedPolicyRead = Promise.resolve()
       .then(() => chrome.storage.managed.get({ ManagedBrowserProfile: false }))
       .then(policy => {
         if (generation !== managedPolicyGeneration) return false;
+        managedPolicyPending = false;
+        managedPolicyRetryAt = Date.now() + 250;
         return managedPolicyValue = policy.ManagedBrowserProfile === true;
       })
       .catch(() => {
-        if (generation === managedPolicyGeneration) managedPolicyValue = false;
+        if (generation === managedPolicyGeneration) {
+          managedPolicyPending = false;
+          managedPolicyRetryAt = Date.now() + 250;
+          managedPolicyValue = false;
+        }
         return false;
       });
   }
@@ -308,6 +321,8 @@ if (chrome.storage.onChanged) chrome.storage.onChanged.addListener((changes, are
     managedPolicyGeneration++;
     managedPolicyValue = null;
     managedPolicyRead = null;
+    managedPolicyPending = false;
+    managedPolicyRetryAt = 0;
   }
 });
 
