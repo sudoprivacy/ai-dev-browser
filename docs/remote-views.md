@@ -203,6 +203,45 @@ display, so a display must not be shared across users.
 
 ## Integration ownership
 
+### Shared application worker
+
+`ai_dev_browser.remote.worker.Worker` hosts the same session, persistent profile,
+control journal, HTTP MCP, page viewer and file transfer for local and cloud
+applications. The application authenticates users and supplies an opaque
+`orgId`/`userId`/`sessionId` binding. It owns deployment, account access and the
+agent execution barrier. Host and AI credentials must be distinct. The AI
+credential cannot take or return human control.
+
+Use `display_mode="native"` for Desktop. Chrome runs on the user's desktop and
+the shared panel can render its page surface. Native window controls remain in
+Chrome; the worker reports `windowView=false`. Use `display_mode="x11"` for an
+isolated Linux display and the existing remote window surface. Headless browsing
+starts no display process. Every browser launch still requires an explicit
+`isHeadless` choice; display mode does not decide it.
+
+The host can configure a signed managed extension directory and Chrome launch
+arguments. The worker does not change Chrome policy or disable its sandbox by
+default. Cloud containers supply their own deployment policy.
+
+The standalone worker binds loopback by default:
+
+```sh
+python -m ai_dev_browser.remote.worker --profile-root /owned/profile \
+  --display native --host 127.0.0.1 --port 8080
+```
+
+Supply `AI_DEV_BROWSER_WORKER_HOST_TOKEN` and
+`AI_DEV_BROWSER_WORKER_AI_TOKEN` through the environment. The worker removes
+them before Chrome starts. Remote exposure requires the application's
+authenticated gateway. `X-ADB-Browser-Context` scopes file transport and
+`X-ADB-Browser-Session` scopes MCP calls; existing Moss headers remain compatible.
+
+Real HTTP acceptance on Windows covers native headless and headful Chrome, two
+viewers of one target, trusted Unicode input, blocked AI writes during takeover,
+fresh observation after return, and one trusted submission with the original
+cookie. The same journey runs in Linux and Windows CI. Host/LLM acceptance is
+still required when an application adopts this worker.
+
 Ladder retains merchant/account checks, selected-plan validation, allowed pages,
 invitation revocation, payment retry decisions, OAuth state and proxy identity.
 Its private exception adapter maps generic transport errors to existing public

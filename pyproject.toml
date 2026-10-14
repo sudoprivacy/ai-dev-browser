@@ -65,7 +65,7 @@ include = ["ai_dev_browser*"]
 # --load-extension, so it can't be auto-activated). Path is resolved at runtime
 # by core/extension.py::extension_dir().
 [tool.setuptools.package-data]
-ai_dev_browser = ["extension/*", "remote/*.js"]
+ai_dev_browser = ["extension/*", "remote/*.js", "remote/*.json"]
 
 [tool.ruff]
 # Both copies of the vendored CDP protocol module: the generated one inside the

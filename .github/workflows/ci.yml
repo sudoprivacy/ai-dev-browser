@@ -158,13 +158,13 @@ jobs:
         env:
           AI_DEV_BROWSER_CHROME: ${{ steps.chrome.outputs.chrome-path }}
           AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.chrome.outputs.chrome-path }}
-        run: xvfb-run -a -s "-screen 0 1280x1000x24" python -m pytest -v tests/integration/test_remote_view.py tests/integration/test_remote_vnc.py tests/integration/test_browser_control_live.py tests/integration/test_browser_session_live.py tests/integration/test_browser_files_live.py --basetemp remote-results
+        run: xvfb-run -a -s "-screen 0 1280x1000x24" python -m pytest -v tests/integration/test_remote_view.py tests/integration/test_remote_vnc.py tests/integration/test_browser_control_live.py tests/integration/test_browser_session_live.py tests/integration/test_browser_files_live.py tests/integration/test_browser_worker_live.py --basetemp remote-results
       - name: Run page and extension workflows on Windows
         if: runner.os == 'Windows'
         env:
           AI_DEV_BROWSER_CHROME: ${{ steps.chrome.outputs.chrome-path }}
           AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.chrome.outputs.chrome-path }}
-        run: python -m pytest -v tests/integration/test_remote_view.py tests/integration/test_browser_control_live.py tests/integration/test_browser_session_live.py tests/integration/test_browser_files_live.py --basetemp remote-results
+        run: python -m pytest -v tests/integration/test_remote_view.py tests/integration/test_browser_control_live.py tests/integration/test_browser_session_live.py tests/integration/test_browser_files_live.py tests/integration/test_browser_worker_live.py --basetemp remote-results
       - name: Retain real viewer evidence
         if: always()
         uses: actions/upload-artifact@v4
