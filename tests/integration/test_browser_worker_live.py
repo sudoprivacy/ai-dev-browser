@@ -181,5 +181,20 @@ async def test_native_worker_preserves_identity_handoff_and_cookie(
                 and remote_site[1][0]["name"] == "Shared worker 中文"
             )
             assert remote_site[1][0]["cookie"] == "isolated"
+            held = (await host({"kind": "take", **epochs(fresh)}))["session"]
+            stopping = asyncio.create_task(host({"kind": "stop", **epochs(held)}))
+            snapshots = []
+            while not stopping.done():
+                snapshots.append((await host({"kind": "state"}))["session"])
+            stopped = (await stopping)["session"]
+            assert snapshots
+            assert all(
+                value["state"] in ("human", "pausing", "stopped") for value in snapshots
+            )
+            assert all(value["isHumanControlHeld"] for value in snapshots)
+            assert (
+                stopped["state"] == "stopped"
+                and stopped["profileId"] == fresh["profileId"]
+            )
         finally:
             await runner.cleanup()

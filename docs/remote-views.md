@@ -83,6 +83,11 @@ stopped; a failed or canceled return observation retains human control.
 Viewer disconnect never calls `give_back`. A different viewer does not replace
 the controller without an explicit authorized transfer.
 
+Worker status remains available while a browser starts, stops or is rebound.
+During that transition it reports `pausing`, retains the human control lease,
+and disables page/window input until the operation finishes. Status never
+queries a retiring browser driver or reconnects it automatically.
+
 The operation lock covers complete atomic input sequences, including releasing
 pressed input. A host with unrestricted agent shell access must also pause and
 drain those agents; the Python operation gate alone cannot stop a shell from
