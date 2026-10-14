@@ -148,10 +148,14 @@ async def test_real_file_picker_and_download_keep_profile_and_control(
             session = BrowserSession(client, http, files=files)
             initial_target = session.target_id
             assert initial_target == launched["automation_target_id"]
-            await session.action("ai", 0, 0, {"kind": "navigate", "url": url})
-            await wait_for(
-                lambda: session._page.js("!!document.querySelector('#upload')"), bool
-            )
+            # Cross-site navigations replace managed Chrome's debugger target.
+            # Each navigation must finish on its new document before the very
+            # first read, without replaying a navigation or a user operation.
+            for destination in [url, url.replace("127.0.0.1", "localhost"), url] * 2:
+                await session.action(
+                    "ai", 0, 0, {"kind": "navigate", "url": destination}
+                )
+                assert await session._page.js("!!document.querySelector('#upload')")
             original_event = session._page.on_event
 
             def on_event(method, params):

@@ -206,7 +206,8 @@ class Worker:
             raise ControlError("browser_window_view_unavailable")
         return WindowView(display=self.display.display)
 
-    async def close_window(self, _view):
+    async def close_window(self, view):
+        await view.close()
         self.window_frame = None
 
     @staticmethod
@@ -750,7 +751,10 @@ def application(worker):
     async def receive_file(request):
         context = file_context(request)
         epoch, target_epoch = worker.epochs(context)
-        name = unquote(request.headers.get("X-Moss-Browser-File-Name", ""))
+        name = unquote(
+            request.headers.get("X-ADB-Browser-File-Name")
+            or request.headers.get("X-Moss-Browser-File-Name", "")
+        )
         payload = bytearray()
         async for chunk in request.content.iter_chunked(64 * 1024):
             payload.extend(chunk)
@@ -946,6 +950,7 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--display", choices=("native", "x11"), default="native")
     parser.add_argument("--extension-directory")
+    parser.add_argument("--chrome-arg", action="append", default=[])
     options = parser.parse_args()
     host_token = os.environ.pop("AI_DEV_BROWSER_WORKER_HOST_TOKEN")
     ai_token = os.environ.pop("AI_DEV_BROWSER_WORKER_AI_TOKEN")
@@ -956,6 +961,7 @@ if __name__ == "__main__":
         chrome_path=os.environ.get("AI_DEV_BROWSER_CHROME"),
         display_mode=options.display,
         extension_directory=options.extension_directory,
+        chrome_args=options.chrome_arg,
     )
     web.run_app(
         application(worker),

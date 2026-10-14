@@ -9,6 +9,8 @@ RUN if [ -n "$UBUNTU_MIRROR" ]; then sed -i "s|http://archive.ubuntu.com/ubuntu/
     && curl -fsSLo /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
     && apt-get install -y --no-install-recommends /tmp/chrome.deb && rm /tmp/chrome.deb \
     && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends xclip \
+    && rm -rf /var/lib/apt/lists/*
 ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN useradd --create-home --uid 10001 browser && mkdir -p /opt/browser /profile /etc/opt/chrome/policies/managed \
     && python3 -m venv /opt/browser/venv \

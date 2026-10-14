@@ -6,6 +6,7 @@ empty /profile is used; no developer/user Chrome installation is modified.
 
 import functools
 import os
+import shutil
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -18,6 +19,10 @@ class QuietAssets(SimpleHTTPRequestHandler):
 
 
 def main():
+    required = ("Xvfb", "openbox", "xprop", "xdotool", "xclip")
+    missing = [tool for tool in required if not shutil.which(tool)]
+    if missing:
+        raise RuntimeError("Managed native acceptance requires: " + ", ".join(missing))
     server = ThreadingHTTPServer(
         ("127.0.0.1", 8080),
         functools.partial(QuietAssets, directory="/opt/browser/extension"),
@@ -38,7 +43,9 @@ def main():
                 "tests/integration/test_remote_window_live.py",
                 "tests/integration/test_browser_files_live.py",
                 "--basetemp",
-                "/tmp/managed-results",
+                os.environ.get(
+                    "AI_DEV_BROWSER_MANAGED_RESULTS", "/tmp/managed-results"
+                ),
             ]
         )
     finally:

@@ -1,14 +1,14 @@
 """Build the standalone extension and checksums from the actual PyPI artifacts."""
 
 import argparse
-from email.parser import BytesParser
 import hashlib
 import json
+from email.parser import BytesParser
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 
-def build_assets(dist: Path, output: Path) -> None:
+def build_assets(dist: Path, output: Path, expected_version: str | None = None) -> None:
     wheels = list(dist.glob("*.whl"))
     sdists = list(dist.glob("*.tar.gz"))
     if len(wheels) != 1 or len(sdists) != 1:
@@ -19,6 +19,10 @@ def build_assets(dist: Path, output: Path) -> None:
             name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
         )
         version = BytesParser().parsebytes(archive.read(metadata_name))["Version"]
+        if expected_version is not None and version != expected_version:
+            raise ValueError(
+                f"Requested release {expected_version} contains wheel version {version}"
+            )
         prefix = "ai_dev_browser/extension/"
         files = {
             name.removeprefix(prefix): archive.read(name)
@@ -47,6 +51,9 @@ def build_assets(dist: Path, output: Path) -> None:
             "remote/page.py",
             "remote/page_view.js",
             "remote/vnc.py",
+            "remote/worker.py",
+            "remote/profile_lease.py",
+            "remote/mcp-tools.json",
         ):
             if f"ai_dev_browser/{name}" not in archive.namelist():
                 raise ValueError(f"Wheel is missing {name}")
@@ -71,5 +78,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dist", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--expected-version")
     args = parser.parse_args()
-    build_assets(args.dist, args.output)
+    build_assets(args.dist, args.output, args.expected_version)

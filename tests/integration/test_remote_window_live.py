@@ -31,7 +31,10 @@ from tests.integration.test_remote_view import wait_for
 pytest_plugins = ["tests.integration.test_remote_view"]
 pytestmark = pytest.mark.skipif(
     sys.platform != "linux"
-    or any(not shutil.which(tool) for tool in ("Xvfb", "openbox", "xprop", "xdotool")),
+    or any(
+        not shutil.which(tool)
+        for tool in ("Xvfb", "openbox", "xprop", "xdotool", "xclip")
+    ),
     reason="Isolated X11 display and native input required",
 )
 
@@ -176,14 +179,26 @@ async def test_native_window_tab_and_unicode_handoff(remote_site, transport, tmp
                 point = layout["result"]["value"]
                 await native({"kind": "click", **point})
                 text = "Human review 中文确认"
-                await native({"kind": "text", "text": text})
-                entered = await page.call(
-                    "Runtime.evaluate",
-                    {
-                        "expression": "({value:document.querySelector('#name').value,focus:document.activeElement.id})",
-                        "returnByValue": True,
-                    },
-                )
+
+                async def entered_value():
+                    return await page.call(
+                        "Runtime.evaluate",
+                        {
+                            "expression": "({value:document.querySelector('#name').value,focus:document.activeElement.id})",
+                            "returnByValue": True,
+                        },
+                    )
+
+                for expected in [text + str(index) for index in range(8)] + [text]:
+                    await native({"kind": "key", "key": "SelectAll"})
+                    await native({"kind": "text", "text": expected})
+                    entered = await wait_for(
+                        entered_value,
+                        lambda value, expected=expected: (
+                            value.get("result", {}).get("value", {}).get("value")
+                            == expected
+                        ),
+                    )
                 (tmp_path / "native-input-diagnostic.json").write_text(
                     json.dumps(
                         {"point": point, "entered": entered["result"].get("value")}
@@ -235,6 +250,7 @@ async def test_native_window_tab_and_unicode_handoff(remote_site, transport, tmp
             finally:
                 await session.close()
     finally:
+        await view.close()
         if client:
             await client.close()
         if launched and "error" not in launched:

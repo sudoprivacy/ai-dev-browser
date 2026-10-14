@@ -95,6 +95,40 @@ class CDP:
             raise self.error_factory("evaluation_failed")
         return value.get("result", {}).get("value")
 
+    async def wait_navigation(self, navigation, timeout=15):
+        """Wait for the issued navigation's document, without replaying it.
+
+        Managed Chrome can replace its debugger during a process swap. Only
+        these fixed read probes tolerate that temporary attachment/context gap.
+        Arbitrary evaluation and input continue to fail without being retried.
+        """
+        loader = navigation.get("loaderId")
+        if not loader:
+            return
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            try:
+                tree = await self.call("Page.getFrameTree")
+                frame = tree.get("frameTree", {}).get("frame", {})
+                if frame.get("loaderId") == loader and await self.js(
+                    "document.readyState !== 'loading'"
+                ):
+                    return
+            except BrowserViewError as error:
+                message = (error.details or {}).get("message", "")
+                if error.code != "operation_failed" or not any(
+                    value in message
+                    for value in (
+                        "Debugger is not attached to the tab with id:",
+                        "Execution context was destroyed",
+                        "Cannot find context with specified id",
+                    )
+                ):
+                    raise
+            if asyncio.get_running_loop().time() >= deadline:
+                raise self.error_factory("navigation_not_ready")
+            await asyncio.sleep(0.05)
+
     async def close(self):
         self.closing = True
         try:
