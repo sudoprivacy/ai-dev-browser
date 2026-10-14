@@ -105,6 +105,11 @@ class BrowserFiles:
             **{key: entry[key] for key in ("name", "bytes", "sha256", "kind")},
         }
 
+    def metadata(self, file_id):
+        if not isinstance(file_id, str) or file_id not in self._index:
+            raise ControlError("browser_file_not_found")
+        return self._metadata(file_id)
+
     def _check_directories(self):
         if self.root.resolve() != self.root or any(
             directory.is_symlink() or directory.resolve().parent != self.root

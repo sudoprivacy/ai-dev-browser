@@ -24,6 +24,7 @@ def test_unknown_ids_and_outside_names_cannot_leave_the_store(tmp_path):
 def test_reconstruction_rejects_changed_upload_content(tmp_path):
     files = BrowserFiles(tmp_path)
     uploaded = files.receive("report.txt", b"original")
+    assert files.metadata(uploaded["id"]) == uploaded
     path = files.path(uploaded["id"])
     restored = BrowserFiles(tmp_path)
     assert restored.path(uploaded["id"]).read_bytes() == b"original"
