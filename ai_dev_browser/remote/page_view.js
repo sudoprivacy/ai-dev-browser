@@ -38,6 +38,11 @@ export class PageSurface {
       if (point) send({ kind: 'wheel', ...point, dy: event.deltaY });
     }, { passive: false });
     on('keydown', event => {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'a') {
+        event.preventDefault();
+        send({ kind: 'key', key: 'SelectAll' });
+        return;
+      }
       if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
       event.preventDefault();
       if (event.key.length === 1) send({ kind: 'text', text: event.key });

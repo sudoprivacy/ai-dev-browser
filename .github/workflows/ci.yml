@@ -255,6 +255,8 @@ jobs:
             extension-results/**/*-evidence.json
             extension-results/**/extension-lifecycle.png
             extension-results/**/installed-extension.png
+              extension-results/**/extension-startup-evidence.json
+              extension-results/**/extension-chrome.log
 
   # ─────────────────────────────────────────────────────────────────────
   # CI-integration dogfood: prove the documented "consumer's CI" recipe

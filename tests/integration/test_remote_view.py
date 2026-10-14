@@ -413,6 +413,28 @@ async def test_remote_surface_submission_and_same_profile_reconnect(
             await wait_for(
                 lambda: target.js("document.activeElement.id"), lambda v: v == "name"
             )
+            # The human replaces existing AI text through the actual viewer's
+            # keyboard shortcut, rather than appending to it or using page JS.
+            await target.call("Input.insertText", {"text": "AI text to replace"})
+            for phase in ("keyDown", "keyUp"):
+                await client.call(
+                    "Input.dispatchKeyEvent",
+                    {
+                        "type": phase,
+                        "key": "a",
+                        "code": "KeyA",
+                        "windowsVirtualKeyCode": 65,
+                        "modifiers": 2,
+                    },
+                )
+            await wait_for(
+                lambda: target.js(
+                    "(()=>{const e=document.querySelector('#name');return [e.selectionStart,e.selectionEnd,e.value.length]})()"
+                ),
+                lambda v: (
+                    v == [0, len("AI text to replace"), len("AI text to replace")]
+                ),
+            )
             # Type into the real viewer UI, then use its explicit text control.
             for selector in ("#entry", "#insert"):
                 point = await client.js(

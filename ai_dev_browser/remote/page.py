@@ -146,7 +146,7 @@ class PageView:
                     "key": key,
                     "code": key,
                     "windowsVirtualKeyCode": allowed[key],
-                    "modifiers": 8 if event.get("shift") and key == "Tab" else 0,
+                    "modifiers": 8 if event.get("shift") else 0,
                 }
             else:
                 return False

@@ -5,14 +5,17 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
+import urllib.request
+from pathlib import Path
 
 import pytest
 
-from ai_dev_browser.cdp import runtime, service_worker, target as cdp_target
+from ai_dev_browser.cdp import runtime, service_worker
+from ai_dev_browser.cdp import target as cdp_target
 from ai_dev_browser.core import cdp_send, connect_browser, get_active_tab, js_evaluate
 from ai_dev_browser.core.browser import browser_start, browser_stop
 from ai_dev_browser.core.connection import BrowserClient
@@ -22,8 +25,8 @@ from ai_dev_browser.core.extension import extension_dir
 
 @pytest.fixture
 def lifecycle(tmp_path):
-    from .browser_lifecycle_support import LifecycleServer
     from .browser_lifecycle_journeys import LifecycleJourneys
+    from .browser_lifecycle_support import LifecycleServer
 
     server = LifecycleServer()
     journeys = LifecycleJourneys(tmp_path, server)
@@ -84,6 +87,7 @@ def cli(tmp_path):
         ]
         result = subprocess.run(
             command,
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -351,11 +355,49 @@ async def live_extension(request, tmp_path, monkeypatch):
             extra_args=[
                 f"--load-extension={copied_extension}",
                 f"--disable-extensions-except={copied_extension}",
+                "--enable-logging=file",
+                f"--log-file={tmp_path / 'extension-chrome.log'}",
                 "--no-sandbox",
             ],
         )
         assert "error" not in chrome, chrome
-        await _until(lambda: bridge.extension is not None, "extension did not connect")
+        # CDP readiness and the extension's first connection are different
+        # startup barriers. Honor the same configured startup budget rather
+        # than imposing an unrelated 10-second deadline on a cold profile.
+        startup_budget = float(os.environ.get("AI_DEV_BROWSER_STARTUP_TIMEOUT", "45"))
+        started = time.monotonic()
+        try:
+            await _until(
+                lambda: bridge.extension is not None,
+                "extension did not connect",
+                timeout=startup_budget,
+            )
+        finally:
+            evidence = {
+                "backend": request.param,
+                "connected": bridge.extension is not None,
+                "elapsedSeconds": time.monotonic() - started,
+                "startupBudgetSeconds": startup_budget,
+            }
+            if bridge.extension is None:
+                try:
+
+                    def inspect_owned_chrome():
+                        with urllib.request.urlopen(
+                            f"http://127.0.0.1:{chrome['port']}/json/list", timeout=2
+                        ) as response:
+                            return [
+                                {"type": item.get("type"), "url": item.get("url")}
+                                for item in json.load(response)
+                            ]
+
+                    evidence["targets"] = await asyncio.to_thread(inspect_owned_chrome)
+                except (OSError, ValueError) as error:
+                    evidence["inspectionError"] = str(error)
+            (tmp_path / "extension-startup-evidence.json").write_text(
+                json.dumps(evidence, indent=2), encoding="utf-8"
+            )
+            print(f"EXT startup: {evidence}", flush=True)
         extension = _LiveExtension(port, chrome["port"], bridge)
         # The extension creates its automation tab in the background. Visual
         # acceptance needs an actually visible renderer: hidden Chrome tabs
