@@ -87,6 +87,16 @@ async def test_native_window_tab_and_unicode_handoff(remote_site, transport, tmp
                 if transport == "extension":
                     browser = await session._connect_browser()
                     scope = await browser.call("AiDevBrowser.debugState")
+                    # Chrome can finish initial policy loading after the
+                    # extension connects. Wait for the actual positive policy
+                    # before exercising native tabs; never infer permission.
+                    deadline = asyncio.get_running_loop().time() + 5
+                    while (
+                        not scope["managedProfile"]
+                        and asyncio.get_running_loop().time() < deadline
+                    ):
+                        await asyncio.sleep(0.1)
+                        scope = await browser.call("AiDevBrowser.debugState")
                     assert scope["managedProfile"] is True, scope
                 await session.agent_command(0, 0, "Page.bringToFront", {})
                 held = await session.take("human", 0, 0)
