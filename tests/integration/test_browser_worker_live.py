@@ -1,5 +1,6 @@
 """The public host/AI worker uses one real browser in both native modes."""
 
+import asyncio
 import json
 import secrets
 import sys
@@ -79,6 +80,33 @@ async def test_native_worker_preserves_identity_handoff_and_cookie(
             await host({"kind": "attach", "viewerId": "tab", "surface": "page"})
             held = (await host({"kind": "take", **epochs(observed)}))["session"]
             assert held["isController"] and held["isHumanControlHeld"]
+            # Files are enabled on the worker. A native dialog must still be
+            # answerable without an upload-configuration command blocking it.
+            await host({"kind": "return", **epochs(held)})
+            ready = (await host({"kind": "state"}))["session"]
+            await agent(
+                {
+                    "kind": "command",
+                    "method": "Runtime.evaluate",
+                    "params": {
+                        "expression": "setTimeout(()=>{window.reviewResult=confirm('Review with files enabled')},50);true",
+                        "returnByValue": True,
+                    },
+                    **epochs(ready),
+                }
+            )
+            held = (await host({"kind": "take", **epochs(ready)}))["session"]
+            deadline = asyncio.get_running_loop().time() + 10
+            while not (await host({"kind": "state"}))["session"]["dialog"]:
+                assert asyncio.get_running_loop().time() < deadline
+                await asyncio.sleep(0.05)
+            await host(
+                {
+                    "kind": "input",
+                    "input": {"kind": "dialog", "accept": True},
+                    **epochs(held),
+                }
+            )
             blocked = await agent(
                 {"kind": "navigate", "url": "about:blank", **epochs(held)}, status=409
             )

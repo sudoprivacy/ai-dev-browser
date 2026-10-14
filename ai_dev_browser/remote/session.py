@@ -125,9 +125,11 @@ class BrowserSession:
         # A lost input socket is not silently reconnected/replayed.
         if self._page.disconnected:
             raise ControlError("browser_disconnected")
-        if self.files is not None:
+        if self.files is not None and not self._dialog:
             # Extension Chrome may replace its debugger attachment during a
             # navigation. Keep this session-scoped setting on the current one.
+            # Chrome blocks this command while a native JavaScript dialog is
+            # open. Let the controller answer it before configuring uploads.
             await self._page.call(
                 "Page.setInterceptFileChooserDialog", {"enabled": True}
             )
@@ -310,7 +312,8 @@ class BrowserSession:
                     "url"
                 ].startswith(("http://", "https://")):
                     raise ControlError("invalid_browser_url")
-                await page.call("Page.navigate", {"url": action["url"]})
+                navigation = await page.call("Page.navigate", {"url": action["url"]})
+                await page.wait_navigation(navigation)
             elif kind == "reload":
                 await page.call("Page.reload")
             elif kind in ("back", "forward"):
