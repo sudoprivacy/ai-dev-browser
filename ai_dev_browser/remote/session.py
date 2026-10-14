@@ -126,6 +126,7 @@ class BrowserSession:
                 **self.control.snapshot(),
                 "activeTargetId": self.target_id,
                 "tabs": tabs,
+                "dialog": self._dialog,
             }
 
         return await self.control.run(
@@ -218,6 +219,7 @@ class BrowserSession:
                     )
                     await self.browser.update_targets()
                     await self._select(created["targetId"])
+                    await (await self._connect_page()).call("Page.bringToFront")
                 else:
                     target = action["targetId"]
                     if target not in {tab["id"] for tab in tabs}:
@@ -271,6 +273,44 @@ class BrowserSession:
             return await (await self._connect_page()).call(method, params)
 
         return await self.control.run("ai", epoch, target_epoch, perform)
+
+    async def follow_foreground(self, controller: str, epoch: int, target_epoch: int):
+        """Follow a native tab selection made by the authorized human viewer.
+
+        Managed extension profiles expose their isolated tabs by machine policy.
+        Ordinary extension Chrome continues to expose only its automation tabs.
+        This is a human operation, including any focus probe on standalone CDP.
+        """
+
+        async def select():
+            tabs = await self._refresh()
+            if self.browser.transport == "extension":
+                browser = await self._connect_browser()
+                active = await browser.call("AiDevBrowser.getActiveTarget")
+                target = active.get("targetId")
+                if target in {tab["id"] for tab in tabs}:
+                    await self._select(target)
+            elif not self._dialog:
+                focused = []
+                for tab in self.browser.tabs:
+                    ws = await self.http.ws_connect(tab._connection.websocket_url)
+                    page = CDP(ws)
+                    try:
+                        result = await page.call(
+                            "Runtime.evaluate",
+                            {
+                                "expression": "document.visibilityState === 'visible'",
+                                "returnByValue": True,
+                            },
+                        )
+                        if result.get("result", {}).get("value") is True:
+                            focused.append(str(tab._target.target_id))
+                    finally:
+                        await page.close()
+                if len(focused) == 1:
+                    await self._select(focused[0])
+
+        return await self.control.run(controller, epoch, target_epoch, select)
 
     async def close(self):
         for viewer in list(self._viewers):

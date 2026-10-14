@@ -65,13 +65,15 @@ ET.ElementTree(update).write(
     json.dumps({"id": extension_id, "version": version})
 )
 policy = {
+    "3rdparty": {"extensions": {extension_id: {"ManagedBrowserProfile": True}}},
     "ExtensionSettings": {
         extension_id: {
             "installation_mode": "force_installed",
             "update_url": "http://127.0.0.1:8080/update.xml",
             "override_update_url": True,
+            "minimum_version_required": version,
         }
-    }
+    },
 }
 pathlib.Path("/etc/opt/chrome/policies/managed/ai-dev-browser.json").write_text(
     json.dumps(policy)

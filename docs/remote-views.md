@@ -146,6 +146,38 @@ as CDP, including trusted input, handoff and stale-target rejection.
 
 ## Full window view
 
+For managed headful Chrome, `XDisplay()` starts an isolated Xvfb display and
+Openbox window manager. `await display.start()` returns its display name;
+`await display.close()` stops only those owned processes. Install `openbox`
+and `x11-utils` alongside Xvfb. Create it only for a headful browser. A window
+manager provides native keyboard focus, tab shortcuts and window activation;
+an Xvfb framebuffer alone does not provide those desktop behaviors.
+
+For an authenticated host that already transports page frames and typed input,
+`ai_dev_browser.remote.window.WindowView(display=isolated_display)` captures the
+same isolated X11 Chrome window as JPEG frames and accepts native mouse, text
+and keyboard input. Install `xdotool` and Pillow. Text travels through stdin;
+input is bounded and never retried. Wrap every call in the host's control lease.
+This adapter starts no display, browser or listening service. The host can
+reuse `PageSurface` for both page and window pixels.
+
+After native input, call `BrowserSession.follow_foreground(controller, epoch,
+target_epoch)` under the authenticated human identity. A tab switch invalidates
+old coordinates and updates the target used by AI's fresh observation. The
+machine-managed image explicitly sets `ManagedBrowserProfile` to share every
+tab in its isolated profile. Ordinary installed extensions continue to expose
+only dedicated automation tabs. Machine policy also requires the image's
+extension version; profile preparation can enforce `minimum_version` without
+replacing the persistent profile.
+
+This uses Chrome's [managed storage schema](https://developer.chrome.com/docs/extensions/reference/manifest/storage)
+and [minimum extension version policy](https://support.google.com/chrome/a/answer/9867568?hl=en).
+
+`WindowView.input` supports native `AddressBar`, `NewTab`, `NextTab`,
+`PreviousTab` and `CloseTab` keys alongside the page input keys. Hosts should
+offer toolbar controls for these actions because a web browser reserves some
+keyboard shortcuts for its own local window.
+
 Install system `xvfb`, `x11vnc`, `novnc`, `websockify` and `xauth`. Launch Chrome
 on a dedicated X display, then use:
 
@@ -208,3 +240,8 @@ Set `AI_DEV_BROWSER_TEST_EXTENSION_CHROME` to a Chrome for Testing or Chromium
 binary to run the actual extension cases. Those cases are skipped locally when
 no supported binary is supplied; CI supplies one explicitly. They never install
 an extension into the user's real profile.
+
+The managed Chrome CI job also runs `test_remote_window_live.py` with CDP and
+the signed extension. It opens a native Chrome tab, follows it, types Unicode
+through X11, rejects an AI write during human control, returns a fresh view of
+that same tab and verifies one trusted submission with its original cookie.

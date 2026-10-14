@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "ManagedBrowserProfile": {
+      "type": "boolean",
+      "description": "The host supplies an isolated browser profile and authorizes all its tabs. Ordinary user Chrome keeps dedicated automation tabs."
+    }
+  }
+}

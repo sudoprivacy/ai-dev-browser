@@ -2,11 +2,14 @@
 # profile ownership. No display process starts merely by running this image.
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl openssl python3 python3-venv xvfb x11vnc websockify novnc \
+ARG UBUNTU_MIRROR=
+RUN if [ -n "$UBUNTU_MIRROR" ]; then sed -i "s|http://archive.ubuntu.com/ubuntu/|$UBUNTU_MIRROR|g; s|http://security.ubuntu.com/ubuntu/|$UBUNTU_MIRROR|g" /etc/apt/sources.list.d/ubuntu.sources; fi \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl openssl python3 python3-venv xvfb openbox x11-utils x11vnc websockify novnc xdotool fonts-noto-cjk \
     && curl -fsSLo /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
-    && apt-get install -y /tmp/chrome.deb && rm /tmp/chrome.deb \
+    && apt-get install -y --no-install-recommends /tmp/chrome.deb && rm /tmp/chrome.deb \
     && rm -rf /var/lib/apt/lists/*
+ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN useradd --create-home --uid 10001 browser && mkdir -p /opt/browser /profile /etc/opt/chrome/policies/managed \
     && python3 -m venv /opt/browser/venv \
     && /opt/browser/venv/bin/pip install --no-cache-dir 'aiohttp>=3.10,<4' 'websockets>=13,<17' \

@@ -16,7 +16,9 @@ from .ext_bridge import bridge_status, ensure_bridge_running
 from .extension import EXTENSION_BRIDGE_PORT, extension_dir, extension_load_instructions
 
 
-def configured_extension(user_data_dir: Path, profile_directory: str) -> dict | None:
+def configured_extension(
+    user_data_dir: Path, profile_directory: str, *, allow_disabled=False
+) -> dict | None:
     """Read Chrome's installed-extension metadata, without rewriting preferences."""
     profile = user_data_dir / profile_directory
     for name in ("Preferences", "Secure Preferences"):
@@ -38,11 +40,20 @@ def configured_extension(user_data_dir: Path, profile_directory: str) -> dict | 
                     continue
             if (
                 manifest.get("name") == "AI Dev Browser — bridge"
-                and setting.get("state", 1) == 1
-                and not setting.get("disable_reasons")
+                and (
+                    allow_disabled
+                    or (
+                        setting.get("state", 1) == 1
+                        and not setting.get("disable_reasons")
+                    )
+                )
                 and setting.get("location") != 8  # Command-line loads are ephemeral.
             ):
-                return {"extension_id": identity, "extension_path": path}
+                return {
+                    "extension_id": identity,
+                    "extension_path": path,
+                    "extension_version": manifest.get("version"),
+                }
     return None
 
 
