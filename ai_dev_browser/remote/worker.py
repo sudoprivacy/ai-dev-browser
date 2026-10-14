@@ -166,17 +166,35 @@ class Worker:
                 self.save()
 
     async def state(self, controller=None):
+        if self.lifecycle.locked():
+            # Closing/replacing a browser invalidates its driver before all
+            # resources have drained. Status stays responsive and never queries
+            # that retiring connection or presents it as ready for input.
+            live = {
+                **self.control.snapshot(),
+                "state": "pausing",
+                "activeTargetId": None,
+                "tabs": [],
+            }
+            return self._state_reply(live, controller, is_transitioning=True)
+        async with self.lifecycle:
+            return await self._current_state(controller)
+
+    async def _current_state(self, controller):
         live = (
             await self.session.state()
             if self.session
             else {**self.control.snapshot(), "activeTargetId": None, "tabs": []}
         )
+        return self._state_reply(live, controller)
+
+    def _state_reply(self, live, controller, *, is_transitioning=False):
         return {
             "browserSessionId": self.browser["session_id"]
             if self.browser
             else "stopped-" + self.profile_id(),
             "profileId": self.profile_id(),
-            "state": live["state"] if self.session else "stopped",
+            "state": live["state"] if self.session or is_transitioning else "stopped",
             "controlEpoch": live["controlEpoch"],
             "targetEpoch": live["targetEpoch"],
             "isController": bool(controller and live["controller"] == controller),
@@ -188,8 +206,10 @@ class Worker:
             "capabilities": {
                 "lifecycle": True,
                 "fileTransfer": True,
-                "pageView": bool(self.session),
-                "windowView": bool(self.session and self.display),
+                "pageView": bool(self.session and not is_transitioning),
+                "windowView": bool(
+                    self.session and self.display and not is_transitioning
+                ),
                 "persistentProfile": True,
             },
             "activeTargetId": live["activeTargetId"],

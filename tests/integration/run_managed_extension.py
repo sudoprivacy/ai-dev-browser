@@ -42,6 +42,7 @@ def main():
                 "tests/integration/test_browser_session_live.py",
                 "tests/integration/test_remote_window_live.py",
                 "tests/integration/test_browser_files_live.py",
+                "tests/integration/test_worker_managed_status_live.py",
                 "--basetemp",
                 os.environ.get(
                     "AI_DEV_BROWSER_MANAGED_RESULTS", "/tmp/managed-results"
