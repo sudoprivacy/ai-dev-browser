@@ -290,4 +290,10 @@ async def start(
                 result["url"] = navigation.get("url")
         finally:
             await browser.close()
-    return {**result, "started": True, "reused": False, **installed}
+    return {
+        **_session.describe(record),
+        **result,
+        "started": process.poll() is None,
+        "reused": False,
+        **installed,
+    }

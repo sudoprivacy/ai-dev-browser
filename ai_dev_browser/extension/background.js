@@ -272,12 +272,44 @@ async function targetInfos() {
   return infos;
 }
 
+let managedPolicyValue = null;
+let managedPolicyRead = null;
+let managedPolicyGeneration = 0;
 async function managedProfile() {
+  if (managedPolicyValue !== null) return managedPolicyValue;
+  const generation = managedPolicyGeneration;
+  if (!managedPolicyRead) {
+    // Some ordinary Windows profiles never settle managed storage reads. Tab
+    // discovery must still work without granting access to unrelated user tabs.
+    managedPolicyRead = Promise.resolve()
+      .then(() => chrome.storage.managed.get({ ManagedBrowserProfile: false }))
+      .then(policy => {
+        if (generation !== managedPolicyGeneration) return false;
+        return managedPolicyValue = policy.ManagedBrowserProfile === true;
+      })
+      .catch(() => {
+        if (generation === managedPolicyGeneration) managedPolicyValue = false;
+        return false;
+      });
+  }
+  let timer;
   try {
-    const policy = await chrome.storage.managed.get({ ManagedBrowserProfile: false });
-    return policy.ManagedBrowserProfile === true;
-  } catch { return false; }
+    return await Promise.race([
+      managedPolicyRead,
+      new Promise(resolve => { timer = setTimeout(() => {
+        if (generation === managedPolicyGeneration) managedPolicyValue = false;
+        resolve(false);
+      }, 1000); }),
+    ]);
+  } finally { clearTimeout(timer); }
 }
+if (chrome.storage.onChanged) chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "managed") {
+    managedPolicyGeneration++;
+    managedPolicyValue = null;
+    managedPolicyRead = null;
+  }
+});
 
 // Browser-level CDP a per-tab chrome.debugger can't answer — served via the
 // sanctioned extension APIs. Returns undefined for anything not shimmed, so the
