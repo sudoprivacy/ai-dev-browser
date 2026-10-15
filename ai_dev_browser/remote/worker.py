@@ -12,6 +12,7 @@ import os
 import pathlib
 import secrets
 import time
+from contextlib import asynccontextmanager
 from urllib.parse import unquote
 
 import aiohttp
@@ -67,6 +68,7 @@ class Worker:
         self.http = None
         self.display = None
         self.lifecycle = asyncio.Lock()
+        self.lifecycle_changes = 0
         self.viewers = {}
         self.window_viewers = set()
         self.window_frame = None
@@ -146,7 +148,7 @@ class Worker:
             self.binding[key] != binding.get(key) for key in ("orgId", "userId")
         ):
             raise ControlError("browser_profile_in_use")
-        async with self.lifecycle:
+        async with self.changing_lifecycle():
             was_ai = self.control.state == "ai"
             if self.session and was_ai:
                 self.save(controller=controller, state="pausing")
@@ -165,8 +167,17 @@ class Worker:
                 )
                 self.save()
 
+    @asynccontextmanager
+    async def changing_lifecycle(self):
+        self.lifecycle_changes += 1
+        try:
+            async with self.lifecycle:
+                yield
+        finally:
+            self.lifecycle_changes -= 1
+
     async def state(self, controller=None):
-        if self.lifecycle.locked():
+        if self.lifecycle_changes:
             # Closing/replacing a browser invalidates its driver before all
             # resources have drained. Status stays responsive and never queries
             # that retiring connection or presents it as ready for input.
@@ -276,7 +287,7 @@ class Worker:
         await self.session.follow_foreground(controller, epoch, target_epoch)
 
     async def start(self, action, actor):
-        async with self.lifecycle:
+        async with self.changing_lifecycle():
             await self._start_browser(action, actor)
 
     async def _start_browser(self, action, actor):
@@ -476,7 +487,7 @@ class Worker:
             ) not in ("extension", "cdp"):
                 raise ControlError("explicit_browser_launch_mode_required")
         epoch, target_epoch = self.epochs(action)
-        async with self.lifecycle:
+        async with self.changing_lifecycle():
 
             async def perform():
                 # Fence queued coordinates before closing any browser resource.

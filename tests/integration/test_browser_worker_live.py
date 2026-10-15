@@ -80,6 +80,19 @@ async def test_native_worker_preserves_identity_handoff_and_cookie(
             await host({"kind": "attach", "viewerId": "tab", "surface": "page"})
             held = (await host({"kind": "take", **epochs(observed)}))["session"]
             assert held["isController"] and held["isHumanControlHeld"]
+            # The chat, independent viewer and status poller read concurrently.
+            # Reading status must preserve the human's interactive page.
+            idle_reads = await asyncio.gather(
+                *(host({"kind": "state"}) for _ in range(8))
+            )
+            assert all(value["session"]["state"] == "human" for value in idle_reads)
+            assert all(
+                value["session"]["capabilities"]["pageView"] for value in idle_reads
+            )
+            assert all(
+                value["session"]["activeTargetId"] == held["activeTargetId"]
+                for value in idle_reads
+            )
             # Files are enabled on the worker. A native dialog must still be
             # answerable without an upload-configuration command blocking it.
             await host({"kind": "return", **epochs(held)})
