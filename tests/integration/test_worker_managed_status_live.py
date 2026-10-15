@@ -71,6 +71,15 @@ async def test_managed_stop_keeps_status_and_the_human_lease(tmp_path, is_headle
             assert started["isHeadless"] is is_headless
             assert bool(worker.display) is not is_headless
             held = await host({"kind": "take", **epochs(started)})
+            idle_reads = await asyncio.gather(
+                *(host({"kind": "state"}) for _ in range(8))
+            )
+            assert all(value["state"] == "human" for value in idle_reads)
+            assert all(value["capabilities"]["pageView"] for value in idle_reads)
+            assert all(
+                value["activeTargetId"] == held["activeTargetId"]
+                for value in idle_reads
+            )
             stopping = asyncio.create_task(host({"kind": "stop", **epochs(held)}))
             snapshots = await asyncio.gather(
                 *(host({"kind": "state"}) for _ in range(8))

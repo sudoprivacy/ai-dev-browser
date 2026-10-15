@@ -10,6 +10,43 @@ from ai_dev_browser.remote.control import ControlError
 from ai_dev_browser.remote.worker import Worker
 
 
+async def test_concurrent_status_readers_preserve_idle_human_control(tmp_path):
+    entered, release = asyncio.Event(), asyncio.Event()
+    worker = Worker(tmp_path, "host", "agent", display_mode="native")
+    worker.bind({"orgId": "org", "userId": "user", "sessionId": "conversation"})
+    worker.control.controller = "user-controller"
+    worker.control.state = "human"
+    worker.browser = {
+        "session_id": "same-browser",
+        "headless": True,
+        "transport": "cdp",
+    }
+
+    class ReadingSession:
+        async def state(self):
+            entered.set()
+            await release.wait()
+            return {
+                **worker.control.snapshot(),
+                "activeTargetId": "same-tab",
+                "tabs": [{"id": "same-tab", "title": "Review", "url": "about:blank"}],
+            }
+
+    worker.session = ReadingSession()
+    first = asyncio.create_task(worker.state("user-controller"))
+    await entered.wait()
+    second = asyncio.create_task(worker.state("user-controller"))
+    await asyncio.sleep(0)
+    release.set()
+    snapshots = await asyncio.gather(first, second)
+    assert all(value["state"] == "human" for value in snapshots)
+    assert all(
+        value["isController"] and value["isHumanControlHeld"] for value in snapshots
+    )
+    assert all(value["capabilities"]["pageView"] for value in snapshots)
+    assert all(value["activeTargetId"] == "same-tab" for value in snapshots)
+
+
 @pytest.mark.parametrize("is_stop_confirmed", [True, False])
 async def test_status_preserves_the_human_lease_during_browser_close(
     tmp_path, monkeypatch, is_stop_confirmed
