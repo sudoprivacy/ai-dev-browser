@@ -15,6 +15,7 @@ from pathlib import Path
 from ._tab import Tab, _viewport_command
 from .config import DEFAULT_BASE_DIR, resolve_output_dir
 from .errors import RecordingError
+from .process import detached_process_options
 
 
 def _state_root() -> Path:
@@ -138,11 +139,11 @@ async def page_record_start(
         "demo": demo,
     }
     _write_json(folder / "config.json", config)
-    kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL}
-    if sys.platform == "win32":
-        kwargs["creationflags"] = 0x00000008 | subprocess.CREATE_NEW_PROCESS_GROUP
-    else:
-        kwargs["start_new_session"] = True
+    kwargs: dict = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        **detached_process_options(),
+    }
     try:
         with (folder / "worker.log").open("wb") as log:
             process = subprocess.Popen(

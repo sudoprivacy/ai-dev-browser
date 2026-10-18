@@ -31,7 +31,7 @@ from .config import (
     DEFAULT_PORT_RANGE,
     DEFAULT_PROFILE_PREFIX,
 )
-from .process import get_pid_on_port
+from .process import get_pid_on_port, no_console_options
 
 
 logger = logging.getLogger(__name__)
@@ -386,6 +386,7 @@ def _get_os_ephemeral_range() -> tuple[int, int]:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                **no_console_options(),
             )
             start_m = re.search(r"Start Port\s*:\s*(\d+)", result.stdout)
             num_m = re.search(r"Number of Ports\s*:\s*(\d+)", result.stdout)

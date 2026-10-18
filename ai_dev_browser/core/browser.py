@@ -36,7 +36,7 @@ from .port import (
     get_pid_on_port,
     is_port_in_use,
 )
-from .process import _kill_process_tree
+from .process import _kill_process_tree, no_console_options
 
 
 def _find_chrome_using_profile(profile_dir: Path) -> tuple[int, int | None] | None:
@@ -757,6 +757,7 @@ def _build_info() -> dict:
                 capture_output=True,
                 text=True,
                 timeout=2,
+                **no_console_options(),
             )
             sha = r.stdout.strip()
             if r.returncode == 0 and sha:

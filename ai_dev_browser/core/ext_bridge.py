@@ -331,7 +331,6 @@ def ensure_bridge_running(
 ) -> bool:
     """Spawn the bridge daemon (detached, survives this CLI process) if it isn't
     already listening. Returns True once the port is up."""
-    import platform
     import subprocess
     import sys
     import time
@@ -339,12 +338,14 @@ def ensure_bridge_running(
     if bridge_is_up(port):
         return True
 
-    kwargs: dict = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
-    if platform.system() == "Windows":
-        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP — outlive the CLI call.
-        kwargs["creationflags"] = 0x00000008 | subprocess.CREATE_NEW_PROCESS_GROUP
-    else:
-        kwargs["start_new_session"] = True
+    from .process import detached_process_options
+
+    kwargs: dict = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        **detached_process_options(),
+    }
     import os
 
     environment = dict(os.environ)
