@@ -14,9 +14,32 @@ import contextlib
 import logging
 import platform
 import subprocess
+import sys
 
 
 logger = logging.getLogger(__name__)
+
+
+def no_console_options() -> dict:
+    """Keep background console programs from allocating a Windows terminal."""
+    if sys.platform == "win32":
+        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+    return {}
+
+
+def detached_process_options() -> dict:
+    """Outlive a CLI caller without giving a Windows venv child a console.
+
+    Windows console executables need explicit console-free startup, including
+    workers launched through a venv's executable. Keep the Unix session contract
+    separate from the Windows console-allocation contract.
+    """
+    options = no_console_options()
+    if sys.platform == "win32":
+        options["creationflags"] |= subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        options["start_new_session"] = True
+    return options
 
 
 def get_pid_on_port(port: int) -> int | None:
@@ -56,6 +79,7 @@ def get_pid_on_port(port: int) -> int | None:
                 encoding="utf-8",
                 errors="ignore",
                 timeout=5,
+                **no_console_options(),
             )
             if result.returncode == 0 and (result.stdout or "").strip():
                 # lsof -t returns just the PID
@@ -77,6 +101,7 @@ def get_pid_on_port(port: int) -> int | None:
                 encoding="utf-8",
                 errors="ignore",
                 timeout=5,
+                **no_console_options(),
             )
             for line in (result.stdout or "").split("\n"):
                 if f":{port}" in line and "LISTENING" in line and "TCP" in line:
@@ -122,6 +147,7 @@ def _kill_process_tree(pid: int) -> bool:
                 ["taskkill", "/F", "/T", "/PID", str(pid)],
                 capture_output=True,
                 timeout=10,
+                **no_console_options(),
             )
         else:
             # On Unix-like systems, use SIGKILL
