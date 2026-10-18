@@ -544,16 +544,34 @@ def test_recording_cli_share_size_limit(
     port = recording_browser
     cli("page_goto", "--port", port, "--url", recording_page[0])
     out = tmp_path / "too-large.gif"
-    recording = cli("page_record_start", "--port", port, "--out", out, "--fps", 30)
+    recording = cli(
+        "page_record_start",
+        "--port",
+        port,
+        "--out",
+        out,
+        "--fps",
+        30,
+        "--max-duration",
+        60,
+    )
 
     # Step 2: Execute operation
     animation = "(() => { document.body.innerHTML='<canvas width=1280 height=720></canvas>'; document.body.style='padding:0;margin:0'; const c=document.querySelector('canvas'),ctx=c.getContext('2d'),img=ctx.createImageData(c.width,c.height); window.draws=0; window.noise=setInterval(()=>{for(let i=0;i<img.data.length;i+=65536)crypto.getRandomValues(img.data.subarray(i,Math.min(i+65536,img.data.length)));for(let i=3;i<img.data.length;i+=4)img.data[i]=255;ctx.putImageData(img,0,0);window.draws++},100); return true; })()"
     assert cli("js_evaluate", "--port", port, "--expression", animation)["result"]
-    time.sleep(7)
-    assert (
-        cli("js_evaluate", "--port", port, "--expression", "window.draws")["result"]
-        >= 20
-    )
+    # Page redraws are not encoded frames: Chrome may coalesce/drop screencasts
+    # under load. Wait for the real worker's terminal state, not an assumed
+    # number of bytes after a fixed sleep. Keep the production 10 MB limit.
+    from ai_dev_browser.core.recording import _read_state
+
+    folder = tmp_path / "recordings" / recording["recording_id"]
+    deadline = time.monotonic() + 75
+    while True:
+        state = _read_state(folder)
+        if state.get("status") == "failed":
+            break
+        assert time.monotonic() < deadline, state
+        time.sleep(0.2)
     failed = cli(
         "page_record_stop", "--recording-id", recording["recording_id"], exit_code=1
     )
