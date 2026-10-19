@@ -63,7 +63,7 @@ jobs:
           "
 
       - name: Real CLI browser session lifecycle
-        run: uv run python -m pytest -v tests/integration/test_browser_lifecycle.py --basetemp lifecycle-results
+        run: uv run python -m pytest -v tests/integration/test_browser_lifecycle.py tests/integration/test_cli_steering.py --basetemp lifecycle-results
 
       # ── E2E regression suite ──
       # Tests in `tests/integration/` that are self-contained (no real
@@ -247,7 +247,7 @@ jobs:
       - name: Run the real extension on both WebSocket server implementations
         env:
           AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.chrome.outputs.chrome-path }}
-        run: uv run --no-sync python -m pytest -v --full-trace -o faulthandler_timeout=180 tests/integration/test_cli_extension_workflows.py tests/integration/test_recording_workflows.py tests/integration/test_recording_demo.py tests/integration/test_browser_lifecycle.py tests/integration/test_remote_view.py tests/integration/test_extension_ownership.py -k "real_extension or outbound_proxy" --basetemp extension-results
+        run: uv run --no-sync python -m pytest -v --full-trace -o faulthandler_timeout=180 tests/integration/test_cli_extension_workflows.py tests/integration/test_recording_workflows.py tests/integration/test_recording_demo.py tests/integration/test_browser_lifecycle.py tests/integration/test_remote_view.py tests/integration/test_extension_ownership.py tests/integration/test_cli_steering.py -k "real_extension or outbound_proxy" --basetemp extension-results
 
       - name: Install native Chrome interaction tools
         if: runner.os == 'Linux'

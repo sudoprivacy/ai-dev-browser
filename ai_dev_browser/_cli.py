@@ -332,6 +332,7 @@ def _generate_parser(
                 f"--{name.replace('_', '-')}",
                 nargs="*",
                 type=elem_type,
+                required=required,
                 default=param.default if not required else None,
                 help=help_text,
             )
@@ -340,6 +341,7 @@ def _generate_parser(
             parser.add_argument(
                 f"--{name.replace('_', '-')}",
                 type=json.loads,
+                required=required,
                 default=param.default if not required else None,
                 help=help_text,
             )
@@ -352,10 +354,9 @@ def _generate_parser(
                 kwargs["default"] = param.default
 
             # Handle Literal types with choices
-            choices = _get_literal_choices(hint)
+            choices = _get_literal_choices(inner_hint)
             if choices:
                 kwargs["choices"] = choices
-                kwargs["help"] = f"One of: {', '.join(str(c) for c in choices)}"
 
             parser.add_argument(
                 f"--{name.replace('_', '-')}",
@@ -491,7 +492,9 @@ def as_cli(requires_tab: bool = True):
                 except SystemExit:
                     raise
                 except Exception as e:
-                    out = _augment_failure({"error": str(e)}, str(e))
+                    out = _exception_failure(
+                        e, _parse_docstring_failure(func.__doc__ or "")
+                    )
                     print(json.dumps(out, ensure_ascii=False, indent=2))
                     sys.exit(_exit_code_for_result(out))
 
@@ -612,26 +615,26 @@ def _classify_error(message: str | None) -> tuple[str, bool]:
 # Failure hint (stale ref, bad locator, …) is about the wrong thing. This says
 # what actually happened and how to recover, and OVERRIDES the tool hint.
 _NO_TARGET_HINT = (
-    "The command had no tab/target to act on — nothing ran. In EXTENSION mode: "
-    "check routing with `cdp_send --transport extension --method "
-    "AiDevBrowser.debugState`. After upgrading, restart the bridge with "
-    "`browser_disconnect` then "
-    "`browser_connect --transport extension` (this disconnects all extension "
-    "drivers); reload the extension if it still cannot attach. In CDP mode: the tab/target "
-    "was closed — re-acquire it with `tab_list` / `browser_start`."
+    "The command had no tab/target to act on. Inspect returned details and the "
+    "same session's current page state before continuing. If an owned page remains "
+    "in extension mode, use `cdp_send --transport extension --method "
+    "AiDevBrowser.debugState` with the same --session-id to inspect routing. "
+    "Use browser_reconnect with that session_id only if control disconnected; "
+    "reconnect does not restore revoked consent. Do not replay the preceding "
+    "click/submission, switch transport, or restart the browser to bypass this error."
 )
 
 
 def _augment_failure(out: dict, message: str | None) -> dict:
     """Add `error_code` + `retryable` to a failure dict (Rule 5b: pair the prose
     `hint` with a machine-branchable flag). `setdefault` so a core function that
-    already set its own `retryable` / `error_code` wins — except a `no_target`
-    diagnosis, which is a transport-level fact more specific than any tool's own
-    Failure hint, so it overrides `hint`."""
+    already set its own `retryable` / `error_code` wins. An inferred `no_target`
+    diagnosis replaces generic tool guidance; an explicit core diagnosis wins."""
+    explicit_code = "error_code" in out
     code, retryable = _classify_error(message)
     out.setdefault("error_code", code)
     out.setdefault("retryable", retryable)
-    if code == "no_target":
+    if code == "no_target" and not explicit_code:
         out["hint"] = _NO_TARGET_HINT
     return out
 
@@ -647,10 +650,14 @@ def _exception_failure(exc: Exception, hint: str | None) -> dict:
     for field in ("error_code", "retryable", "details"):
         if hasattr(exc, field):
             out[field] = getattr(exc, field)
-    recovery_hint = getattr(exc, "hint", None) or hint
+    explicit_hint = getattr(exc, "hint", None)
+    recovery_hint = explicit_hint or hint
     if recovery_hint:
         out["hint"] = recovery_hint
-    return _augment_failure(out, str(exc))
+    _augment_failure(out, str(exc))
+    if explicit_hint:
+        out["hint"] = explicit_hint
+    return out
 
 
 def _exit_code_for_result(result: Any) -> int:
@@ -714,7 +721,7 @@ def wrap_core(core_func: Callable, result_key: str = "success") -> Callable:
             # steering goes through the return channel (100% reach at
             # invocation time), not docstring (only reaches on --help).
             is_soft_fail = filtered.get(result_key) is False
-            if is_soft_fail and failure_hint:
+            if (is_soft_fail or "error" in filtered) and failure_hint:
                 filtered.setdefault("hint", failure_hint)
             # Pair a machine-branchable retryable/error_code with ANY failure the
             # dict reports (result_key False, or an explicit `error` string).
@@ -776,7 +783,7 @@ def wrap_core_sync(core_func: Callable, result_key: str = "success") -> Callable
         if isinstance(result, dict):
             filtered = _filter_dict_for_json(result)
             is_soft_fail = filtered.get(result_key) is False
-            if is_soft_fail and failure_hint:
+            if (is_soft_fail or "error" in filtered) and failure_hint:
                 filtered.setdefault("hint", failure_hint)
             if is_soft_fail or "error" in filtered:
                 _augment_failure(filtered, _failure_message(filtered))

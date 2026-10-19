@@ -1548,6 +1548,11 @@ def browser_list(all_workspaces: bool = False) -> dict:
         dict with `browsers` (list), `count`, and — full view — `by_origin`
         counts + `psutil: true`. Without psutil: `psutil: false` + a `hint` to
         install the extra (and no `external` visibility).
+
+    Failure:
+        An empty list means no matching CDP browsers were found. Extension
+        sessions are discovered by browser_connect --transport extension. Check
+        the selected workspace/port before starting a new browser.
     """
     try:
         from .cleanup import list_chromes

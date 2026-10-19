@@ -11,7 +11,7 @@ async def cookies_load(
     tab: Tab,
     path: str | None = None,
 ) -> dict:
-    """Load cookies from file into browser.
+    """Use when: restoring an adb cookies file into the selected browser; returns loaded and path.
 
     Args:
         tab: Tab instance
@@ -19,6 +19,12 @@ async def cookies_load(
 
     Returns:
         dict with path, loaded status
+
+    Failure:
+        Check that path names an existing adb cookies file. Use cookies_save to
+        create one. Imported cookies cannot reproduce device identity; use
+        browser_connect --transport extension for the user's real logged-in
+        profile.
     """
     cookies_path = Path(path or DEFAULT_COOKIES_FILE).expanduser()
 
@@ -39,7 +45,7 @@ async def cookies_save(
     path: str | None = None,
     pattern: str | None = None,
 ) -> dict:
-    """Save browser cookies to file.
+    """Use when: saving the selected browser's cookies for cookies_load; returns saved and path.
 
     Args:
         tab: Tab instance
@@ -48,6 +54,11 @@ async def cookies_save(
 
     Returns:
         dict with path, pattern, saved status
+
+    Failure:
+        Choose a writable destination and check the returned error before
+        exporting again. Cookie files contain credentials; keep them private
+        and use cookies_load for adb's saved format.
     """
     cookies_path = Path(path or DEFAULT_COOKIES_FILE).expanduser()
     cookies_path.parent.mkdir(parents=True, exist_ok=True)

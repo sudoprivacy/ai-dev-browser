@@ -20,7 +20,7 @@ _LOGIN_PROFILE = "login"
 
 
 def login_interactive(url: str, cookies_path: str | None = None) -> dict:
-    """Interactive login - opens browser for manual login.
+    """Use when: a local user must log in manually in a dedicated visible browser; returns cookie export status after they close it.
 
     AI calls this when it detects the user is not logged in. A visible
     browser window opens for manual login; cookies are saved on close.
@@ -31,6 +31,12 @@ def login_interactive(url: str, cookies_path: str | None = None) -> dict:
 
     Returns:
         Dict with success, cookies_saved, cookies_path keys.
+
+    Failure:
+        This flow requires a local visible browser and a user who can log in
+        and close it. For an existing logged-in Chrome/profile use
+        browser_connect --transport extension. On a remote host arrange a
+        viewer before requesting manual login.
     """
     return asyncio.run(_login_async(url, cookies_path))
 

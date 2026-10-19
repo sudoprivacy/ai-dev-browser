@@ -493,6 +493,12 @@ async def page_discover(
             if "Sign in" in el.get("name", ""):
                 await click_by_ref(tab, el["ref"])
         page_discover(text="登录")                     # Filter by label
+
+    Failure:
+        An empty result can mean the page is still loading or this scope has no
+        matches. Inspect page_info and wait for the intended element with
+        page_wait_element; use js_evaluate for DOM data outside accessibility
+        discovery.
     """
     from ai_dev_browser.cdp import dom
 

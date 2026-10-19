@@ -55,7 +55,9 @@ def test_no_target_overrides_tool_hint_with_transport_guidance():
     )
     assert out["error_code"] == "no_target" and out["retryable"] is False
     assert out["hint"] is _NO_TARGET_HINT
-    assert "browser_connect --transport extension" in out["hint"]
+    assert "browser_reconnect" in out["hint"]
+    assert "Do not replay" in out["hint"]
+    assert "browser_disconnect" not in out["hint"]
     # unrecognized -> generic, never retryable
     assert _classify_error("something odd") == ("error", False)
     assert _classify_error("") == ("error", False)
