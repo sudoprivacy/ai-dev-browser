@@ -16,6 +16,7 @@ from aiohttp import web
 from PIL import Image
 
 from ai_dev_browser.core.browser import browser_start, browser_stop
+from ai_dev_browser.core._transport import ProtocolException
 from ai_dev_browser.core.connection import connect_browser, get_active_tab
 from ai_dev_browser.core.navigation import page_goto
 from ai_dev_browser.core.port import (
@@ -174,18 +175,71 @@ async def connect_page(http, port, target_id=None):
     return cdp, target["id"]
 
 
-async def navigate_owned_browser(browser, url):
+async def navigate_owned_browser(browser, url, evidence_dir=None, settle_timeout=15):
     # Reuse adb's selected-page preparation and awaited navigation. The host
     # chooses its owned target explicitly; view adapters do not navigate/retry.
     controller = await connect_browser(
         port=browser["port"], session_id=browser["session_id"]
     )
+    aborted = None
+    observed = None
+    result = None
     try:
         tab = await get_active_tab(controller)
         assert str(tab._target.target_id) == browser["automation_target_id"]
-        result = await page_goto(tab, url)
+        try:
+            result = await page_goto(tab, url)
+        except ProtocolException as exc:
+            if "net::ERR_ABORTED" not in str(exc):
+                raise
+            aborted = str(exc)
+
+            async def state():
+                nonlocal observed
+                try:
+                    observed = await tab.evaluate(
+                        "({url:location.href,ready:document.readyState})",
+                        return_by_value=True,
+                    )
+                    return observed
+                except ProtocolException as reading:
+                    if not any(
+                        text in str(reading)
+                        for text in (
+                            "Cannot find context",
+                            "Execution context was destroyed",
+                        )
+                    ):
+                        raise
+                    return {"url": "", "ready": "changing"}
+
+            # Observe the one navigation already dispatched. A competing
+            # startup navigation may cancel its protocol reply while the same
+            # destination commits. Never issue another navigate or replay input.
+            observed = await wait_for(
+                state,
+                lambda value: value["url"].rstrip("/") == url.rstrip("/")
+                and value["ready"] in ("interactive", "complete"),
+                timeout=settle_timeout,
+            )
+            result = {"url": observed["url"], "ready": True}
         assert result["ready"] and result["url"].rstrip("/") == url.rstrip("/"), result
+        result["startup_navigation_aborted"] = aborted is not None
+        return result
     finally:
+        if evidence_dir is not None:
+            (evidence_dir / "startup-navigation-evidence.json").write_text(
+                json.dumps(
+                    {
+                        "helper_navigation_count": 1,
+                        "error": aborted,
+                        "observed": observed,
+                        "result": result,
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
         await controller.close()
 
 
