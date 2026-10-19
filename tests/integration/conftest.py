@@ -357,6 +357,10 @@ async def live_extension(request, tmp_path, monkeypatch):
                 f"--disable-extensions-except={copied_extension}",
                 "--enable-logging=file",
                 f"--log-file={tmp_path / 'extension-chrome.log'}",
+                # The owned visual fixture runs beside the user's foreground
+                # editor and Electron. Match Playwright's test-browser flag so
+                # native window occlusion cannot suspend its active renderer.
+                "--disable-backgrounding-occluded-windows",
                 "--no-sandbox",
             ],
         )
@@ -411,10 +415,17 @@ async def live_extension(request, tmp_path, monkeypatch):
             method="Target.activateTarget",
             params=json.dumps({"targetId": str(state["mainTabId"])}),
         )
-        visible = await extension.call(
-            js_evaluate, expression="document.visibilityState"
-        )
-        assert visible["result"] == "visible", visible
+        # Chrome acknowledges tab activation before its renderer receives the
+        # visibility event. Wait for that event within the original startup
+        # budget instead of asserting in the acknowledgement's next tick.
+        while True:
+            visible = await extension.call(
+                js_evaluate, expression="document.visibilityState"
+            )
+            if visible["result"] == "visible":
+                break
+            assert time.monotonic() - started < startup_budget, visible
+            await asyncio.sleep(0.05)
         yield extension
     finally:
         from .live_cleanup import close_live_extension
