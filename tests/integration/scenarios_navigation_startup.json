@@ -1,0 +1,50 @@
+{
+  "config": {
+    "imports": [
+      "from tests.integration.navigation_startup_support import startup_race_journey"
+    ],
+    "call_style": "function",
+    "required_env_vars": [],
+    "smoke_test_assertions": [
+      "startup_race_journey is not None"
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "real_chrome_startup_navigation_cancellation",
+      "title": "Inspect the actual destination after Chrome reports an aborted startup navigation",
+      "workflow": "Own Chrome target -> hold first HTTP request -> competing owned driver navigates -> real ERR_ABORTED -> inspect URL and readiness -> verify destination DOM -> helper dispatched only once",
+      "user_problem": "A startup navigation race must not trigger blind replay or hide a wrong destination.",
+      "async": true,
+      "fixtures": [
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "description": "Force the cancellation using actual HTTP and Chrome/CDP actors",
+          "raw_code": [
+            "await startup_race_journey(tmp_path)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "real_chrome_startup_wrong_destination_is_refused",
+      "title": "Keep a cancelled navigation failed when Chrome settles on another page",
+      "workflow": "Own Chrome target -> hold first request -> actual competing redirect to wrong page -> ERR_ABORTED -> read-only inspection -> failure -> exactly one helper request",
+      "user_problem": "Navigation recovery must not hide a wrong destination or dispatch input again.",
+      "async": true,
+      "fixtures": [
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "description": "Force a real abort to another destination and verify refusal without replay",
+          "raw_code": [
+            "await startup_race_journey(tmp_path, accepted=False)"
+          ]
+        }
+      ]
+    }
+  ]
+}

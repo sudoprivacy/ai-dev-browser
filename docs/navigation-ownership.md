@@ -96,3 +96,9 @@ closing the bridge. `extension-cleanup-evidence.json` retains each phase;
 timeouts fail the test and retain Python task/thread stacks. The extension CI
 job also has a 25-minute deadline and a three-minute faulthandler dump, so a
 stalled teardown cannot silently occupy a runner for hours.
+
+The viewer fixture also checks actual URL/readiness when Chrome cancels its
+initial navigation with `ERR_ABORTED`. It dispatches no second navigation and
+continues only on the requested owned destination. Real concurrent-driver tests
+cover both a redirect that reaches the correct page and one that must remain a
+failure because it lands on another page.

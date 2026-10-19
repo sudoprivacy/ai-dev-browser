@@ -69,7 +69,9 @@ async def test_two_viewers_share_human_input_then_ai_submits(
             client = await connect_extension(session_id=launched["session_id"])
             await page_goto(await get_active_tab(client), url=remote_site[0])
         else:
-            await navigate_owned_browser(launched, remote_site[0])
+            await navigate_owned_browser(
+                launched, remote_site[0], evidence_dir=tmp_path
+            )
             client = await connect_browser(session_id=launched["session_id"])
         async with aiohttp.ClientSession() as http:
             session = BrowserSession(client, http)
