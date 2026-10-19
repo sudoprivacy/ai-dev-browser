@@ -357,6 +357,10 @@ async def live_extension(request, tmp_path, monkeypatch):
                 f"--disable-extensions-except={copied_extension}",
                 "--enable-logging=file",
                 f"--log-file={tmp_path / 'extension-chrome.log'}",
+                # The owned visual fixture runs beside the user's foreground
+                # editor and Electron. Match Playwright's test-browser flag so
+                # native window occlusion cannot suspend its active renderer.
+                "--disable-backgrounding-occluded-windows",
                 "--no-sandbox",
             ],
         )
