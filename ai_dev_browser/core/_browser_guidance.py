@@ -35,6 +35,17 @@ GUIDANCE = """Mode choice:
     browser_disconnect releases control; browser_stop closes an owned process;
     browser_restart is an explicit process-wide operation. External browser
     stop/restart requires allow_external=True and known process ownership.
+
+    For human login or verification, explain what is needed through the agent's
+    native question/options or normal conversation. When the host provides
+    shared browser controls, ask the user to Take control, complete the step in
+    that same browser/profile, and Return to AI when ready. A chat reply or
+    option alone does not establish ownership. The host must acknowledge its
+    tool pause/control barrier; prompts cannot replace it. Wait while human
+    control is held and observe the current page before continuing. Never ask
+    for passwords, cookies or verification codes in chat or switch browsers to
+    bypass a human lease. Without host handoff controls, coordinate explicitly
+    with the user and do not claim that tools have been paused automatically.
 """
 
 
