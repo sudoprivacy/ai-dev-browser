@@ -17,7 +17,7 @@ import pytest
 from ai_dev_browser.cdp import runtime, service_worker
 from ai_dev_browser.cdp import target as cdp_target
 from ai_dev_browser.core import cdp_send, connect_browser, get_active_tab, js_evaluate
-from ai_dev_browser.core.browser import browser_start, browser_stop
+from ai_dev_browser.core.browser import browser_start
 from ai_dev_browser.core.connection import BrowserClient
 from ai_dev_browser.core.ext_bridge import _Bridge
 from ai_dev_browser.core.extension import extension_dir
@@ -417,13 +417,6 @@ async def live_extension(request, tmp_path, monkeypatch):
         assert visible["result"] == "visible", visible
         yield extension
     finally:
-        try:
-            if chrome and "port" in chrome:
-                # The session retains the verified PID even without lsof.
-                stopped = await asyncio.to_thread(
-                    browser_stop, session_id=chrome["session_id"]
-                )
-                assert stopped.get("stopped") and stopped.get("count") == 1, stopped
-        finally:
-            server.close()
-            await server.wait_closed()
+        from .live_cleanup import close_live_extension
+
+        await close_live_extension(chrome, server, tmp_path)

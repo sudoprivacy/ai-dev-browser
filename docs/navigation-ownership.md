@@ -90,3 +90,9 @@ for the next browser in local testing. Both backends are tested independently.
 Neither test needs an API key, external
 account or a user's running browser. Skipped native tests do not count as live
 verification.
+
+Fixture cleanup has separate deadlines for stopping its owned Chrome and
+closing the bridge. `extension-cleanup-evidence.json` retains each phase;
+timeouts fail the test and retain Python task/thread stacks. The extension CI
+job also has a 25-minute deadline and a three-minute faulthandler dump, so a
+stalled teardown cannot silently occupy a runner for hours.
