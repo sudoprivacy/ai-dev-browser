@@ -348,7 +348,7 @@ async def live_extension(request, tmp_path, monkeypatch):
     try:
         chrome = await asyncio.to_thread(
             browser_start,
-            headless=True,
+            headless=not bool(request.node.get_closest_marker("extension_native")),
             temp=True,
             silent_stderr=True,
             override_default_args={"--disable-extensions": None},
@@ -399,6 +399,7 @@ async def live_extension(request, tmp_path, monkeypatch):
             )
             print(f"EXT startup: {evidence}", flush=True)
         extension = _LiveExtension(port, chrome["port"], bridge)
+        extension.chrome_pid = chrome["pid"]
         # The extension creates its automation tab in the background. Visual
         # acceptance needs an actually visible renderer: hidden Chrome tabs
         # can stall captureScreenshot on Windows. Activate only our owned tab.
@@ -416,7 +417,13 @@ async def live_extension(request, tmp_path, monkeypatch):
         assert visible["result"] == "visible", visible
         yield extension
     finally:
-        if chrome and "port" in chrome:
-            await asyncio.to_thread(browser_stop, port=chrome["port"])
-        server.close()
-        await server.wait_closed()
+        try:
+            if chrome and "port" in chrome:
+                # The session retains the verified PID even without lsof.
+                stopped = await asyncio.to_thread(
+                    browser_stop, session_id=chrome["session_id"]
+                )
+                assert stopped.get("stopped") and stopped.get("count") == 1, stopped
+        finally:
+            server.close()
+            await server.wait_closed()

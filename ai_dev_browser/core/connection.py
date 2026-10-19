@@ -585,12 +585,53 @@ async def get_active_tab(
         return u.split("#", 1)[0].split("?", 1)[0]
 
     wanted = url_contains or os.environ.get(TAB_URL_ENV) or ""
+
+    async def ownership_missing(target_id=None):
+        if browser.transport != "extension":
+            return
+        from .cdp import _get_cdp_command
+        from ._transport import OwnershipProtocolError
+
+        if target_id:
+            # The extension knows whether the original target closed, was
+            # replaced, or had its consent revoked; never guess from URL alone.
+            await browser.connection.send(
+                cdp_target.get_target_info(cdp_target.TargetID(target_id))
+            )
+        state = await browser.connection.send(
+            _get_cdp_command("AiDevBrowser.debugState", {})
+        )
+        if not wanted and state.get("mainTabId") is not None:
+            await browser.connection.send(
+                cdp_target.get_target_info(cdp_target.TargetID(str(state["mainTabId"])))
+            )
+        error = OwnershipProtocolError(
+            {
+                "message": "No owned page matches the selection; inspect ownership history before further input",
+                "data": {
+                    "adbOwnership": {
+                        "state": "unowned",
+                        "requested_url": _path_part(wanted),
+                        "target_states": state.get("targetStates", []),
+                        "ownership_log": state.get("ownershipLog", []),
+                        "open_targets": [
+                            {"target_id": str(t.target_id), "url": _path_part(_url(t))}
+                            for t in page_targets
+                        ],
+                    }
+                },
+            }
+        )
+        error.error_code = "not_found"
+        raise error
+
     if not wanted and browser._automation_target_id:
         from .errors import SessionError
 
         for target in page_targets:
             if str(target._target.target_id) == browser._automation_target_id:
                 return await _prepared(target)
+        await ownership_missing(browser._automation_target_id)
         raise SessionError(
             "Original page target is closed; inspect current state", "target_closed"
         )
@@ -607,6 +648,7 @@ async def get_active_tab(
         for tab in page_targets:
             if wanted in _url(tab):
                 return await _prepared(tab)
+        await ownership_missing()
         raise ValueError(
             f"No tab whose URL contains {wanted!r}. Open page targets: "
             f"{[_url(t) for t in page_targets] or 'none'}"
@@ -620,7 +662,9 @@ async def get_active_tab(
     if page_targets:
         return await _prepared(page_targets[0])
 
-    # No tabs, create one
+    # An extension must never replace revoked consent with a new implicit tab.
+    await ownership_missing()
+    # CDP's caller-owned browser can create its first page.
     return await _prepared(await browser.get("about:blank"))
 
 

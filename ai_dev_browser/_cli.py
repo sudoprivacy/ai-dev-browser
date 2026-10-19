@@ -644,11 +644,12 @@ def _failure_message(d: dict) -> str:
 def _exception_failure(exc: Exception, hint: str | None) -> dict:
     """Prefer explicit error categories over message inference when supplied."""
     out = {"error": str(exc)}
-    for field in ("error_code", "retryable"):
+    for field in ("error_code", "retryable", "details"):
         if hasattr(exc, field):
             out[field] = getattr(exc, field)
-    if hint:
-        out["hint"] = hint
+    recovery_hint = getattr(exc, "hint", None) or hint
+    if recovery_hint:
+        out["hint"] = recovery_hint
     return _augment_failure(out, str(exc))
 
 

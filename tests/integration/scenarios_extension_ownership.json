@@ -1,0 +1,110 @@
+{
+  "config": {
+    "imports": [
+      "from tests.integration.extension_ownership_support import navigation_journey, cancellation_journey"
+    ],
+    "call_style": "function",
+    "required_env_vars": [],
+    "smoke_test_assertions": [
+      "navigation_journey is not None",
+      "cancellation_journey is not None"
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "real_extension_ownership_same",
+      "title": "Keep proven automation ownership through same navigation",
+      "workflow": "Own consent page -> reconnect -> trusted submit once -> follow Chrome-proven result -> reject unrelated same-origin tab -> restart worker -> fresh CLI read -> structured missing-page failure",
+      "user_problem": "Navigation must preserve control without replaying completed submissions or exposing unrelated tabs.",
+      "async": true,
+      "fixtures": [
+        "live_extension",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "description": "Exercise same workflow with server receipts and real extension",
+          "raw_code": [
+            "await navigation_journey(live_extension, tmp_path, 'same')"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "real_extension_ownership_cross",
+      "title": "Keep proven automation ownership through cross navigation",
+      "workflow": "Own consent page -> reconnect -> trusted submit once -> follow Chrome-proven result -> reject unrelated same-origin tab -> restart worker -> fresh CLI read -> structured missing-page failure",
+      "user_problem": "Navigation must preserve control without replaying completed submissions or exposing unrelated tabs.",
+      "async": true,
+      "fixtures": [
+        "live_extension",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "description": "Exercise cross workflow with server receipts and real extension",
+          "raw_code": [
+            "await navigation_journey(live_extension, tmp_path, 'cross')"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "real_extension_ownership_child",
+      "title": "Keep proven automation ownership through child navigation",
+      "workflow": "Own consent page -> reconnect -> trusted submit once -> follow Chrome-proven result -> reject unrelated same-origin tab -> restart worker -> fresh CLI read -> structured missing-page failure",
+      "user_problem": "Navigation must preserve control without replaying completed submissions or exposing unrelated tabs.",
+      "async": true,
+      "fixtures": [
+        "live_extension",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "description": "Exercise child workflow with server receipts and real extension",
+          "raw_code": [
+            "await navigation_journey(live_extension, tmp_path, 'child')"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "real_extension_ownership_noopener",
+      "title": "Keep proven automation ownership through noopener navigation",
+      "workflow": "Own consent page -> reconnect -> trusted submit once -> follow Chrome-proven result -> reject unrelated same-origin tab -> restart worker -> fresh CLI read -> structured missing-page failure",
+      "user_problem": "Navigation must preserve control without replaying completed submissions or exposing unrelated tabs.",
+      "async": true,
+      "fixtures": [
+        "live_extension",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "description": "Exercise noopener workflow with server receipts and real extension",
+          "raw_code": [
+            "await navigation_journey(live_extension, tmp_path, 'noopener')"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "real_extension_ownership_close_parent",
+      "title": "Keep proven automation ownership through close-parent navigation",
+      "workflow": "Own consent page -> reconnect -> trusted submit once -> follow Chrome-proven result -> reject unrelated same-origin tab -> restart worker -> fresh CLI read -> structured missing-page failure",
+      "user_problem": "Navigation must preserve control without replaying completed submissions or exposing unrelated tabs.",
+      "async": true,
+      "fixtures": [
+        "live_extension",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "description": "Exercise close-parent workflow with server receipts and real extension",
+          "raw_code": [
+            "await navigation_journey(live_extension, tmp_path, 'close-parent')"
+          ]
+        }
+      ]
+    }
+  ]
+}

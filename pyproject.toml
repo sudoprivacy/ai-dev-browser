@@ -81,6 +81,7 @@ exclude = ["ai_dev_browser/cdp"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+markers = ["extension_native: real extension with a native visible Chrome window"]
 
 # Version is derived from the latest git tag (SSOT).
 # Never hand-edit a version string anywhere — just `git tag vX.Y.Z`.

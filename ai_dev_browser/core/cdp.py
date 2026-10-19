@@ -223,6 +223,15 @@ async def cdp_send(
     diagnostics such as `AiDevBrowser.debugState`. For these methods use the
     protocol's exact parameter names (usually camelCase).
 
+    In extension mode, `AiDevBrowser.debugState` reports owned/attached tab IDs,
+    terminal `targetStates` (closed, replaced, revoked, unavailable), and the
+    last 100 ownership events. URLs in that history omit query/fragment. When
+    no owned page remains, inspect the refusal's `details` instead: selecting a
+    page for this tool also requires ownership. A Chrome-proven replacement
+    can report `successorTargetId`; inspect and explicitly select that page.
+    Reconnect never restores revoked consent. Never repeat an earlier click or
+    submission just because a later read lost control.
+
     Heads-up on session-scoped overrides: an effect like
     `Browser.setDownloadBehavior` or the `Emulation.*` overrides is bound to the
     CDP session, and adb opens a fresh session per tool call — so it will NOT

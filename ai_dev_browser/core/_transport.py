@@ -22,6 +22,7 @@ from ai_dev_browser import cdp
 
 from ._case import camel_to_snake
 from .port import _is_loopback_host
+from .errors import SessionError
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,33 @@ class CommandTimeout(ProtocolException):
     """
 
 
+class OwnershipProtocolError(ProtocolException, SessionError):
+    """An extension refused an unowned target; input must never be replayed."""
+
+    retryable = False
+
+    def __init__(self, payload: dict):
+        ProtocolException.__init__(self, payload)
+        self.details = payload["data"]["adbOwnership"]
+        state = self.details.get("state")
+        self.error_code = {
+            "closed": "target_closed",
+            "replaced": "session_changed",
+            "revoked": "auth_failed",
+            "unavailable": "unsupported",
+        }.get(state, "unsupported")
+        self.hint = (
+            "Control was refused before dispatch. Inspect details for redacted "
+            "ownership history; if an owned page remains, cdp_send with method "
+            "AiDevBrowser.debugState provides the current state. A replaced target may "
+            "report a Chrome-proven successorTargetId; explicitly select its page "
+            "after inspecting current state. Revoked debugger consent requires "
+            "the user's permission; reconnect does not restore it. Do not replay "
+            "the preceding click or submission, switch transport, or adopt "
+            "another tab by matching its domain."
+        )
+
+
 class Transaction(asyncio.Future):
     """Wraps a CDP generator into a Future that resolves when response arrives.
 
@@ -103,7 +131,18 @@ class Transaction(asyncio.Future):
     def __call__(self, **response):  # type: ignore[override]
         """Process CDP response: feed to generator or set exception."""
         if "error" in response:
-            return self.set_exception(ProtocolException(response["error"]))
+            error = response["error"]
+            ownership = (
+                (error.get("data") or {}).get("adbOwnership")
+                if isinstance(error, dict)
+                else None
+            )
+            exception = (
+                OwnershipProtocolError(error)
+                if isinstance(ownership, dict)
+                else ProtocolException(error)
+            )
+            return self.set_exception(exception)
         try:
             self.__cdp_obj__.send(response.get("result", {}))  # type: ignore[arg-type]
         except StopIteration as e:

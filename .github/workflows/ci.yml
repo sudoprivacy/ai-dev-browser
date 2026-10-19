@@ -24,6 +24,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Install package
         run: uv sync --extra dev --extra remote
 
@@ -241,7 +245,25 @@ jobs:
       - name: Run the real extension on both WebSocket server implementations
         env:
           AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.chrome.outputs.chrome-path }}
-        run: uv run --no-sync python -m pytest -v tests/integration/test_cli_extension_workflows.py tests/integration/test_recording_workflows.py tests/integration/test_recording_demo.py tests/integration/test_browser_lifecycle.py tests/integration/test_remote_view.py -k "real_extension or outbound_proxy" --basetemp extension-results
+        run: uv run --no-sync python -m pytest -v tests/integration/test_cli_extension_workflows.py tests/integration/test_recording_workflows.py tests/integration/test_recording_demo.py tests/integration/test_browser_lifecycle.py tests/integration/test_remote_view.py tests/integration/test_extension_ownership.py -k "real_extension or outbound_proxy" --basetemp extension-results
+
+      - name: Install native Chrome interaction tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y xvfb xauth openbox xdotool
+
+      - name: Honor real native debugger consent cancellation
+        if: runner.os == 'Linux'
+        env:
+          AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          AI_DEV_BROWSER_OWNERSHIP_NATIVE: "1"
+        run: |
+          # Native permission UI needs a fresh desktop for each browser session.
+          for backend in legacy asyncio; do
+            xvfb-run -a -s "-screen 0 1280x1000x24" bash -c '
+              openbox > /tmp/adb-ownership-openbox.log 2>&1 &
+              uv run --no-sync python -m pytest -v "tests/integration/test_extension_ownership_native.py::test_real_extension_native_consent_revocation[$1]" --basetemp "native-ownership-results/$1"
+            ' _ "$backend"
+          done
 
       - name: Retain extension recording evidence
         if: always()
@@ -256,8 +278,9 @@ jobs:
             extension-results/**/*-evidence.json
             extension-results/**/extension-lifecycle.png
             extension-results/**/installed-extension.png
-              extension-results/**/extension-startup-evidence.json
-              extension-results/**/extension-chrome.log
+            extension-results/**/extension-startup-evidence.json
+            extension-results/**/extension-chrome.log
+            native-ownership-results/**
 
   # ─────────────────────────────────────────────────────────────────────
   # CI-integration dogfood: prove the documented "consumer's CI" recipe

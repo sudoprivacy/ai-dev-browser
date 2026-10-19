@@ -43,8 +43,50 @@ let mainTabId = null; // the DEDICATED tab we create (never a user's tab)
 const autoTabs = new Set(); // chrome tabIds we own + have attached debugger to
 const recoveringTabs = new Map();
 const attached = new Set(); // subset of autoTabs with a live chrome.debugger
+const revokedTabs = new Set(); // a user's cancellation survives worker restart
+const tabStates = new Map(); // terminal states, with Chrome-proven successors
+const ownershipLog = []; // bounded, redacted diagnostic history
+const attachingTabs = new Map();
+let restored = false;
 
 const dbg = (tid) => ({ tabId: Number(tid) });
+
+function safeUrl(value) {
+  try { const url = new URL(value); return /^https?:$/.test(url.protocol) ? url.origin + url.pathname : url.protocol; }
+  catch { return null; }
+}
+
+function trace(event, tabId, detail = {}) {
+  ownershipLog.push({ event, tabId, time: Date.now(), ...detail });
+  if (ownershipLog.length > 100) ownershipLog.shift();
+  persist();
+}
+
+function ownershipError(tabId) {
+  const state = tabStates.get(Number(tabId)) || { state: revokedTabs.has(Number(tabId)) ? "revoked" : "unowned" };
+  const successor = state.successorTargetId;
+  const details = { target_id: String(tabId), ...state, ownership_log: ownershipLog.slice() };
+  if (successor && (!autoTabs.has(Number(successor)) || revokedTabs.has(Number(successor)))) delete details.successorTargetId;
+  const error = new Error(`Target is not an owned automation tab (${details.state})`);
+  error.ownership = details;
+  return error;
+}
+
+function requireOwned(tabId) {
+  if (revokedTabs.has(tabId) || !autoTabs.has(tabId)) throw ownershipError(tabId);
+}
+
+function claim(tabId, sourceTabId = null, reason = "created") {
+  if (revokedTabs.has(tabId)) throw ownershipError(tabId);
+  autoTabs.add(tabId);
+  tabStates.delete(tabId);
+  trace(reason, tabId, { sourceTabId });
+  syncKeepalive();
+}
+
+function sourceOwned(tabId) {
+  return !revokedTabs.has(tabId) && (autoTabs.has(tabId) || tabStates.get(tabId)?.state === "closed");
+}
 
 async function profileAccount() {
   // Which profile/account is this? So browser_connect can tell you WHICH Chrome
@@ -92,7 +134,8 @@ function syncKeepalive() {
 
 function persist() {
   try {
-    chrome.storage.session.set({ adbMainTabId: mainTabId, adbAutoTabs: [...autoTabs] });
+    chrome.storage.session.set({ adbMainTabId: mainTabId, adbAutoTabs: [...autoTabs],
+      adbRevokedTabs: [...revokedTabs], adbTabStates: [...tabStates], adbOwnershipLog: ownershipLog });
   } catch { /* storage unavailable — keepalive still holds in-memory state */ }
 }
 
@@ -101,47 +144,71 @@ async function restore() {
   profileId = local.adbProfileId || crypto.randomUUID();
   await chrome.storage.local.set({ adbProfileId: profileId });
   try {
-    const s = await chrome.storage.session.get(["adbMainTabId", "adbAutoTabs", "adbSessionId", "adbLaunchToken"]);
+    const s = await chrome.storage.session.get(["adbMainTabId", "adbAutoTabs", "adbSessionId", "adbLaunchToken", "adbRevokedTabs", "adbTabStates", "adbOwnershipLog"]);
     sessionId = s.adbSessionId || crypto.randomUUID();
     launchToken = s.adbLaunchToken || null;
     await chrome.storage.session.set({ adbSessionId: sessionId });
     if (s.adbMainTabId != null) mainTabId = s.adbMainTabId;
+    for (const id of s.adbRevokedTabs || []) revokedTabs.add(id);
+    for (const [id, value] of s.adbTabStates || []) tabStates.set(id, value);
+    ownershipLog.push(...(s.adbOwnershipLog || []).slice(-100));
     if (Array.isArray(s.adbAutoTabs)) {
-      for (const id of s.adbAutoTabs) autoTabs.add(id);
+      for (const id of s.adbAutoTabs) if (!revokedTabs.has(id)) autoTabs.add(id);
     }
   } catch { /* first run / no storage */ }
 }
 
 async function attachTab(tabId) {
   // Attach chrome.debugger to a tab WE own. Idempotent.
-  if (!attached.has(tabId)) {
-    try {
-      await chrome.debugger.attach(dbg(tabId), PROTOCOL);
-    } catch (e) {
-      if (!/already|Another debugger/i.test(String(e))) throw e;
+  requireOwned(tabId);
+  if (attachingTabs.has(tabId)) return attachingTabs.get(tabId);
+  const operation = (async () => {
+    if (!attached.has(tabId)) {
+      try {
+        await chrome.debugger.attach(dbg(tabId), PROTOCOL);
+      } catch (e) {
+        if (!/already|Another debugger/i.test(String(e))) throw e;
+        // Another extension's debugger must not be mistaken for our attachment.
+        await chrome.debugger.sendCommand(dbg(tabId), "Page.enable", {});
+      }
+      if (!autoTabs.has(tabId) || revokedTabs.has(tabId)) {
+        await chrome.debugger.detach(dbg(tabId)).catch(() => {});
+        throw ownershipError(tabId);
+      }
+      attached.add(tabId);
+      markTab(tabId);
     }
-    attached.add(tabId);
-    markTab(tabId);
-  }
-  autoTabs.add(tabId);
-  syncKeepalive();
-  persist();
+    syncKeepalive();
+    persist();
+  })();
+  attachingTabs.set(tabId, operation);
+  try { return await operation; }
+  finally { if (attachingTabs.get(tabId) === operation) attachingTabs.delete(tabId); }
 }
 
 // Follow a tab OUR automation opened, retrying briefly — a just-created popup
 // can reject the first attach while it's still committing its first navigation.
 async function followTab(tabId) {
   for (let i = 0; i < 6; i++) {
+    if (!autoTabs.has(tabId) || revokedTabs.has(tabId)) return false;
     try { await attachTab(tabId); return true; }
     catch { await new Promise((r) => setTimeout(r, 250)); }
   }
   return false;
 }
 
-function forget(tabId) {
+function forget(tabId, state = "closed", detail = {}) {
+  const wasOwned = autoTabs.has(tabId);
   autoTabs.delete(tabId);
   attached.delete(tabId);
-  if (tabId === mainTabId) mainTabId = null;
+  if (state === "revoked") revokedTabs.add(tabId);
+  if (wasOwned || tabStates.has(tabId) || revokedTabs.has(tabId)) {
+    // Removal can arrive after replacement/revocation; preserve the more useful state.
+    if (state !== "closed" || !tabStates.has(tabId)) tabStates.set(tabId, { state, ...detail });
+    while (tabStates.size > 128) tabStates.delete(tabStates.keys().next().value);
+    trace(state, tabId, detail);
+  }
+  if (tabId === mainTabId && state !== "revoked") mainTabId = null;
   syncKeepalive();
   persist();
   announce().catch(() => {});
@@ -165,6 +232,7 @@ async function ensureDedicatedTabSelected() {
   // NEVER attach to the user's existing tabs — automation gets its own tab so a
   // hijacked/injected page can't act on whatever the user had open.
   if (mainTabId != null) {
+    if (revokedTabs.has(mainTabId)) throw ownershipError(mainTabId);
     try { await chrome.tabs.get(mainTabId); }
     catch { autoTabs.delete(mainTabId); attached.delete(mainTabId); mainTabId = null; }
   }
@@ -178,6 +246,7 @@ async function ensureDedicatedTabSelected() {
       await chrome.tabs.update(marker.id, { url: "about:blank" });
     }
     mainTabId = t.id;
+    claim(t.id);
   }
   await attachTab(mainTabId);
   return mainTabId;
@@ -214,6 +283,7 @@ function adoptLaunch(tab) {
     mainTabId = tab.id;
     launchToken = token;
     await chrome.storage.session.set({ adbLaunchToken: token });
+    claim(tab.id, null, "launch");
     await attachTab(tab.id);
     await chrome.tabs.update(tab.id, { url: "about:blank" });
     if (old != null && old !== tab.id && autoTabs.has(old)) {
@@ -228,6 +298,7 @@ function adoptLaunch(tab) {
   });
 }
 chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+  if (autoTabs.has(tabId) && change.url) trace("updated", tabId, { url: safeUrl(change.url) });
   adoptLaunch(tab).catch(error => console.error("Launch adoption failed", error));
 });
 chrome.tabs.onCreated.addListener(tab => {
@@ -250,7 +321,7 @@ function toCdpCookie(c) {
 
 async function targetInfos() {
   if (await managedProfile()) {
-    for (const tab of await chrome.tabs.query({})) autoTabs.add(tab.id);
+    for (const tab of await chrome.tabs.query({})) if (!revokedTabs.has(tab.id)) autoTabs.add(tab.id);
   }
   // Managed isolated profiles explicitly share their tabs. Ordinary profiles
   // expose only automation tabs, preserving the user's unrelated tabs.
@@ -346,16 +417,18 @@ async function browserLevel(method, params, tab) {
       const id = (params && params.targetId) || tab;
       const all = await targetInfos();
       const found = all.find((t) => t.targetId === String(id));
-      return { targetInfo: found || { targetId: String(id), type: "page", title: "", url: "", attached: false, canAccessOpener: false } };
+      if (!found) throw ownershipError(id);
+      return { targetInfo: found };
     }
     case "Target.createTarget": {
       const t = await chrome.tabs.create({ url: (params && params.url) || "about:blank", active: false });
+      claim(t.id);
       await attachTab(t.id);
       return { targetId: String(t.id) };
     }
     case "Target.activateTarget": {
       const id = Number((params && params.targetId) || tab);
-      if (!autoTabs.has(id)) throw new Error("Target is not an owned automation tab");
+      requireOwned(id);
       const t = await chrome.tabs.get(id);
       await chrome.tabs.update(id, { active: true });
       if (t.windowId != null) {
@@ -371,7 +444,7 @@ async function browserLevel(method, params, tab) {
     }
     case "Target.closeTarget": {
       const id = Number((params && params.targetId) || tab);
-      if (!autoTabs.has(id)) throw new Error("Target is not an owned automation tab");
+      requireOwned(id);
       try { await chrome.tabs.remove(id); } catch { /* already gone */ }
       forget(id);
       return { success: true };
@@ -379,7 +452,8 @@ async function browserLevel(method, params, tab) {
     case "AiDevBrowser.debugState":
       // Introspection for field support (not a real CDP method): which tabs
       // does the extension think it owns / has attached right now?
-      return { mainTabId, autoTabs: [...autoTabs], attached: [...attached], profileId, sessionId, launchToken, managedProfile: await managedProfile(), extensionVersion: chrome.runtime.getManifest().version };
+      return { mainTabId, autoTabs: [...autoTabs], attached: [...attached], profileId, sessionId, launchToken, managedProfile: await managedProfile(), extensionVersion: chrome.runtime.getManifest().version,
+        targetStates: [...tabStates].map(([id, state]) => ({ target_id: String(id), ...state })), ownershipLog };
     case "AiDevBrowser.closeBrowser":
       // The Python lifecycle layer verifies PID ownership/authorization first.
       // This is explicit process-wide close; disconnect never calls it.
@@ -396,6 +470,7 @@ async function browserLevel(method, params, tab) {
     case "Browser.getWindowForTarget": {
       // Give adb's scroll-gesture / window ops real bounds instead of erroring.
       const id = Number((params && params.targetId) || tab);
+      requireOwned(id);
       const t = await chrome.tabs.get(id);
       const w = await chrome.windows.get(t.windowId);
       return {
@@ -414,13 +489,14 @@ async function handleCommand(gid, tab, method, params) {
     if (result === undefined) {
       if (tab == null) throw new Error(`no target for ${method}`);
       if (recoveringTabs.has(Number(tab))) await recoveringTabs.get(Number(tab));
-      if (!autoTabs.has(Number(tab))) throw new Error("Target is not an owned automation tab");
+      requireOwned(Number(tab));
       await attachTab(Number(tab)); // ensure the tab is attached before driving it
       result = await chrome.debugger.sendCommand(dbg(tab), method, params || {});
     }
     ws.send(JSON.stringify({ _gid: gid, result: result ?? {} }));
   } catch (e) {
-    ws.send(JSON.stringify({ _gid: gid, error: { message: String(e && e.message || e) } }));
+    ws.send(JSON.stringify({ _gid: gid, error: { message: String(e && e.message || e),
+      ...(e.ownership ? { data: { adbOwnership: e.ownership } } : {}) } }));
   }
 }
 
@@ -472,7 +548,9 @@ if (chrome.webNavigation && chrome.webNavigation.onCreatedNavigationTarget) {
   chrome.webNavigation.onCreatedNavigationTarget.addListener(async (d) => {
     if (d.tabId == null || d.sourceTabId == null) return;
     await boot();
-    if (!autoTabs.has(d.sourceTabId)) return;
+    if (!sourceOwned(d.sourceTabId)) return;
+    if (revokedTabs.has(d.tabId)) return;
+    claim(d.tabId, d.sourceTabId, "navigation-child");
     followTab(d.tabId);
   });
 }
@@ -482,21 +560,41 @@ if (chrome.webNavigation && chrome.webNavigation.onCreatedNavigationTarget) {
 chrome.tabs.onCreated.addListener(async (tab) => {
   if (tab.id == null || tab.openerTabId == null) return;
   await boot();
-  if (!autoTabs.has(tab.openerTabId)) return;
+  if (!sourceOwned(tab.openerTabId) || revokedTabs.has(tab.id)) return;
+  claim(tab.id, tab.openerTabId, "opener-child");
   followTab(tab.id);
 });
 
 // A followed tab closed (e.g. OAuth popup after consent) → forget it. adb's next
 // Target.getTargets no longer lists it; get_active_tab falls back to the opener.
-chrome.tabs.onRemoved.addListener((tabId) => forget(tabId));
+chrome.tabs.onRemoved.addListener(async (tabId) => { await boot(); forget(tabId); });
+
+// Chrome alone proves replacement; URL similarity never grants ownership.
+chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
+  await boot();
+  if (!sourceOwned(removedTabId) || revokedTabs.has(addedTabId)) return;
+  claim(addedTabId, removedTabId, "replacement");
+  if (mainTabId === removedTabId) mainTabId = addedTabId;
+  forget(removedTabId, "replaced", { successorTargetId: String(addedTabId) });
+  followTab(addedTabId).then(() => announce()).catch(() => {});
+});
 
 // Headless branded Chrome may replace the debugger target on cross-process
 // navigation while retaining the SAME authorized tab. Wait for its new target;
 // never replay a command or adopt a different/user tab. Explicit cancellation
 // and an actual closed tab still release ownership.
-chrome.debugger.onDetach.addListener((src, reason) => {
+function onDetached(src, reason) {
+  // An event can wake a suspended worker before storage restoration finishes.
+  if (!restored) { boot().then(() => onDetached(src, reason)); return; }
   const tabId = src.tabId;
   if (tabId == null || !autoTabs.has(tabId)) return;
+  trace("detached", tabId, { reason });
+  // Cancellation wins even while target_closed recovery is awaiting Chrome.
+  if (reason !== "target_closed") {
+    forget(tabId, "revoked", { reason });
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ _event_tab: String(tabId), method: "Inspector.detached", params: { reason } }));
+    return;
+  }
   if (recoveringTabs.has(tabId)) return;
   const recovery = (async () => {
     let tabPresent = false;
@@ -507,6 +605,7 @@ chrome.debugger.onDetach.addListener((src, reason) => {
       if (await followTab(tabId)) {
         try {
           await chrome.debugger.sendCommand(dbg(tabId), "Page.enable", {});
+          trace("recovered", tabId, { reason });
           return;
         } catch { /* Reattachment failed: release below. */ }
       }
@@ -514,11 +613,12 @@ chrome.debugger.onDetach.addListener((src, reason) => {
     if (ws && ws.readyState === 1 && autoTabs.has(tabId)) {
       ws.send(JSON.stringify({ _event_tab: String(tabId), method: "Inspector.detached", params: { reason, tabPresent } }));
     }
-    forget(tabId);
+    if (!revokedTabs.has(tabId)) forget(tabId, tabPresent ? "unavailable" : "closed", { reason });
   })();
   recoveringTabs.set(tabId, recovery);
   recovery.finally(() => recoveringTabs.delete(tabId));
-});
+}
+chrome.debugger.onDetach.addListener(onDetached);
 
 // extension -> adb: relay CDP events, tagged with the tab they came from. The
 // bridge delivers each to the drivers holding that tab's connections, so a
@@ -543,6 +643,8 @@ let booting = null;
 function boot() {
   if (!booting) booting = (async () => {
     await restore();
+    restored = true;
+    trace("worker-start", mainTabId);
     syncKeepalive();
     connect();
   })();
