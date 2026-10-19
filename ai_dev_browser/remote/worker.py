@@ -31,6 +31,7 @@ from ai_dev_browser.remote.session import BrowserSession
 from ai_dev_browser.remote.window import WindowView, XDisplay
 
 from .profile_lease import ProfileLease
+from .existing import ExistingExtension
 
 
 class Worker:
@@ -44,6 +45,7 @@ class Worker:
         display_mode="x11",
         extension_directory=None,
         chrome_args=(),
+        existing_extension_root=None,
     ):
         self.root = pathlib.Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
@@ -61,6 +63,12 @@ class Worker:
             pathlib.Path(extension_directory) if extension_directory else None
         )
         self.chrome_args = list(chrome_args)
+        self.existing_extension = (
+            ExistingExtension(existing_extension_root)
+            if existing_extension_root
+            else None
+        )
+        self.personal_reference = None
         self.binding = None
         self.browser = None
         self.pending_launch = None
@@ -81,6 +89,7 @@ class Worker:
             saved = json.loads(self.journal.read_text())
             self.binding = saved["binding"]
             self.handoff = saved.get("handoff")
+            self.personal_reference = saved.get("personalExtension")
             self.control.epoch = saved["controlEpoch"] + 1
             self.control.target_epoch = saved["targetEpoch"] + 1
             # Recovery never resumes old AI plans. A human explicitly restarts
@@ -95,6 +104,7 @@ class Worker:
         value = {
             "binding": self.binding,
             "handoff": self.handoff,
+            "personalExtension": self.personal_reference,
             **self.control.snapshot(),
         }
         if controller is not None:
@@ -132,6 +142,8 @@ class Worker:
             raise ControlError("browser_profile_in_use")
 
     def profile_id(self):
+        if self.personal_reference:
+            return "personal-" + self.personal_reference["profileId"]
         return hashlib.sha256(
             json.dumps(
                 {key: self.binding[key] for key in ("orgId", "userId")}, sort_keys=True
@@ -210,13 +222,18 @@ class Worker:
             "targetEpoch": live["targetEpoch"],
             "isController": bool(controller and live["controller"] == controller),
             "isHumanControlHeld": live["controller"] is not None,
-            "isHeadless": self.browser.get("headless", True) if self.browser else True,
+            "isHeadless": self.browser.get("headless")
+            if self.browser
+            else self.personal_reference.get("isHeadless")
+            if self.personal_reference
+            else True,
             "transport": self.browser.get("transport", "extension")
             if self.browser
             else "extension",
             "capabilities": {
-                "lifecycle": True,
-                "fileTransfer": True,
+                "lifecycle": self.personal_reference is None,
+                "fileTransfer": self.personal_reference is None,
+                "existingExtension": self.existing_extension is not None,
                 "pageView": bool(self.session and not is_transitioning),
                 "windowView": bool(
                     self.session and self.display and not is_transitioning
@@ -226,6 +243,7 @@ class Worker:
             "activeTargetId": live["activeTargetId"],
             "tabs": live["tabs"],
             "error": live["error"],
+            "personalExtension": self.personal_reference,
             "handoff": self.handoff,
             "dialog": live.get("dialog"),
             "fileChooser": live.get("fileChooser"),
@@ -291,6 +309,8 @@ class Worker:
             await self._start_browser(action, actor)
 
     async def _start_browser(self, action, actor):
+        if self.personal_reference is not None:
+            raise ControlError("browser_existing_extension_requires_disconnect")
         is_headless, transport = (
             action.get("isHeadless"),
             action.get("transport", "extension"),
@@ -463,7 +483,7 @@ class Worker:
         self.window_viewers.clear()
         self.window_frame = None
         record = self.browser or self.pending_launch
-        if record:
+        if record and not record.get("external_attachment"):
             session_id = record.get("session_id")
             if not session_id:
                 raise ControlError("managed_browser_reconnect_required")
@@ -473,11 +493,15 @@ class Worker:
                 raise ControlError("browser_stop_uncertain")
         self.browser = None
         self.pending_launch = None
+        if self.existing_extension:
+            self.existing_extension.close()
         if self.display:
             await self.display.close()
             self.display = None
 
     async def lifecycle_action(self, actor, action):
+        if self.personal_reference is not None:
+            raise ControlError("browser_existing_extension_requires_disconnect")
         kind = action.get("kind")
         if kind == "restart":
             if action.get("acknowledgeStateLoss") is not True:
@@ -560,6 +584,60 @@ class Worker:
         extra = {}
         if kind == "state":
             pass
+        elif kind == "inspect-existing-extension":
+            if self.existing_extension is None:
+                raise ControlError("browser_existing_extension_not_supported")
+            extra.update(await self.existing_extension.inspect())
+        elif kind == "connect-existing-extension":
+            if self.existing_extension is None:
+                raise ControlError("browser_existing_extension_not_supported")
+            expected = {
+                "sessionId": action.get("sessionId"),
+                "profileId": action.get("profileId"),
+            }
+            if any(
+                not isinstance(value, str) or not value or len(value) > 220
+                for value in expected.values()
+            ):
+                raise ControlError("invalid_browser_request")
+            async with self.changing_lifecycle():
+                if self.session or self.browser or self.pending_launch:
+                    raise ControlError("browser_restart_required")
+                if self.personal_reference is not None and any(
+                    self.personal_reference[key] != value
+                    for key, value in expected.items()
+                ):
+                    raise ControlError("browser_existing_extension_changed")
+                await self.control.take(controller)
+                self.control.epoch += 1
+                self.control.target_epoch += 1
+                self.save(state="pausing")
+                client, reference = await self.existing_extension.connect(expected)
+                self.personal_reference = reference
+                self.browser = {
+                    "session_id": reference["sessionId"],
+                    "headless": reference["isHeadless"],
+                    "transport": "extension",
+                    "external_attachment": True,
+                }
+                self.session = BrowserSession(client, self.http, control=self.control)
+                self.save()
+                page = await self.session._connect_page()
+                await page.call("Page.bringToFront")
+        elif kind == "disconnect-existing-extension":
+            if self.existing_extension is None or self.personal_reference is None:
+                raise ControlError("browser_existing_extension_not_supported")
+            epoch, target_epoch = self.epochs(action)
+            async with self.changing_lifecycle():
+
+                async def disconnect():
+                    self.control.epoch += 1
+                    self.control.target_epoch += 1
+                    await self._stop_browser()
+                    self.personal_reference = None
+                    self.save()
+
+                await self.control.run(controller, epoch, target_epoch, disconnect)
         elif kind == "start":
             await self.start(action, controller)
         elif kind in ("stop", "restart"):
@@ -982,6 +1060,10 @@ if __name__ == "__main__":
     parser.add_argument("--display", choices=("native", "x11"), default="native")
     parser.add_argument("--extension-directory")
     parser.add_argument("--chrome-arg", action="append", default=[])
+    parser.add_argument(
+        "--existing-extension-root",
+        help="Trusted host lease directory shared by all personal-Chrome conversations; omitted disables attachment",
+    )
     options = parser.parse_args()
     host_token = os.environ.pop("AI_DEV_BROWSER_WORKER_HOST_TOKEN")
     ai_token = os.environ.pop("AI_DEV_BROWSER_WORKER_AI_TOKEN")
@@ -993,6 +1075,7 @@ if __name__ == "__main__":
         display_mode=options.display,
         extension_directory=options.extension_directory,
         chrome_args=options.chrome_arg,
+        existing_extension_root=options.existing_extension_root,
     )
     web.run_app(
         application(worker),

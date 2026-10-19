@@ -111,6 +111,39 @@ producer can follow the same lifetime so idle automation performs no encoding.
 
 ## A shared browser session
 
+### Optional existing personal Chrome attachment
+
+Local application hosts can opt into explicit attachment with the worker's
+`--existing-extension-root <host-owned-directory>`. All conversations in that
+host must use the same directory so an OS file lease prevents two workers from
+claiming the same extension profile. Cloud workers omit this setting; neither
+an agent nor an untrusted request can enable it or supply a profile path.
+
+The authenticated host first invokes `inspect-existing-extension`. It returns
+the currently connected extension's opaque `sessionId` and `profileId`, plus
+normal installation guidance. Show this identity to the user and request
+explicit selection. Then invoke `connect-existing-extension` with those exact
+two fields after the application's agent execution barrier has acknowledged
+human control. A changed Chrome/profile is rejected without choosing another
+browser or launching a replacement. The ordinary extension continues to expose
+only its dedicated automation tab and descendants.
+
+The connected session uses the same control, page view and browser tools as
+managed Chrome. Personal Chrome's launch mode may be unknown and is reported as
+`isHeadless: null`; it is never invented or changed. `lifecycle` and
+`fileTransfer` are false: attachment does not reconfigure the user's downloads,
+restart Chrome or close it. To finish, the human host invokes
+`disconnect-existing-extension` with current control/target epochs. It releases
+the connection and shared profile lease, leaving Chrome, page state and login
+cookies intact. Disconnect does not silently return control to AI. Application
+shutdown also releases only the attached connection. A restored worker requires
+explicit reconnection to the same personal identity or explicit disconnection.
+
+`test_existing_worker_live.py` exercises actual Chrome and both WebSocket
+backends: explicit profile verification, two-conversation ownership, rejected
+AI attachment/writes, trusted Unicode input, fresh observation, original cookie,
+single submission and disconnection while personal Chrome remains running.
+
 `remote.session.BrowserSession` binds the selected target, control lease and
 lazy viewers to an already authorized `BrowserClient`. The host supplies trusted
 viewer/controller identities. `take()` drains in-flight writes; `give_back()`
