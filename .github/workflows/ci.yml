@@ -258,6 +258,7 @@ jobs:
           AI_DEV_BROWSER_OWNERSHIP_NATIVE: "1"
         run: |
           # Native permission UI needs a fresh desktop for each browser session.
+          mkdir -p native-ownership-results
           for backend in legacy asyncio; do
             xvfb-run -a -s "-screen 0 1280x1000x24" bash -c '
               openbox > /tmp/adb-ownership-openbox.log 2>&1 &
