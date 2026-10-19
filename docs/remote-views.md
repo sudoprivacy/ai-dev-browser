@@ -138,11 +138,16 @@ the connection and shared profile lease, leaving Chrome, page state and login
 cookies intact. Disconnect does not silently return control to AI. Application
 shutdown also releases only the attached connection. A restored worker requires
 explicit reconnection to the same personal identity or explicit disconnection.
+If a worker crashed under an AI lease, the restored authenticated host can
+explicitly disconnect the stopped reference using current epochs after its
+agent barrier. This acquires human control without launching or switching
+Chrome. Stale epochs and a different retained human controller are rejected.
 
 `test_existing_worker_live.py` exercises actual Chrome and both WebSocket
 backends: explicit profile verification, two-conversation ownership, rejected
 AI attachment/writes, trusted Unicode input, fresh observation, original cookie,
-single submission and disconnection while personal Chrome remains running.
+single submission, a real worker crash, recovery and disconnection while
+personal Chrome remains running.
 
 `remote.session.BrowserSession` binds the selected target, control lease and
 lazy viewers to an already authorized `BrowserClient`. The host supplies trusted

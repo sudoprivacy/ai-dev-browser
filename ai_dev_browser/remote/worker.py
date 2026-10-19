@@ -629,6 +629,19 @@ class Worker:
                 raise ControlError("browser_existing_extension_not_supported")
             epoch, target_epoch = self.epochs(action)
             async with self.changing_lifecycle():
+                if (
+                    epoch != self.control.epoch
+                    or target_epoch != self.control.target_epoch
+                ):
+                    raise ControlError("stale_browser_operation")
+                if self.session is None and self.control.state == "error":
+                    # A crashed worker can retain the personal identity with
+                    # no live driver or human controller. The authenticated
+                    # host may explicitly take its stopped lease to disconnect
+                    # that reference; it never starts or switches Chrome.
+                    await self.control.take(controller)
+                    epoch = self.control.epoch
+                    self.save()
 
                 async def disconnect():
                     self.control.epoch += 1

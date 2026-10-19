@@ -65,12 +65,12 @@ async def test_existing_profile_worker_handoff_and_disconnect(
 
     async with aiohttp.ClientSession() as http:
 
-        async def start_worker(name):
+        async def start_worker(name, *, is_recovery=False):
             with socket.socket() as reservation:
                 reservation.bind(("127.0.0.1", 0))
                 port = reservation.getsockname()[1]
             root = tmp_path / name
-            root.mkdir()
+            root.mkdir(exist_ok=is_recovery)
             host_token, ai_token = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
             env = dict(
                 os.environ,
@@ -282,9 +282,45 @@ async def test_existing_profile_worker_handoff_and_disconnect(
                 {"kind": "connect-existing-extension", **selected}
             )
             assert next_owner["session"]["profileId"] == state["profileId"]
-            await second(
-                {"kind": "disconnect-existing-extension", **epochs(next_owner)}
+            ai_owned = await second({"kind": "return", **epochs(next_owner)})
+            assert ai_owned["session"]["state"] == "ai"
+            # A real crash bypasses graceful disconnect. The saved AI lease
+            # has no human controller; Chrome must survive and the restored
+            # host must be able to explicitly disconnect its saved reference.
+            crashed = workers[-1]
+            crashed.kill()
+            await asyncio.wait_for(crashed.wait(), 10)
+            assert psutil.pid_exists(live_extension.chrome_pid)
+            restored = await start_worker("second", is_recovery=True)
+            recovered = await restored({"kind": "state"})
+            assert (
+                recovered["session"]["personalExtension"]["profileId"]
+                == state["personalExtension"]["profileId"]
             )
+            assert not recovered["session"]["isController"]
+            stale = await restored(
+                {"kind": "disconnect-existing-extension", **epochs(ai_owned)},
+                expected=409,
+            )
+            assert stale["error"] == "stale_browser_operation"
+            await restored(
+                {
+                    "kind": "connect-existing-extension",
+                    **selected,
+                    "sessionId": selected["sessionId"] + "-changed",
+                },
+                expected=409,
+            )
+            released = await restored(
+                {"kind": "disconnect-existing-extension", **epochs(recovered)}
+            )
+            assert released["session"]["personalExtension"] is None
+            assert released["session"]["isController"]
+            assert psutil.pid_exists(live_extension.chrome_pid)
+            after_crash = await live_extension.call(
+                js_evaluate, expression="document.querySelector('#name').value"
+            )
+            assert after_crash["result"] == human
             evidence = {
                 "workflow": "existing-personal-profile-handoff-disconnect",
                 "passed": True,
@@ -298,6 +334,7 @@ async def test_existing_profile_worker_handoff_and_disconnect(
                 "chromeAliveAfterDisconnect": psutil.pid_exists(
                     live_extension.chrome_pid
                 ),
+                "realWorkerCrashRecoveredWithoutClosingChrome": True,
             }
             (tmp_path / "existing-worker-evidence.json").write_text(
                 json.dumps(evidence, indent=2), encoding="utf-8"
