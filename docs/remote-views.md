@@ -58,6 +58,15 @@ tool execution and viewer input.
 
 ## AI and human control
 
+The agent communicates why human input is needed through its native question,
+options or normal conversation. The host's existing Take control and Return to
+AI actions perform the actual ownership transition. A native answer is only
+communication unless the host explicitly routes it to that authenticated action
+and waits for the tool barrier. Do not build an additional question UI into the
+remote display adapter. Credentials are entered in the same browser by the
+human, not sent through agent chat. The public MCP tool catalog and normal CLI
+mode help include this guidance; execution barriers remain a host contract.
+
 `remote.control.BrowserControl` serializes operations across every agent and
 viewer attached to one browser. Hosts supply authenticated actor identities,
 isolate the raw browser endpoint and share one instance across all targets.

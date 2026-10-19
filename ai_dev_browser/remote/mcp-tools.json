@@ -1,7 +1,7 @@
 [
   {
     "name": "browser_launch",
-    "description": "Start the browser shared with the user. Choose headless/headful from the task; headless runs no display service. Cloud extension is preferred for compatibility and persistent login. Existing browsers retain their launch mode; a different mode returns browser_restart_required. Use browser_restart to explicitly change it. Never bypass human control.",
+    "description": "Start the browser shared with the user. Choose headless/headful from the task; headless runs no display service and can still provide the host's page viewer. Cloud extension is preferred for compatibility and persistent login. Existing browsers retain their launch mode; a different mode returns browser_restart_required. Use browser_restart to explicitly change it. When login or human input is needed, use your agent's native question/options or ordinary conversation to ask the user to choose Take control in the host's shared panel or viewer. The user signs in directly in that same browser/profile; never request passwords, cookies or verification codes in chat. A chat reply or native option alone does not transfer control. Wait for the host's explicit Return to AI and then freshly observe. Never bypass human control.",
     "inputSchema": {
       "type": "object",
       "properties": {
