@@ -146,6 +146,11 @@ async def dialog_respond(
 
     Returns:
         dict: success / action / optional error / message
+
+    Failure:
+        Confirm that an alert, confirm or prompt is actually open on this page.
+        Inspect page state after an uncertain accept/dismiss; do not replay the
+        action that opened the dialog.
     """
     accept = action == "accept"
 

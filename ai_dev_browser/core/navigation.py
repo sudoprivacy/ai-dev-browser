@@ -100,6 +100,11 @@ async def page_reload(tab: Tab, ignore_cache: bool = True) -> bool:
 
     Returns:
         True on success
+
+    Failure:
+        Inspect page_info and the current DOM before reloading again. Reload
+        can repeat a form submission or discard edits; reconnect control with
+        browser_reconnect when only the connection was lost.
     """
     await tab.page_reload(ignore_cache=ignore_cache)
     return True
@@ -122,6 +127,12 @@ async def page_wait_ready(
 
     Returns:
         True if page loaded, False if timeout
+
+    Failure:
+        A false result means readiness was not observed within timeout. Inspect
+        page_info and wait for the specific expected state with
+        page_wait_element or page_wait_url; do not repeat the preceding click
+        or submission just because readiness timed out.
     """
     start = time.time()
 
@@ -160,6 +171,12 @@ async def page_wait_url(
 
     Returns:
         dict with matched, url, elapsed
+
+    Failure:
+        Compare the returned URL with the expected pattern/exact value and
+        inspect page_info. Supply the intended pattern or exact URL; an
+        unmatched timeout does not mean the preceding submission failed and
+        must not trigger blind replay.
     """
     start_time = time.time()
 

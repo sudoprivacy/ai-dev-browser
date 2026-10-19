@@ -1,0 +1,32 @@
+{
+  "config": {
+    "imports": ["from tests.integration.cli_steering_support import steering_recovery_journey, extension_storage_journey"],
+    "call_style": "function",
+    "required_env_vars": [],
+    "smoke_test_assertions": ["steering_recovery_journey is not None", "extension_storage_journey is not None"]
+  },
+  "scenarios": [
+    {
+      "name": "real_cli_recovery_preserves_one_browser_and_submission",
+      "title": "Recover from invalid inputs, missing cookie files and stale refs without repeating a trusted action",
+      "workflow": "Actual tool help -> start Chrome -> trusted approval -> invalid storage call -> returned hint -> valid storage -> missing cookies -> save/load -> stale ref -> discover/current ref -> unmatched URL wait -> one trusted submit -> inspect final pixels",
+      "user_problem": "An agent needs actionable failure hints while preserving the session and avoiding duplicate user actions.",
+      "fixtures": ["lifecycle"],
+      "steps": [
+        {
+          "description": "Exercise the real CLI, Chrome, HTTP ledger and saved screenshot",
+          "raw_code": ["steering_recovery_journey(lifecycle)"]
+        }
+      ]
+    },
+    {
+      "name": "real_extension_storage_core_and_cli_match",
+      "title": "Use real extension storage through Python and fresh CLI calls on the same origin",
+      "workflow": "Own HTTP page -> Python batch write -> observed read -> matching CLI read -> CLI paired write -> reload -> persisted Python read",
+      "user_problem": "A correctly selected storage tool must actually work and confirm values consistently across transports and APIs.",
+      "async": true,
+      "fixtures": ["live_extension", "tmp_path"],
+      "steps": [{"raw_code": ["await extension_storage_journey(live_extension, tmp_path)"]}]
+    }
+  ]
+}

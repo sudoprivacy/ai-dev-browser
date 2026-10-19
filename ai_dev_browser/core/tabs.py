@@ -20,7 +20,7 @@ async def tab_new(
     browser_or_tab: BrowserClient | Tab,
     url: str | None = None,
 ) -> dict:
-    """Open a new tab.
+    """Use when: creating a new page in the same browser; returns its URL/title, then select it with --tab-url in later CLI calls.
 
     Args:
         browser_or_tab: Browser or Tab instance
@@ -28,6 +28,11 @@ async def tab_new(
 
     Returns:
         dict with url, title, tab (for programmatic use)
+
+    Failure:
+        Inspect tab_list before opening another page after an uncertain result.
+        Keep the original session_id and select the new page explicitly with
+        --tab-url for subsequent CLI actions.
     """
     url = url or "about:blank"
 
@@ -42,13 +47,18 @@ async def tab_new(
 
 
 async def tab_list(browser_or_tab: BrowserClient | Tab) -> dict:
-    """List all open tabs.
+    """Use when: choosing a tab index for tab_switch/tab_close; returns tabs and count for this browser's available pages.
 
     Args:
         browser_or_tab: Browser or Tab instance
 
     Returns:
         dict with tabs list and count
+
+    Failure:
+        Reconnect the same session if control disconnected. Extension mode
+        lists adb-owned pages; it cannot adopt an unrelated user tab just
+        because its URL matches.
     """
     browser = _get_browser(browser_or_tab)
     tabs_info = []
@@ -71,7 +81,7 @@ async def tab_switch(
     browser_or_tab: BrowserClient | Tab,
     tab_id: int,
 ) -> dict:
-    """Switch to a different tab.
+    """Use when: activating a tab_id from tab_list; returns URL/title, and later CLI calls select the page with --tab-url.
 
     Args:
         browser_or_tab: Browser or Tab instance
@@ -82,6 +92,11 @@ async def tab_switch(
 
     Raises:
         IndexError: If tab_id is invalid
+
+    Failure:
+        Choose a current tab_id from tab_list. This activates the page;
+        subsequent CLI calls still need --tab-url to select it explicitly,
+        especially with a session pinned to its original automation page.
     """
     browser = _get_browser(browser_or_tab)
 
@@ -103,7 +118,7 @@ async def tab_close(
     tab_id: int | None = None,
     tab: Tab | None = None,
 ) -> dict:
-    """Close a tab (the real browser tab, both cdp and extension transports).
+    """Use when: closing a tab_id from tab_list; returns closed and the observed remaining page count.
 
     Returns `{closed, remaining}` — `closed` reports whether the tab is actually
     gone (re-checked against a fresh target list), `remaining` is the live count

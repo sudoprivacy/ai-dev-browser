@@ -787,9 +787,11 @@ async def cookies_import(
     browser: str = "chrome",
     user_data_dir: str | None = None,
 ) -> dict:
-    """Use when: Cloudflare/Akamai blocks the automation browser — import
-    auth cookies from the user's daily-driver browser to bypass.
-    Returns `{imported, domain, browser, cookies}`.
+    """Use when: explicitly copying a domain's on-disk cookies into this browser; returns imported count and cookie names.
+
+    Cookies do not reproduce device-bound identity or guarantee passing a
+    site's browser checks. For the user's existing real login/profile use
+    browser_connect --transport extension instead.
 
     Extracts cookies for the specified domain from the user's real browser
     (reading its **on-disk** SQLite database, the `cookies_extract_offline`
@@ -817,6 +819,8 @@ async def cookies_import(
         To copy a live login into this session, read the source browser
         with `cookies_extract_live` (or `cookies_save` on the source
         `--port` then `cookies_load` here).
+        If the task requires the original browser/profile identity, connect
+        that configured profile with browser_connect --transport extension.
     """
     cookies = cookies_extract_offline(domain, browser, user_data_dir=user_data_dir)
 

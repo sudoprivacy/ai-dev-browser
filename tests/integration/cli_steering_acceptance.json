@@ -1,0 +1,46 @@
+{
+  "audit": "cli-steering-engineering",
+  "skill": "../document-ai/.claude/skills/cli-steering-engineering/SKILL.md",
+  "base_commit": "0c52976",
+  "date": "2026-10-19",
+  "catalog": {
+    "tool_count": 63,
+    "generated_wrapper_drift": 0,
+    "selection_openings": "63/63 have Use when guidance",
+    "args_help": "63/63 preserve every documented parameter in parser help",
+    "failure_guidance": "63/63 have Failure sections; 26 missing sections supplied",
+    "surface_changes": "No new tools or removed public tools"
+  },
+  "findings_fixed": [
+    "Literal choices discarded argument guidance; help now preserves the core docstring, including mode and dialog decisions.",
+    "Error-only dictionaries missed Failure hints; both sync and async wrappers now include runtime recovery.",
+    "Message inference could override explicit consent/session recovery; explicit categories, details and hints now win.",
+    "Generic no-target advice suggested restarting global bridge control; it now directs same-session inspection and forbids blind replay or consent bypass.",
+    "Several catalog openings lacked selection guidance; cookies_import also incorrectly implied cookies could bypass browser checks.",
+    "Storage tools called removed Tab methods; extension Chrome also lacks DOMStorage methods. Both transports now share page-local Tab storage operations and read back writes as verified state."
+  ],
+  "local_validation": {
+    "platform": "Windows, Python 3.13.13, Chrome for Testing 155.0.8059.39",
+    "unit_tests": {"passed": 227, "failed": 0},
+    "new_e2e_suite": {"passed": 4, "failed": 0, "skipped": 0, "includes_import_smoke": true},
+    "ownership_same_navigation": {"passed": 2, "failed": 0, "backends": ["legacy", "asyncio"]},
+    "pre_commit": "All applicable checks passed, including mypy and secret scanning",
+    "trusted_http_receipt": {"approvals": 1, "submissions": 1, "trusted": true, "name": "one request"},
+    "final_screenshot": {
+      "path": "scratch/cli-steering-20261019-acceptance/test_real_cli_recovery_preserv0/accepted.png",
+      "full_hash_receipt": "scratch/cli-steering-20261019-full-hash-receipt.json",
+      "visually_inspected": true
+    }
+  },
+  "ci_protection": {
+    "cdp": "test_cli_steering.py alongside session lifecycle tests on Linux, macOS and Windows",
+    "extension": "test_cli_steering.py in real extension matrix with legacy/asyncio server implementations"
+  },
+  "model_selection_acceptance": {
+    "status": "incomplete",
+    "attempt": "scripts/live_recording_steering.py --scenario cold",
+    "result": "Failed to authenticate: OAuth session expired and could not be refreshed",
+    "claims": "No successful fresh-model tool-selection result is claimed; real browser and CLI acceptance is independent of this missing model run."
+  },
+  "scope": "This audit checks discovery contracts for all tools and the listed actual browser workflows. It does not claim a new exhaustive live execution of all 63 tools."
+}

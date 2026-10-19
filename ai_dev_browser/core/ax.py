@@ -660,6 +660,11 @@ async def focus_by_ref(
 
     Example:
         focus_by_ref("5#214")
+
+    Failure:
+        Refresh page_discover and use a current input ref on the same page.
+        Check document.activeElement with js_evaluate before sending keys to an
+        uncertain target.
     """
     # Parse ref to extract node_id
     _, _, node_id = parse_ref(ref)
@@ -1077,6 +1082,11 @@ async def hover_by_ref(
 
     Returns:
         dict with hovered status
+
+    Failure:
+        Refresh page_discover and use a current visible ref. Inspect the
+        menu/tooltip state before deciding whether another hover or click is
+        needed.
     """
     element = await get_element_by_ref(tab, ref)
     await element.mouse_move()
@@ -1101,6 +1111,10 @@ async def highlight_by_ref(
 
     Returns:
         dict with highlighted status
+
+    Failure:
+        Refresh page_discover and select a current ref. Highlighting is only a
+        visual aid; use the element's returned ref for the intended action.
     """
     element = await get_element_by_ref(tab, ref)
     await element.highlight_overlay(duration=duration)
@@ -1123,6 +1137,10 @@ async def html_by_ref(
 
     Returns:
         dict with html content
+
+    Failure:
+        Refresh page_discover and use a current ref. Use page_html when the
+        element was replaced and you need whole-document context.
     """
     element = await get_element_by_ref(tab, ref)
     html = await element.get_html()
@@ -1159,6 +1177,11 @@ async def screenshot_by_ref(
     Returns:
         dict with path, size, ref, width, height. With `image_cap`,
         also includes format ('PNG'|'JPEG') and capped (bool).
+
+    Failure:
+        Refresh page_discover for a current visible ref and check the output
+        path is writable. Use page_screenshot when the element has no visible
+        box or you need surrounding context.
     """
     import datetime
     from pathlib import Path
@@ -1226,6 +1249,11 @@ async def select_by_ref(
 
     Returns:
         dict with selected status
+
+    Failure:
+        Use a current option ref from page_discover for a native select. For a
+        custom dropdown use click_by_text/ref; inspect the selected value
+        before repeating an uncertain selection.
     """
     element = await get_element_by_ref(tab, ref)
     await element.select_option()
@@ -1250,6 +1278,11 @@ async def upload_by_ref(
 
     Returns:
         dict with uploaded status and file count
+
+    Failure:
+        Use a current ref for a native file input and existing readable
+        absolute paths. Check the input's files and page/server upload result
+        before repeating an uncertain upload.
     """
     element = await get_element_by_ref(tab, ref)
     file_list = [p.strip() for p in paths.split(",")]
@@ -1278,6 +1311,11 @@ async def drag_by_ref(
 
     Returns:
         dict with dragged status
+
+    Failure:
+        Refresh page_discover after a changed DOM and inspect the destination
+        coordinates. Check the current drop result before dragging again; the
+        first drag may already have changed state.
     """
     element = await get_element_by_ref(tab, ref)
     await element.mouse_drag(to_x, to_y, steps=steps)

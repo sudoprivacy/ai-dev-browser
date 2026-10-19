@@ -108,6 +108,11 @@ async def page_emulate_focus(
 
     Returns:
         dict with enabled status
+
+    Failure:
+        Confirm that this transport supports focus emulation via cdp_send.
+        Emulated document focus does not create an OS window or make a remote
+        browser visible to the user.
     """
     await tab.send(cdp_emulation.set_focus_emulation_enabled(enabled=enabled))
     # Keep the generator's default result_key ("success") — deliberately NOT

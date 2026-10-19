@@ -284,6 +284,11 @@ async def page_screenshot(
         Pass the screenshot path to mouse_click(--screenshot) for automatic
         coordinate scaling. Scaling metadata is embedded in the file (PNG
         text chunk for .png, EXIF UserComment for .jpg).
+
+    Failure:
+        Check the destination path is writable and image_cap values are valid.
+        Inspect page_info for the selected page; a blank screenshot alone does
+        not justify replaying input or restarting the browser.
     """
     if path is None:
         out_dir = resolve_output_dir()
@@ -435,6 +440,11 @@ async def page_info(tab: Tab) -> dict:
 
     Returns:
         dict with url, title, ready state
+
+    Failure:
+        Check that the same session still owns this page. If control
+        disconnected, use browser_reconnect with its session_id; inspect the
+        returned URL before continuing an uncertain action.
     """
     url = tab.target.url if hasattr(tab, "target") and tab.target else ""
     title = tab.target.title if hasattr(tab, "target") and tab.target else ""
@@ -487,6 +497,11 @@ async def page_html(
 
     Returns:
         dict with html content and length
+
+    Failure:
+        Inspect page_info for the actual destination and readiness. Use
+        html_by_ref for one known element or js_evaluate with a frame selector
+        when the content is in another frame.
     """
     if outer:
         content = await tab.evaluate("document.documentElement.outerHTML")

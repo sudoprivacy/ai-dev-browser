@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import pathlib
 import time
@@ -15,7 +16,6 @@ from ai_dev_browser.cdp import (
 )
 from ai_dev_browser.cdp import (
     dom,
-    dom_storage,
     page,
     runtime,
 )
@@ -1047,30 +1047,20 @@ class Tab:
 
     async def storage_get(self) -> dict:
         """Get localStorage items as dict."""
-        origin = await self._get_origin()
-        items = await self.send(
-            dom_storage.get_dom_storage_items(
-                dom_storage.StorageId(is_local_storage=True, security_origin=origin)
-            )
+        # DOMStorage isn't exposed by Chrome's extension debugger. Page-local
+        # storage needs no privileged domain, and this keeps both transports on
+        # the actual document's origin, including after a navigation.
+        return await self.evaluate(
+            "Object.fromEntries(Object.keys(localStorage).map("
+            "key => [key, localStorage.getItem(key)]))"
         )
-        return {item[0]: item[1] for item in items} if items else {}
 
     async def storage_set(self, items: dict):
         """Set localStorage items."""
-        origin = await self._get_origin()
-        await asyncio.gather(
-            *(
-                self.send(
-                    dom_storage.set_dom_storage_item(
-                        storage_id=dom_storage.StorageId(
-                            is_local_storage=True, security_origin=origin
-                        ),
-                        key=str(k),
-                        value=str(v),
-                    )
-                )
-                for k, v in items.items()
-            )
+        entries = json.dumps([[str(k), str(v)] for k, v in items.items()])
+        await self.evaluate(
+            "(entries => { for (const [key, value] of entries) "
+            "localStorage.setItem(key, value); })(" + entries + ")"
         )
 
     # =========================================================================
