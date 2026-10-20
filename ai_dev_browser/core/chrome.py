@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from .config import DEFAULT_DEBUG_PORT, DEFAULT_PROFILE_PREFIX, resolve_viewport
 
@@ -155,6 +156,7 @@ def launch_chrome(
     hide_crash_restore_bubble: bool = True,
     stealth: bool = True,
     chrome_path: str | None = None,
+    display: str | None = None,
 ) -> subprocess.Popen:
     """
     Launch Chrome with remote debugging enabled.
@@ -338,10 +340,14 @@ def launch_chrome(
     if start_url:
         args.append(start_url)
 
+    if display is not None:
+        return _spawn_chrome(args, silent_stderr=silent_stderr, display=display)
     return _spawn_chrome(args, silent_stderr=silent_stderr)
 
 
-def _spawn_chrome(args: list[str], silent_stderr: bool = False) -> subprocess.Popen:
+def _spawn_chrome(
+    args: list[str], silent_stderr: bool = False, *, display: str | None = None
+) -> subprocess.Popen:
     """Shared detached process primitive for CDP and configured-profile startup."""
     # Start Chrome process
     try:
@@ -349,6 +355,7 @@ def _spawn_chrome(args: list[str], silent_stderr: bool = False) -> subprocess.Po
         # On Unix, use start_new_session to detach from parent
         # On Windows, CREATE_NEW_PROCESS_GROUP for similar isolation
         stderr_target = subprocess.DEVNULL if silent_stderr else subprocess.PIPE
+        popen_kwargs: dict[str, Any]
         if platform.system() == "Windows":
             popen_kwargs = {
                 "stdout": subprocess.DEVNULL,
@@ -362,6 +369,8 @@ def _spawn_chrome(args: list[str], silent_stderr: bool = False) -> subprocess.Po
                 "start_new_session": True,
             }
 
+        if display is not None:
+            popen_kwargs["env"] = {**os.environ, "DISPLAY": display}
         logger.debug("Launching Chrome executable %s", args[0])
         process = subprocess.Popen(args, **popen_kwargs)  # type: ignore[call-overload]
 

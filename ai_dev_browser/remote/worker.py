@@ -343,7 +343,7 @@ class Worker:
                 raise ControlError("managed_window_view_requires_linux")
             if self.display is None:
                 self.display = XDisplay()
-                os.environ["DISPLAY"] = await self.display.start()
+                await self.display.start()
         profile = self.root / "chrome"
         profile.mkdir(exist_ok=True)
         if not self.pending_launch:
@@ -359,6 +359,8 @@ class Worker:
             "stealth": False,
             "extra_args": self.chrome_args.copy(),
         }
+        if self.display is not None:
+            arguments["display"] = self.display.display
         if not is_headless:
             arguments["extra_args"] += [
                 "--window-size=1280,900",
@@ -713,7 +715,11 @@ class Worker:
                         **await self.session.frame(owned, epoch, target_epoch),
                         "surface": "page",
                     }
-            elif kind == "copy-selection":
+            elif (
+                kind == "input"
+                and isinstance(action.get("input"), dict)
+                and action["input"].get("kind") == "copy-selection"
+            ):
                 extra["selection"] = await self.session.selection(
                     controller, epoch, target_epoch
                 )

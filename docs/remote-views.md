@@ -58,8 +58,9 @@ one bounded `input` operation; it is sent on pointer release, so this is not a
 continuous drag stream. The host's existing input barrier drains the gesture
 before changing control or targets. The adapter never retries it.
 
-Workers advertising `selectionRead` accept the human-only `copy-selection`
-action with current control/target epochs. Its `selection` result contains
+Workers advertising `selectionRead` accept the human-only input
+`{kind: 'input', input: {kind: 'copy-selection'}, controlEpoch, targetEpoch}`.
+It uses the existing authenticated input gateway and barrier. Its `selection` result contains
 `{text, isAvailable}` from the selected page, including focused text inputs.
 Password fields, cross-origin focused frames and selections longer than 8192
 UTF-16 code units return unavailable. Reading does not access an OS clipboard.

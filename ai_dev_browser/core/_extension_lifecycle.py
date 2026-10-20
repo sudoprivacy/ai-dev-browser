@@ -66,6 +66,7 @@ async def start(
     url,
     startup_timeout,
     extra_args,
+    display=None,
 ) -> dict:
     if not user_data_dir:
         return _session.failure(
@@ -105,7 +106,9 @@ async def start(
     if (
         not headless
         and sys.platform.startswith("linux")
-        and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        and not (
+            display or os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+        )
     ):
         return _session.failure(
             "unsupported",
@@ -174,7 +177,11 @@ async def start(
     command += arguments + [
         f"http://127.0.0.1:{EXTENSION_BRIDGE_PORT}/adb-launch/{token}"
     ]
-    process = _spawn_chrome(command, silent_stderr=True)
+    process = _spawn_chrome(
+        command,
+        silent_stderr=True,
+        **({"display": display} if display is not None else {}),
+    )
     observed = _session.process_info(process.pid)
     record = {
         "transport": "extension",
@@ -193,6 +200,7 @@ async def start(
             "headless": headless,
             "startup_timeout": startup_timeout,
             "extra_args": arguments,
+            "display": display,
         },
     }
     if observed:

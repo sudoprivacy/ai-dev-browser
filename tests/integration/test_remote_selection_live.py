@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 import secrets
 import sys
@@ -13,6 +14,7 @@ from aiohttp import web
 from ai_dev_browser.core.browser import browser_start, browser_stop
 from ai_dev_browser.remote.page import PageView
 from ai_dev_browser.remote.worker import Worker, application
+from ai_dev_browser.remote.window import XDisplay
 from tests.integration.test_remote_view import (
     connect_page,
     navigate_owned_browser,
@@ -29,6 +31,54 @@ RANGE = """(() => {
     return [{x:rect.left+0.5,y:rect.top+rect.height/2},
         {x:rect.right-0.5,y:rect.top+rect.height/2}];
 })()"""
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Isolated X11 display requires Linux"
+)
+async def test_explicit_display_without_inherited_gui(monkeypatch, tmp_path):
+    """A headful child uses its owned GUI without changing the parent's environment."""
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    display = XDisplay()
+    browser = None
+    try:
+        own_display = await display.start()
+        browser = await asyncio.to_thread(
+            browser_start,
+            headless=False,
+            display=own_display,
+            temp=True,
+            silent_stderr=True,
+            extra_args=["--no-sandbox"],
+        )
+        assert "error" not in browser, browser
+        assert os.environ.get("DISPLAY") is None
+        async with aiohttp.ClientSession() as http:
+            page, _ = await connect_page(
+                http, browser["port"], browser["automation_target_id"]
+            )
+            try:
+                assert (await page.call("Page.captureScreenshot", {"format": "png"}))[
+                    "data"
+                ]
+            finally:
+                await page.close()
+        (tmp_path / "child-display-evidence.json").write_text(
+            json.dumps(
+                {
+                    "display": own_display,
+                    "headfulChromeStarted": True,
+                    "parentDisplayAbsent": True,
+                    "actualScreenshot": True,
+                }
+            ),
+            encoding="utf-8",
+        )
+    finally:
+        if browser and browser.get("session_id"):
+            await asyncio.to_thread(browser_stop, session_id=browser["session_id"])
+        await display.close()
 
 
 @pytest.mark.parametrize(
@@ -64,6 +114,7 @@ async def test_worker_selection_paste_and_lease(
 ):
     """Select exact words -> copy -> Unicode multiline paste -> reject stale copy."""
     token = secrets.token_hex(32)
+    inherited_display = os.environ.get("DISPLAY")
     worker = Worker(
         tmp_path,
         token,
@@ -169,11 +220,15 @@ async def test_worker_selection_paste_and_lease(
             assert bad["error"] == "invalid_browser_input"
             assert await page.js("mousePresses") == 0
             await input_event({"kind": "drag", "points": points}, held)
-            copied = await host({"kind": "copy-selection", **epochs(held)})
+            copied = await host(
+                {"kind": "input", "input": {"kind": "copy-selection"}, **epochs(held)}
+            )
             assert copied["selection"] == {"text": PHRASE, "isAvailable": True}
             # Another authenticated controller cannot read this user's selection.
             denied = await host(
-                {"kind": "copy-selection", **epochs(held)}, 409, "user-another"
+                {"kind": "input", "input": {"kind": "copy-selection"}, **epochs(held)},
+                409,
+                "user-another",
             )
             assert denied["error"] == "browser_control_not_owned"
             notes = await page.js("""(() => {const r=notes.getBoundingClientRect();
@@ -201,7 +256,10 @@ async def test_worker_selection_paste_and_lease(
                 and receipts[0]["trusted"]
             )
             await host({"kind": "return", **epochs(held)})
-            stale = await host({"kind": "copy-selection", **epochs(held)}, 409)
+            stale = await host(
+                {"kind": "input", "input": {"kind": "copy-selection"}, **epochs(held)},
+                409,
+            )
             assert stale["error"] == "stale_browser_operation"
             (tmp_path / "selection-evidence.json").write_text(
                 json.dumps(
@@ -222,6 +280,9 @@ async def test_worker_selection_paste_and_lease(
         finally:
             await worker.close()
             await runner.cleanup()
+            assert os.environ.get("DISPLAY") == inherited_display, (
+                "A worker must not change another browser display"
+            )
 
 
 async def test_scaled_surface_drag_selects_exact_phrase(remote_site, tmp_path):
