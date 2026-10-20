@@ -53,7 +53,17 @@ dialogs and supported keys. `PageSurface` is a rendering/input adapter, not a
 complete tab bar, toolbar, WebSocket authorization protocol or React panel.
 Hosts whose worker advertises `capabilities.dragInput` can opt into mouse/pen
 selection with `new PageSurface(imageElement, sendAuthorizedInput, {drag: true})`.
-Touch gestures continue to scroll. A drag carries at most 64 viewport points in
+Touch gestures scroll by default. A host can offer an explicit "Select text or
+drag" gesture mode with `{drag: true, touchDrag: true}`. A cancelled touch sends
+no partial drag; switching away from a surface must dispose it before accepting
+another gesture. The existing host lease and epoch checks still apply. This is
+an input mode, not an ownership transfer or permission to resume AI. The real
+Chrome touch-emulation journey scrolls out and back in the default mode, then
+selects the exact phrase in drag mode through a separate scaled viewer. It also
+checks cancellation before a completed gesture. Physical iOS/Android acceptance
+remains a separate device requirement.
+
+A drag carries at most 64 viewport points in
 one bounded `input` operation; it is sent on pointer release, so this is not a
 continuous drag stream. The host's existing input barrier drains the gesture
 before changing control or targets. The adapter never retries it.
@@ -84,10 +94,11 @@ tool execution and viewer input.
 ## AI and human control
 
 The agent communicates why human input is needed through its native question,
-options or normal conversation. The host's existing Take control and Return to
-AI actions perform the actual ownership transition. A native answer is only
+options or normal conversation. The host's existing authenticated interrupt
+and continuation actions perform the actual ownership transition. A native answer is only
 communication unless the host explicitly routes it to that authenticated action
-and waits for the tool barrier. Do not build an additional question UI into the
+and waits for the tool barrier. Do not require separate browser business handoff
+buttons or build an additional question UI into the
 remote display adapter. Credentials are entered in the same browser by the
 human, not sent through agent chat. The public MCP tool catalog and normal CLI
 mode help include this guidance; execution barriers remain a host contract.

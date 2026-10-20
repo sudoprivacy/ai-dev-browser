@@ -1,6 +1,6 @@
 /** A reusable pixel surface. The host owns authentication and control policy. */
 export class PageSurface {
-  constructor(image, send, { drag = false } = {}) {
+  constructor(image, send, { drag = false, touchDrag = false } = {}) {
     this.image = image;
     this.send = send;
     this.width = 0;
@@ -15,7 +15,7 @@ export class PageSurface {
       const point = this.point(event);
       if (!point) return;
       this.pointer = { id: event.pointerId, lastY: event.clientY, startY: event.clientY, startX: event.clientX,
-        moved: false, drag: drag && event.pointerType !== 'touch', points: [point] };
+        moved: false, drag: drag && (event.pointerType !== 'touch' || touchDrag), points: [point] };
       image.setPointerCapture(event.pointerId);
       image.focus({ preventScroll: true });
     });

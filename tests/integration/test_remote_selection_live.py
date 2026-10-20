@@ -285,7 +285,8 @@ async def test_worker_selection_paste_and_lease(
             )
 
 
-async def test_scaled_surface_drag_selects_exact_phrase(remote_site, tmp_path):
+@pytest.mark.parametrize("gesture", ["mouse", "touch"])
+async def test_scaled_surface_drag_selects_exact_phrase(remote_site, tmp_path, gesture):
     """Real viewer pointer gesture -> scaled shared surface -> target DOM selection."""
     browsers, connections = [], []
     async with aiohttp.ClientSession() as http:
@@ -313,7 +314,63 @@ async def test_scaled_surface_drag_selects_exact_phrase(remote_site, tmp_path):
                 {"width": 480, "height": 850, "deviceScaleFactor": 1, "mobile": False},
             )
             remote_site[2](target)
-            await navigate_owned_browser(browsers[1], remote_site[0] + "/viewer?drag=1")
+            if gesture == "touch":
+                await client.call(
+                    "Emulation.setDeviceMetricsOverride",
+                    {
+                        "width": 390,
+                        "height": 844,
+                        "deviceScaleFactor": 1,
+                        "mobile": True,
+                    },
+                )
+                await client.call(
+                    "Emulation.setTouchEmulationEnabled",
+                    {"enabled": True, "maxTouchPoints": 1},
+                )
+                await target.js("document.body.style.minHeight='1800px'")
+                await navigate_owned_browser(
+                    browsers[1], remote_site[0] + "/viewer?drag=1"
+                )
+                await wait_for(
+                    lambda: client.js(
+                        "document.querySelector('#screen')?.naturalWidth"
+                    ),
+                    bool,
+                )
+                origin = await client.js("""(() => {
+                    const r=document.querySelector('#screen').getBoundingClientRect();
+                    return {x:r.x+120,y:r.y+350};
+                })()""")
+                for direction in (-1, 1):
+                    await client.call(
+                        "Input.dispatchTouchEvent",
+                        {"type": "touchStart", "touchPoints": [origin]},
+                    )
+                    await client.call(
+                        "Input.dispatchTouchEvent",
+                        {
+                            "type": "touchMove",
+                            "touchPoints": [
+                                {**origin, "y": origin["y"] + 50 * direction}
+                            ],
+                        },
+                    )
+                    await client.call(
+                        "Input.dispatchTouchEvent",
+                        {"type": "touchEnd", "touchPoints": []},
+                    )
+                    await wait_for(
+                        lambda: target.js("scrollY"),
+                        lambda value: value > 0 if direction == -1 else value == 0,
+                    )
+                    assert (await PageView().selection(target))["text"] == ""
+            await navigate_owned_browser(
+                browsers[1],
+                remote_site[0]
+                + "/viewer?drag=1"
+                + ("&touch-drag=1" if gesture == "touch" else ""),
+            )
             await wait_for(
                 lambda: client.js("document.querySelector('#screen')?.naturalWidth"),
                 bool,
@@ -328,39 +385,67 @@ async def test_scaled_surface_drag_selects_exact_phrase(remote_site, tmp_path):
                 }
                 for p in points
             ]
-            await client.call(
-                "Input.dispatchMouseEvent", {"type": "mouseMoved", **points[0]}
-            )
-            await client.call(
-                "Input.dispatchMouseEvent",
-                {
-                    "type": "mousePressed",
-                    **points[0],
-                    "button": "left",
-                    "buttons": 1,
-                    "clickCount": 1,
-                },
-            )
-            await client.call(
-                "Input.dispatchMouseEvent",
-                {"type": "mouseMoved", **points[1], "buttons": 1},
-            )
-            await client.call(
-                "Input.dispatchMouseEvent",
-                {
-                    "type": "mouseReleased",
-                    **points[1],
-                    "button": "left",
-                    "buttons": 0,
-                    "clickCount": 1,
-                },
-            )
+            if gesture == "touch":
+                # The viewer sends actual Chromium touch input. The target
+                # receives the same bounded mouse drag as a desktop reviewer.
+                for attempt in ("cancel", "complete"):
+                    await client.call(
+                        "Input.dispatchTouchEvent",
+                        {"type": "touchStart", "touchPoints": [points[0]]},
+                    )
+                    await client.call(
+                        "Input.dispatchTouchEvent",
+                        {"type": "touchMove", "touchPoints": [points[1]]},
+                    )
+                    assert (await PageView().selection(target))["text"] == ""
+                    await client.call(
+                        "Input.dispatchTouchEvent",
+                        {
+                            "type": "touchCancel"
+                            if attempt == "cancel"
+                            else "touchEnd",
+                            "touchPoints": [],
+                        },
+                    )
+                    if attempt == "cancel":
+                        assert (await PageView().selection(target))["text"] == ""
+            else:
+                await client.call(
+                    "Input.dispatchMouseEvent", {"type": "mouseMoved", **points[0]}
+                )
+                await client.call(
+                    "Input.dispatchMouseEvent",
+                    {
+                        "type": "mousePressed",
+                        **points[0],
+                        "button": "left",
+                        "buttons": 1,
+                        "clickCount": 1,
+                    },
+                )
+                await client.call(
+                    "Input.dispatchMouseEvent",
+                    {"type": "mouseMoved", **points[1], "buttons": 1},
+                )
+                await client.call(
+                    "Input.dispatchMouseEvent",
+                    {
+                        "type": "mouseReleased",
+                        **points[1],
+                        "button": "left",
+                        "buttons": 0,
+                        "clickCount": 1,
+                    },
+                )
             selected = await wait_for(
                 lambda: PageView().selection(target),
                 lambda value: value["text"] == PHRASE,
             )
             (tmp_path / "surface-selection-evidence.json").write_text(
-                json.dumps(selected), encoding="utf-8"
+                json.dumps(
+                    {**selected, "viewerGesture": gesture, "actualPhone": False}
+                ),
+                encoding="utf-8",
             )
         finally:
             await asyncio.gather(*(connection.close() for connection in connections))

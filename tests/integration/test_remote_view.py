@@ -77,13 +77,15 @@ async def remote_site():
     async def viewer(request):
         return web.Response(
             text="""<!doctype html><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
         <img id="screen" tabindex="0" style="display:block;width:240px;border:0;touch-action:none">
         <input id="entry"><button id="insert">Insert text</button>
         <script type="module">
         import {PageSurface} from '/page-view.js';
         const ws=new WebSocket(location.origin.replace('http','ws')+'/view');
         const surface=new PageSurface(document.querySelector('#screen'), value=>ws.send(JSON.stringify(value)),
-          {drag:new URLSearchParams(location.search).has('drag')});
+          {drag:new URLSearchParams(location.search).has('drag'),
+           touchDrag:new URLSearchParams(location.search).has('touch-drag')});
         ws.onopen=()=>ws.send(JSON.stringify({token:'fixture-controller'}));
         ws.onmessage=event=>{const value=JSON.parse(event.data);surface.frame(value);};
         document.querySelector('#insert').onclick=()=>{
