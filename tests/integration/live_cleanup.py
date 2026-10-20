@@ -47,6 +47,11 @@ async def close_live_extension(chrome, server, folder, timeout=30):
     from ai_dev_browser.core.browser import browser_stop
 
     try:
+        # Let the still-running extension acknowledge WebSocket close frames.
+        # Killing Chrome first resets its sockets on Windows and leaves the
+        # legacy server waiting for a peer that can no longer finish closing.
+        await close_live_server(server, folder)
+    finally:
         if chrome and "port" in chrome:
             record_phase(folder, "chrome-stop-start", pid=chrome["pid"])
             try:
@@ -63,5 +68,3 @@ async def close_live_extension(chrome, server, folder, timeout=30):
                 ) from exc
             record_phase(folder, "chrome-stopped", result=result)
             assert result.get("stopped") and result.get("count") == 1, result
-    finally:
-        await close_live_server(server, folder)
