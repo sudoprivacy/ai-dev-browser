@@ -180,7 +180,7 @@ class _Bridge:
     # ------------------------------------------------------------------ drivers
     _LOGGED = (
         "Page.navigate",
-        "Input.dispatch",
+        "Input.",  # Command names only: never include typed text in the log.
         "Runtime.evaluate",
         "Runtime.callFunctionOn",
     )

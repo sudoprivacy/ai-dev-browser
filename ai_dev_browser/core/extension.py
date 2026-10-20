@@ -10,6 +10,7 @@ package ships and the steps to relay to the user.
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import os
 
 # Fixed local port the extension's background.js dials and the adb-side bridge
@@ -24,6 +25,34 @@ if not 1 <= EXTENSION_BRIDGE_PORT <= 65535:
 def extension_dir() -> Path:
     """Absolute path to the bundled unpacked extension (ships with the wheel)."""
     return Path(__file__).resolve().parent.parent / "extension"
+
+
+def extension_version_info(loaded_version: str | None) -> dict:
+    """Compare a running extension's report with the bundled manifest, not Python."""
+    bundled = json.loads(
+        (extension_dir() / "manifest.json").read_text(encoding="utf-8")
+    )["version"]
+    return {
+        "extension_version": loaded_version,
+        "bundled_extension_version": bundled,
+        "extension_version_matches_bundle": loaded_version == bundled
+        if loaded_version
+        else None,
+    }
+
+
+async def query_extension_version(browser, fallback: str | None = None) -> str | None:
+    """Read the live extension, including when an older bridge drops hello fields."""
+    from .cdp import _get_cdp_command
+
+    try:
+        state = await browser.connection.send(
+            _get_cdp_command("AiDevBrowser.debugState", {}), timeout=1
+        )
+        version = state.get("extensionVersion")
+        return version if isinstance(version, str) else fallback
+    except Exception:
+        return fallback  # Diagnostics never replace the actual operation's error.
 
 
 def extension_load_instructions(extension_dir_path: str | None = None) -> str:

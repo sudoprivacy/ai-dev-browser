@@ -27,8 +27,19 @@ class SessionError(Exception):
 class InputUnavailableError(SessionError):
     """A requested input was withheld because its page could not be made visible."""
 
-    def __init__(self, message: str):
+    def __init__(self, message: str, *, details: dict | None = None):
         super().__init__(message, error_code="unsupported")
+        self.details = details or {}
+        self.hint = (
+            "This input dispatch was not sent. Show the selected Chrome tab/window "
+            "and inspect current state before resuming; earlier steps may have "
+            "completed. If the loaded "
+            "extension version is unknown or differs from the bundle, arrange an "
+            "ordinary update/reload in chrome://extensions; reloading can reset "
+            "control, so inspect session ownership again afterwards. Do not replay "
+            "earlier submissions, spoof visibility/focus, switch transport or use "
+            "OS input to bypass the refusal."
+        )
 
 
 class RecordingError(Exception):

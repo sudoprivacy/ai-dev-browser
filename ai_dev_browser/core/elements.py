@@ -1239,6 +1239,9 @@ async def type_by_text(
     `{typed, verified, method, name}` (plus `entered` when `enter=True`) —
     `verified` already confirms the value landed, so don't re-read to check.
 
+    In extension mode, hidden-page or ownership refusals stop the operation
+    before clearing; input fallbacks never override these refusals.
+
     Prefer over `type_by_ref` when you can identify the input by its
     human-visible label rather than needing a prior `page_discover` ref. The
     `clear` / `enter` / `keystrokes` / `human_like` options mirror `type_by_ref`
