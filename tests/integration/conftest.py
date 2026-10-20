@@ -22,6 +22,10 @@ from ai_dev_browser.core.connection import BrowserClient
 from ai_dev_browser.core.ext_bridge import _Bridge
 from ai_dev_browser.core.extension import extension_dir
 
+# Shared fixture visibility must not depend on which test module pytest collects
+# before a module-level pytest_plugins declaration.
+from .test_remote_view import remote_site as remote_site
+
 
 @pytest.fixture
 def lifecycle(tmp_path):
