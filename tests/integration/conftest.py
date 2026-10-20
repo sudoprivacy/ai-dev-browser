@@ -326,6 +326,14 @@ async def live_extension(request, tmp_path, monkeypatch):
             "Set AI_DEV_BROWSER_TEST_EXTENSION_CHROME to run the real extension"
         )
     assert Path(binary).is_file(), binary
+    bundle = extension_dir()
+    if request.node.get_closest_marker("extension_previous"):
+        previous = os.environ.get("AI_DEV_BROWSER_TEST_PREVIOUS_EXTENSION")
+        if not previous:
+            pytest.skip(
+                "Set AI_DEV_BROWSER_TEST_PREVIOUS_EXTENSION to the released extension fixture"
+            )
+        bundle = Path(previous)
     monkeypatch.setenv("AI_DEV_BROWSER_CHROME", binary)
     if request.param == "legacy":
         from websockets.legacy.server import serve
@@ -337,7 +345,7 @@ async def live_extension(request, tmp_path, monkeypatch):
     port = server.sockets[0].getsockname()[1]
     # Only the endpoint changes, isolating this test from a user's live bridge.
     copied_extension = tmp_path / "extension"
-    shutil.copytree(extension_dir(), copied_extension)
+    shutil.copytree(bundle, copied_extension)
     background = copied_extension / "background.js"
     source = background.read_text(encoding="utf-8")
     assert source.count("127.0.0.1:9522") == 1
@@ -346,6 +354,7 @@ async def live_extension(request, tmp_path, monkeypatch):
     )
     chrome = None
     try:
+        natural_occlusion = bool(request.node.get_closest_marker("extension_occlusion"))
         chrome = await asyncio.to_thread(
             browser_start,
             headless=not bool(request.node.get_closest_marker("extension_native")),
@@ -360,7 +369,11 @@ async def live_extension(request, tmp_path, monkeypatch):
                 # The owned visual fixture runs beside the user's foreground
                 # editor and Electron. Match Playwright's test-browser flag so
                 # native window occlusion cannot suspend its active renderer.
-                "--disable-backgrounding-occluded-windows",
+                *(
+                    []
+                    if natural_occlusion
+                    else ["--disable-backgrounding-occluded-windows"]
+                ),
                 "--no-sandbox",
             ],
         )
@@ -418,7 +431,7 @@ async def live_extension(request, tmp_path, monkeypatch):
         # Chrome acknowledges tab activation before its renderer receives the
         # visibility event. Wait for that event within the original startup
         # budget instead of asserting in the acknowledgement's next tick.
-        while True:
+        while not natural_occlusion:
             visible = await extension.call(
                 js_evaluate, expression="document.visibilityState"
             )

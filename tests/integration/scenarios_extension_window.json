@@ -1,0 +1,23 @@
+{
+  "config": {
+    "imports": [
+      "import sys",
+      "from tests.integration.extension_window_support import window_visibility_journey",
+      "pytestmark = [pytest.mark.extension_native, pytest.mark.extension_occlusion, pytest.mark.skipif(sys.platform != 'win32', reason='Requires the owned Windows native occlusion fixture')]"
+    ],
+    "call_style": "function",
+    "required_env_vars": [],
+    "smoke_test_assertions": ["window_visibility_journey is not None"]
+  },
+  "scenarios": [
+    {
+      "name": "real_extension_window_restore_and_hidden_input",
+      "title": "Restore an owned Chrome window and withhold input under real native occlusion",
+      "workflow": "Neutral form -> minimize the owned window -> restore and inspect real visibility -> cover only the owned window -> refuse mouse and keyboard before dispatch -> uncover -> submit once with trusted input -> inspect final screenshot",
+      "user_problem": "An ordinary profile must support window controls and preserve an actionable hidden-page refusal without claiming that native focus proves visibility.",
+      "async": true,
+      "fixtures": ["live_extension", "tmp_path"],
+      "steps": [{"raw_code": ["await window_visibility_journey(live_extension, tmp_path)"]}]
+    }
+  ]
+}

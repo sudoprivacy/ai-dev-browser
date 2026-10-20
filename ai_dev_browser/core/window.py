@@ -1,5 +1,7 @@
 """Window operations."""
 
+from typing import Literal
+
 from ai_dev_browser.cdp import emulation as cdp_emulation
 
 from ._tab import Tab
@@ -10,7 +12,7 @@ async def window_set(
     tab: Tab,
     width: int | None = None,
     height: int | None = None,
-    state: str | None = None,
+    state: Literal["normal", "maximized", "minimized", "fullscreen"] | None = None,
     focus: bool = False,
 ) -> dict:
     """Use when: you need the page to render at a specific width — to force a
@@ -28,7 +30,13 @@ async def window_set(
     sees 390 and width media queries fire, instead of the default snapping back.
     (Process-wide alternative: `AI_DEV_BROWSER_VIEWPORT=WxH`.)
 
-    `state` and `focus` act on the OS window (headed Chrome only).
+    `state` and `focus` act on the selected page's window. In extension mode
+    they use Chrome's window APIs; update/reload the bundled extension if its
+    loaded version lacks support. Returns observed `state`, `focused`,
+    `visibility`, and `input_ready` for window operations. A focused window can
+    still have a hidden page (for example under native occlusion). When
+    `input_ready` is false, show the actual selected tab/window and inspect it
+    before input; focus emulation does not resolve this condition.
 
     Args:
         tab: Tab instance
@@ -36,16 +44,22 @@ async def window_set(
         height: Render viewport height in pixels (innerHeight)
         state: OS window state — "normal", "maximized", "minimized", or
             "fullscreen" (headed only)
-        focus: If True, bring the OS window to front (headed only)
+        focus: If True, request activation and report observed document focus
+            and visibility; cannot be combined with state="minimized"
 
     Returns:
-        dict with applied settings
+        dict with viewport settings and observed window/page state. `success`
+        reports whether requested state/focus was observed; `input_ready`
+        reports genuine page visibility independently of document focus.
 
     Failure:
         Pass at least one of `width` / `height` / `state` / `focus`. `state`
-        and `focus` drive the OS window and need headed Chrome (they no-op or
-        error headless); for layout use `width`/`height` (the render viewport),
-        which works headless.
+        and `focus` request window operations; inspect returned visibility
+        before input. A hidden page needs its actual Chrome tab/window shown.
+        Unknown/mismatched extension versions require an ordinary extension
+        update/reload; this can reset control, so inspect ownership again.
+        Do not spoof visibility, replay completed input, or change transports
+        to bypass a refusal. For layout use `width`/`height`.
 
     Example:
         window_set(width=1280, height=720)   # narrower viewport
@@ -53,6 +67,17 @@ async def window_set(
         window_set(state="maximized")
         window_set(focus=True)
     """
+    if state is not None and state not in {
+        "normal",
+        "maximized",
+        "minimized",
+        "fullscreen",
+    }:
+        raise ValueError("state must be normal, maximized, minimized, or fullscreen")
+    if state == "minimized" and focus:
+        raise ValueError(
+            "Cannot focus a minimized window; restore it with state=normal"
+        )
     result: dict[str, object] = {}
 
     if width is not None or height is not None:
@@ -80,11 +105,27 @@ async def window_set(
             await tab.fullscreen()
         else:
             await tab.medimize()
-        result["state"] = state
 
     if focus:
         await tab.bring_to_front()
-        result["focused"] = True
+
+    if state is not None or focus:
+        observed = (
+            await tab._wait_input_visibility() if focus else await tab._input_state()
+        )
+        window_id, bounds = await tab.get_window()
+        actual_state = bounds.window_state.value
+        ready = observed["visibility"] == "visible"
+        result.update(
+            state=actual_state,
+            window_id=window_id,
+            **observed,
+            input_ready=ready,
+            success=(state is None or actual_state == state)
+            and (not focus or (ready and observed["focused"])),
+        )
+        if not result["success"]:
+            result.update(error_code="unsupported", retryable=False)
 
     if not result:
         raise ValueError(
@@ -101,6 +142,10 @@ async def page_emulate_focus(
     has focus, but automation drives it in the background (headless, or behind
     other windows) so they never appear. Enabling makes the browser behave as
     if focused regardless of real window focus.
+
+    Use window_set(state="normal", focus=True) to request actual window
+    activation. Emulated focus is not evidence of physical window visibility
+    and must not be used to bypass InputUnavailableError.
 
     Args:
         tab: Tab instance

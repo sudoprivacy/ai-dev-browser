@@ -211,24 +211,38 @@ def capabilities(record: dict) -> dict:
 
 
 def describe(record: dict) -> dict:
-    return {
-        key: record.get(key)
-        for key in (
-            "session_id",
-            "transport",
-            "owner",
-            "profile_owner",
-            "pid",
-            "port",
-            "chrome_path",
-            "user_data_dir",
-            "profile_directory",
-            "profile_id",
-            "headless",
-            "browser_version",
-            "automation_target_id",
-        )
-    } | {
-        "launch_chrome_path": (record.get("start_options") or {}).get("chrome_path"),
-        "capabilities": capabilities(record),
-    }
+    return (
+        {
+            key: record.get(key)
+            for key in (
+                "session_id",
+                "transport",
+                "owner",
+                "profile_owner",
+                "pid",
+                "port",
+                "chrome_path",
+                "user_data_dir",
+                "profile_directory",
+                "profile_id",
+                "headless",
+                "browser_version",
+                "automation_target_id",
+            )
+        }
+        | {
+            "launch_chrome_path": (record.get("start_options") or {}).get(
+                "chrome_path"
+            ),
+            "capabilities": capabilities(record),
+        }
+        | {
+            key: record.get(key)
+            for key in (
+                "extension_version",
+                "bundled_extension_version",
+                "extension_version_matches_bundle",
+            )
+            if record.get("transport") == "extension"
+        }
+    )

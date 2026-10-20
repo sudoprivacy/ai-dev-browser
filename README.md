@@ -412,6 +412,16 @@ Each GitHub release includes the same wheel and source distribution sent to PyPI
 the bundled Chrome extension as an unpackable ZIP, and `SHA256SUMS`.
 For extension mode, extract the ZIP and load its directory in `chrome://extensions`.
 After upgrading, reload the extension and restart an already running bridge.
+`browser_connect` reports the actual loaded `extension_version`, the
+`bundled_extension_version`, and whether they match. Updating Python alone does
+not reload Chrome's extension. Reload can reset control; inspect the session and
+its owned page before resuming input.
+
+For a hidden extension page, `window_set --state normal --focus` requests real
+window restoration and reports observed `visibility`, `focused`, and
+`input_ready`. A focused window may still be occluded. Keep it genuinely visible
+before input; focus emulation does not resolve a hidden-page refusal. See the
+[live window investigation](docs/BR-real-profile-hidden-input-resolution.md).
 
 Maintainers: run live browser acceptance and wait for CI on the release commit.
 Create an annotated `vX.Y.Z` tag with `git tag -a --cleanup=verbatim` and use the

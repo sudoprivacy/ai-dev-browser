@@ -918,7 +918,25 @@ class Tab:
     async def _set_window_state(self, state: str):
         window_id, _ = await self.get_window()
         bounds = cdp_browser.Bounds(window_state=cdp_browser.WindowState(state))
-        await self.send(cdp_browser.set_window_bounds(window_id, bounds))
+        try:
+            await self.send(cdp_browser.set_window_bounds(window_id, bounds))
+        except ProtocolException as error:
+            if getattr(
+                self._browser, "transport", "cdp"
+            ) != "extension" or not _is_cdp_method_not_found(error):
+                raise
+            from .errors import InputUnavailableError
+
+            observed_state: dict = {"visibility": "unknown", "focused": None}
+            try:
+                observed_state = await self._input_state(timeout=1)
+            except Exception:
+                pass  # A diagnostic read must not replace the unsupported-route error.
+            raise InputUnavailableError(
+                "The loaded extension does not support Browser.setWindowBounds; "
+                "the requested window state was not applied and no input was sent",
+                details=await self._input_diagnostics(observed_state),
+            ) from error
 
     async def maximize(self):
         await self._set_window_state("maximized")
@@ -941,6 +959,45 @@ class Tab:
         """Alias for activate()."""
         await self.activate()
 
+    async def _input_state(self, *, timeout: float | None = None) -> dict:
+        """Read genuine page visibility and document focus independently."""
+        return await self.evaluate(
+            "({visibility:document.visibilityState,focused:document.hasFocus()})",
+            timeout=timeout,
+        )
+
+    async def _wait_input_visibility(self) -> dict:
+        deadline = time.monotonic() + 2
+        state = await self._input_state()
+        while state["visibility"] != "visible" and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+            state = await self._input_state()
+        return state
+
+    async def _input_diagnostics(self, state: dict) -> dict:
+        """Bounded, read-only support data; never include flow URLs or accounts."""
+        from .extension import extension_version_info, query_extension_version
+
+        details = {
+            "input_sent": False,
+            "input_scope": "current_dispatch",
+            "target_id": str(self._target.target_id),
+            **state,
+        }
+        if getattr(self._browser, "transport", "cdp") != "extension":
+            return details
+        loaded = await query_extension_version(self._browser)
+        details.update(extension_version_info(loaded))
+        try:
+            window_id, bounds = await self.send(
+                cdp_browser.get_window_for_target(self._target.target_id), timeout=1
+            )
+            details["window_state"] = bounds.window_state.value
+            details["window_id"] = window_id
+        except Exception:
+            pass  # Preserve the original refusal if diagnostic support is incomplete.
+        return details
+
     async def _prepare_input(self, allow_cached: bool = False):
         """Wake only the selected extension page before trusted input."""
         if getattr(self._browser, "transport", "cdp") != "extension":
@@ -950,26 +1007,23 @@ class Tab:
             and time.monotonic() - getattr(self, "_input_checked_at", 0) < 0.5
         ):
             return
-        visible = await self.evaluate("document.visibilityState === 'visible'")
-        if not visible:
+        state = await self._input_state()
+        if state["visibility"] != "visible":
             await self.bring_to_front()
-            deadline = time.monotonic() + 2
-            while time.monotonic() < deadline:
-                if await self.evaluate("document.visibilityState === 'visible'"):
-                    # Let the restored renderer paint before its first pointer event.
-                    await self.evaluate(
-                        "new Promise(resolve => requestAnimationFrame(() => resolve(true)))",
-                        await_promise=True,
-                        timeout=2,
-                    )
-                    break
-                await asyncio.sleep(0.05)
-            else:
+            state = await self._wait_input_visibility()
+            if state["visibility"] != "visible":
                 from .errors import InputUnavailableError
 
                 raise InputUnavailableError(
-                    "The automation page is still hidden after activation; this input was not sent. Show its Chrome window, then inspect page state before retrying"
+                    "The automation page is still hidden after activation; this input was not sent. Show its Chrome window, then inspect page state before retrying",
+                    details=await self._input_diagnostics(state),
                 )
+            # Let the restored renderer paint before its first pointer event.
+            await self.evaluate(
+                "new Promise(resolve => requestAnimationFrame(() => resolve(true)))",
+                await_promise=True,
+                timeout=2,
+            )
         self._input_checked_at = time.monotonic()
 
     async def close(self):

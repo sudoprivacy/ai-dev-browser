@@ -1,0 +1,22 @@
+{
+  "config": {
+    "imports": [
+      "from tests.integration.extension_window_support import previous_extension_journey",
+      "pytestmark = pytest.mark.extension_previous"
+    ],
+    "call_style": "function",
+    "required_env_vars": [],
+    "smoke_test_assertions": ["previous_extension_journey is not None"]
+  },
+  "scenarios": [
+    {
+      "name": "real_extension_previous_window_update_guidance",
+      "title": "Diagnose an unchanged released extension through the current Python CLI",
+      "workflow": "Load the released extension -> connect through the current CLI -> compare actual loaded and bundled versions -> request window restore -> preserve unsupported refusal, versions and ordinary reload guidance",
+      "user_problem": "Updating Python must not imply that the user's running Chrome extension supports new window operations.",
+      "async": true,
+      "fixtures": ["live_extension", "tmp_path"],
+      "steps": [{"raw_code": ["await previous_extension_journey(live_extension, tmp_path)"]}]
+    }
+  ]
+}

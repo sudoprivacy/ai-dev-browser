@@ -6,9 +6,8 @@ the PNG. This makes screenshot coordinates directly usable for clicking
 without manual conversion.
 """
 
-import contextlib
-
 from ._tab import Tab
+from .errors import SessionError
 
 from . import human
 
@@ -88,6 +87,9 @@ async def mouse_click(
     UI that has no DOM element to locate. For DOM elements, prefer the
     `click_by_*` tools — they're atomic and return navigation feedback.
 
+    Extension visibility or ownership refusals abort the entire call before
+    further input, including when the optional positioning move was refused.
+
     On a heavy enterprise SPA whose mouse handlers block the render thread,
     pass `move=False`: it skips the pre-click cursor move (and the extra mouse
     events it dispatches, each of which the page must process), so the click is
@@ -144,11 +146,15 @@ async def mouse_click(
     # surface). So a slow/failed positioning move is swallowed; the press+release
     # (the essential, near-instant part) always fire.
     if move:
-        with contextlib.suppress(Exception):
+        try:
             if use_human:
                 await human.mouse_move(tab, x, y)
             else:
                 await tab.mouse_move(x, y, steps=1)
+        except SessionError:
+            raise
+        except Exception:
+            pass
 
     if use_human:
         if double:

@@ -871,10 +871,14 @@ async def _type_keystrokes(tab: Tab, text: str) -> None:
 async def _focus_el(element: Element) -> None:
     try:
         await element.focus()  # CDP DOM.focus
+    except SessionError:
+        raise
     except Exception:
         pass
     try:
         await element.apply("(el) => { if (el && el.focus) el.focus(); }")
+    except SessionError:
+        raise
     except Exception:
         pass
 
@@ -883,10 +887,12 @@ async def _clear_el(tab: Tab, element: Element) -> None:
     try:
         await element.apply(
             "(el) => { if (!el) return; if (el.focus) el.focus();"
-            " if ('value' in el) { el.value = '';"
+            " if ('value' in el && el.value !== '') { el.value = '';"
             " el.dispatchEvent(new Event('input', {bubbles: true})); }"
             " else if (el.isContentEditable) { el.textContent = ''; } }"
         )
+    except SessionError:
+        raise
     except Exception:
         pass
 
@@ -908,6 +914,8 @@ async def _field_state(element: Element, text: str) -> dict:
             if isinstance(st, dict)
             else {"matches": False, "empty": True, "length": 0}
         )
+    except SessionError:
+        raise
     except Exception:
         return {"matches": False, "empty": True, "length": 0}
 
@@ -948,6 +956,11 @@ async def _fill_verified(
     tried: list[str] = []
     st: dict | None = None
     for i, method in enumerate(order):
+        prepare_input = getattr(tab, "_prepare_input", None)
+        if prepare_input:
+            # This precedes even clearing/focusing: a hidden-page or ownership
+            # refusal must not turn into a value setter on a later rung.
+            await prepare_input()
         await _clear_el(tab, element)
         await _focus_el(element)
         tried.append(method)
@@ -960,6 +973,8 @@ async def _fill_verified(
                 await human.type_text(tab, text, element, humanize=True)
             elif method == "native":
                 await _native_set(element, text)
+        except SessionError:
+            raise
         except Exception:
             continue
         st = await _field_state(element, text)
@@ -993,6 +1008,9 @@ async def type_by_ref(
     into that specific input. Returns `{typed, verified, method, ref, text}`
     (plus `entered` when `enter=True`) — `verified` already tells you the value
     actually landed, so don't screenshot or re-read the field to check.
+
+    In extension mode, hidden-page or ownership refusals stop the operation
+    before clearing; input fallbacks never override these refusals.
 
     If you can identify the input by its visible label / placeholder, skip
     `page_discover` and use `type_by_text` directly.

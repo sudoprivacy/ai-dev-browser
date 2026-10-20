@@ -23,6 +23,8 @@ from .extension import (
     EXTENSION_BRIDGE_PORT,
     extension_dir,
     extension_load_instructions,
+    extension_version_info,
+    query_extension_version,
 )
 from .port import (
     _cleanup_temp_profile,
@@ -791,6 +793,10 @@ async def browser_connect(
     tab_switch/tab_close; automation_target_id tracks the main page identity.
     For visible local collaboration, show the dedicated page with tab_switch
     using its targets index so the human and agent work on that same page.
+    Extension results report the loaded `extension_version` separately from
+    `bundled_extension_version`; an unknown version stays null. Updating Python
+    does not reload Chrome's extension. Ordinary extension reload can reset
+    control: inspect the session and original owned page before further input.
 
     Args:
         transport: "cdp" (default, existing debug Chrome) or "extension"
@@ -806,7 +812,8 @@ async def browser_connect(
     Returns:
         dict with connected, transport, session_id, capabilities, profile_id,
         owner, profile_owner, actual headless (null if unknown), account for
-        extension, port for CDP, tabs and tab_count. Includes version/git_commit.
+        extension, port for CDP, tabs and tab_count. Includes version/git_commit
+        and loaded/bundled extension versions with their observed match status.
 
     Failure:
         Read error_code and setup_instructions. Missing bridge/extension needs
@@ -933,6 +940,9 @@ async def browser_connect(
                 {"tab_id": str(t._target.target_id), "url": t._target.url or ""}
                 for t in browser.tabs
             ]
+            loaded_version = await query_extension_version(
+                browser, status.get("extension_version")
+            )
         finally:
             await browser.close()
         main = status.get("automation_target_id")
@@ -951,6 +961,7 @@ async def browser_connect(
                 "profile_id": status["profile_id"],
                 "automation_target_id": main,
                 "browser_version": status.get("browser_version"),
+                **extension_version_info(loaded_version),
             }
         )
         _session.write(record)

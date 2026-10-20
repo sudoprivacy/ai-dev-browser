@@ -7,10 +7,13 @@ const vm = require('node:vm');
 const event = () => ({ handlers: [], addListener(fn) { this.handlers.push(fn); } });
 async function fixture(saved = {}, beforeRestore = null) {
   const tabs = new Map([[11, { id: 11, url: 'https://neutral.test/consent?secret=yes#token' }], [12, { id: 12, url: 'https://neutral.test/result' }], [99, { id: 99, url: 'https://neutral.test/private' }]]);
+  for (const [id, tab] of tabs) tab.windowId = id === 99 ? 102 : 101;
+  const windows = new Map([[101, {id:101, state:'normal', left:10, top:20, width:800, height:600}], [102, {id:102, state:'normal'}]]);
   const chrome = {
     tabs: { onCreated: event(), onUpdated: event(), onRemoved: event(), onReplaced: event(),
       get: async id => { if (!tabs.has(id)) throw Error('closed'); return tabs.get(id); },
       query: async () => [...tabs.values()], update: async id => tabs.get(id) },
+    windows: { get: async id => windows.get(id), update: async (id, changes) => Object.assign(windows.get(id), changes) },
     debugger: { onDetach: event(), onEvent: event(), attach: async () => {}, detach: async () => {}, sendCommand: async () => ({}) },
     storage: { local: { get: async () => ({ adbProfileId: 'profile' }), set: async () => {} },
       session: { get: async () => saved, set: async data => Object.assign(saved, structuredClone(data)) },
@@ -26,7 +29,7 @@ async function fixture(saved = {}, beforeRestore = null) {
   if (beforeRestore) beforeRestore(chrome);
   await vm.runInContext('boot()', ctx);
   const run = code => vm.runInContext(code, ctx);
-  return { chrome, tabs, saved, run };
+  return { chrome, tabs, windows, saved, run };
 }
 
 test('Chrome replacement transfers only proven ownership and reports successor', async () => {
@@ -110,4 +113,31 @@ test('ownership diagnostics are bounded and omit query/fragment and unrelated UR
   assert.equal(run('ownershipLog.length'), 100);
   assert.ok(log.includes('https://neutral.test/next'));
   assert.ok(!log.includes('credential') && !log.includes('#token') && !log.includes('/private'));
+});
+
+test('window bounds use native window APIs only for the selected owned tab', async () => {
+  const { run, windows } = await fixture();
+  run('claim(11)');
+  await run('browserLevel("Browser.setWindowBounds", {windowId:101,bounds:{windowState:"minimized"}}, "11")');
+  assert.equal(windows.get(101).state, 'minimized');
+  const observed = await run('browserLevel("Browser.getWindowBounds", {windowId:101}, "11")');
+  assert.equal(observed.bounds.windowState, 'minimized');
+  for (const method of ['Browser.getWindowBounds', 'Browser.setWindowBounds']) {
+    await assert.rejects(run(`browserLevel(${JSON.stringify(method)}, {windowId:102,bounds:{windowState:"minimized"}}, "11")`), /does not contain/);
+    await assert.rejects(run(`browserLevel(${JSON.stringify(method)}, {windowId:102}, "99")`), /unowned/);
+  }
+  assert.equal(windows.get(102).state, 'normal');
+});
+
+test('consent revocation during window lookup prevents native mutation', async () => {
+  const { chrome, run, windows } = await fixture();
+  run('claim(11)');
+  let release;
+  chrome.tabs.get = () => new Promise(resolve => { release = resolve; });
+  const setting = run('browserLevel("Browser.setWindowBounds", {windowId:101,bounds:{windowState:"minimized"}}, "11")');
+  const refused = assert.rejects(setting, /revoked/);
+  run('forget(11, "revoked")');
+  release({id:11, windowId:101});
+  await refused;
+  assert.equal(windows.get(101).state, 'normal');
 });

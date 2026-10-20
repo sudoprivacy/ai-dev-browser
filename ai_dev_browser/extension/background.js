@@ -271,6 +271,21 @@ async function announce() {
   }));
 }
 
+function windowBounds(window) {
+  return { left: window.left, top: window.top, width: window.width, height: window.height, windowState: window.state || "normal" };
+}
+
+async function selectedWindow(tab, windowId) {
+  // Window ids alone grant no authority. Resolve through the driver's selected
+  // owned tab, including after an asynchronous tab lookup or a tab move.
+  const id = Number(tab);
+  requireOwned(id);
+  const selected = await chrome.tabs.get(id);
+  requireOwned(id);
+  if (selected.windowId !== windowId) throw new Error("Requested window does not contain the selected automation tab");
+  return id;
+}
+
 // Chrome can commit the launch URL after the worker's first handshake. Adopt
 // only the caller's nonce-marked tab; do not guess at unrelated existing tabs.
 function adoptLaunch(tab) {
@@ -475,8 +490,24 @@ async function browserLevel(method, params, tab) {
       const w = await chrome.windows.get(t.windowId);
       return {
         windowId: w.id,
-        bounds: { left: w.left, top: w.top, width: w.width, height: w.height, windowState: w.state || "normal" },
+        bounds: windowBounds(w),
       };
+    }
+    case "Browser.getWindowBounds": {
+      await selectedWindow(tab, params.windowId);
+      return { bounds: windowBounds(await chrome.windows.get(params.windowId)) };
+    }
+    case "Browser.setWindowBounds": {
+      const id = await selectedWindow(tab, params.windowId);
+      const bounds = params.bounds || {};
+      const changes = {};
+      for (const name of ["left", "top", "width", "height"]) {
+        if (bounds[name] != null) changes[name] = bounds[name];
+      }
+      if (bounds.windowState != null) changes.state = bounds.windowState;
+      requireOwned(id);
+      await chrome.windows.update(params.windowId, changes);
+      return {};
     }
     default:
       return undefined;

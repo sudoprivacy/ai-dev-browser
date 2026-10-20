@@ -81,7 +81,11 @@ exclude = ["ai_dev_browser/cdp"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-markers = ["extension_native: real extension with a native visible Chrome window"]
+markers = [
+    "extension_native: real extension with a native visible Chrome window",
+    "extension_occlusion: preserve ordinary native window occlusion in the owned Chrome fixture",
+    "extension_previous: load an unmodified released extension to test upgrade diagnostics",
+]
 
 # Version is derived from the latest git tag (SSOT).
 # Never hand-edit a version string anywhere — just `git tag vX.Y.Z`.
