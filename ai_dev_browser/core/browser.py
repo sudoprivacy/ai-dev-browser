@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import re
 import time
 from pathlib import Path
 
@@ -204,6 +205,7 @@ def browser_start(
     chrome_path: str | None = None,
     user_data_dir: str | None = None,
     profile_directory: str = "Default",
+    display: str | None = None,
 ) -> dict:
     """Use when: you need a new isolated CDP session or explicitly launch a configured extension profile; returns session_id and actual capabilities.
 
@@ -238,6 +240,9 @@ def browser_start(
         transport: "cdp" (isolated automation, default) or "extension"
             (explicitly launch an already configured real Chrome/profile).
         chrome_path: Chrome executable to launch; otherwise find_chrome resolves it.
+        display: Optional local X11 display ID, such as ":2", for a host-owned
+            GUI. Passed only to this Chrome child; the calling process keeps
+            its DISPLAY unchanged. Omit to use the existing desktop display.
         user_data_dir: Existing Chrome user-data root, required for extension
             startup. CDP uses temp/named adb profiles; this option is extension only.
         profile_directory: Chrome folder inside user_data_dir, e.g. "Default"
@@ -343,6 +348,14 @@ def browser_start(
         replay input implicitly after failure.
     """
     start_options = dict(locals())
+    if display is not None and (
+        not isinstance(display, str) or not re.fullmatch(r":\d+(?:\.\d+)?", display)
+    ):
+        return _session.failure(
+            "validation",
+            "An explicit display must be a local X11 display ID",
+            transport=transport,
+        )
     startup_timeout = resolve_startup_timeout(startup_timeout)
     if transport == "extension":
         if (
@@ -371,6 +384,7 @@ def browser_start(
                 url=url,
                 startup_timeout=startup_timeout,
                 extra_args=extra_args,
+                display=display,
             )
         )
     if (
@@ -388,7 +402,7 @@ def browser_start(
         import sys
 
         if sys.platform.startswith("linux") and not (
-            os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+            display or os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
         ):
             return _session.failure(
                 "unsupported",
@@ -492,6 +506,8 @@ def browser_start(
     from typing import Any
 
     launch_options: dict[str, Any] = {"chrome_path": chrome_path} if chrome_path else {}
+    if display is not None:
+        launch_options["display"] = display
     for attempt in range(max_attempts):
         process = launch_chrome(
             port=port,

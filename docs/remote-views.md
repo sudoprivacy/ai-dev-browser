@@ -51,8 +51,33 @@ surface.dispose();
 The application supplies accessible controls for Unicode/IME text insertion,
 dialogs and supported keys. `PageSurface` is a rendering/input adapter, not a
 complete tab bar, toolbar, WebSocket authorization protocol or React panel.
-The initial adapter uses viewport JPEG snapshots. Interactive streaming and
-drag/clipboard require additional integration. The control primitive below
+Hosts whose worker advertises `capabilities.dragInput` can opt into mouse/pen
+selection with `new PageSurface(imageElement, sendAuthorizedInput, {drag: true})`.
+Touch gestures continue to scroll. A drag carries at most 64 viewport points in
+one bounded `input` operation; it is sent on pointer release, so this is not a
+continuous drag stream. The host's existing input barrier drains the gesture
+before changing control or targets. The adapter never retries it.
+
+Workers advertising `selectionRead` accept the human-only input
+`{kind: 'input', input: {kind: 'copy-selection'}, controlEpoch, targetEpoch}`.
+It uses the existing authenticated input gateway and barrier. Its `selection` result contains
+`{text, isAvailable}` from the selected page, including focused text inputs.
+Password fields, cross-origin focused frames and selections longer than 8192
+UTF-16 code units return unavailable. Reading does not access an OS clipboard.
+An application can copy this result to the local clipboard from an explicit
+user gesture, with the normal browser permission/error handling. Do not silently
+read local clipboard content or resume the agent as a consequence of copying.
+
+`input: {kind: 'paste', text}` inserts up to 8192 characters, including newlines,
+tabs and Unicode, into the current target. Other control characters are refused.
+The X11 adapter uses its isolated display's clipboard; the page adapter uses
+trusted CDP input. Both retain the same lease and reject stale queued input.
+Applications provide their own accessible paste/IME control and may wire native
+clipboard shortcuts to these operations after checking the capability flags.
+
+The adapter still uses JPEG snapshots. Continuous streaming, native clipboard
+permission UX and application-specific review targets require integration.
+The control primitive below
 supports session-wide arbitration; hosts still wire its epochs into frames,
 tool execution and viewer input.
 

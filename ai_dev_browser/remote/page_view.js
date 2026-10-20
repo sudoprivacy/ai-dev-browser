@@ -1,6 +1,6 @@
 /** A reusable pixel surface. The host owns authentication and control policy. */
 export class PageSurface {
-  constructor(image, send) {
+  constructor(image, send, { drag = false } = {}) {
     this.image = image;
     this.send = send;
     this.width = 0;
@@ -9,15 +9,31 @@ export class PageSurface {
     this.events = new AbortController();
     const on = (name, listener, options = {}) =>
       image.addEventListener(name, listener, { ...options, signal: this.events.signal });
+    on('dragstart', event => event.preventDefault());
     on('pointerdown', event => {
-      this.pointer = { id: event.pointerId, lastY: event.clientY, startY: event.clientY, moved: false };
+      if (event.button !== 0 || this.pointer) return;
+      const point = this.point(event);
+      if (!point) return;
+      this.pointer = { id: event.pointerId, lastY: event.clientY, startY: event.clientY, startX: event.clientX,
+        moved: false, drag: drag && event.pointerType !== 'touch', points: [point] };
       image.setPointerCapture(event.pointerId);
       image.focus({ preventScroll: true });
     });
     on('pointermove', event => {
       if (!this.pointer || this.pointer.id !== event.pointerId) return;
       const delta = this.pointer.lastY - event.clientY;
-      if (Math.abs(event.clientY - this.pointer.startY) > 8) this.pointer.moved = true;
+      if (Math.hypot(event.clientX - this.pointer.startX, event.clientY - this.pointer.startY) > 8) this.pointer.moved = true;
+      if (this.pointer.drag) {
+        const point = this.point(event);
+        if (point) {
+          // Keep endpoints and a bounded representative path, never an
+          // unbounded event backlog that could outlive the host's lease.
+          if (this.pointer.points.length === 64)
+            this.pointer.points = this.pointer.points.filter((_, index) => index % 2 === 0);
+          this.pointer.points.push(point);
+        }
+        return;
+      }
       if (this.pointer.moved && Math.abs(delta) > 2) {
         const point = this.point(event);
         if (point) send({ kind: 'wheel', ...point, dy: delta * this.height / image.clientHeight });
@@ -25,6 +41,13 @@ export class PageSurface {
       }
     });
     on('pointerup', event => {
+      if (this.pointer?.id === event.pointerId && this.pointer.drag && this.pointer.moved) {
+        const point = this.point(event);
+        if (point) {
+          if (this.pointer.points.length === 64) this.pointer.points.pop();
+          send({ kind: 'drag', points: [...this.pointer.points, point] });
+        }
+      }
       if (this.pointer?.id === event.pointerId && !this.pointer.moved) {
         const point = this.point(event);
         if (point) send({ kind: 'click', ...point });

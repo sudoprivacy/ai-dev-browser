@@ -51,7 +51,12 @@ async def remote_site():
     fixture = """<!doctype html><meta charset="utf-8">
     <style>body{margin:0;background:#eee}input,button{display:block;margin:24px;width:220px;height:40px}</style>
     <input id="name"><button id="submit">Submit once</button><pre id="receipt"></pre>
+    <p id="phrase" style="margin:24px;font:20px monospace;white-space:pre">alpha CANONICAL_REVIEW_PHRASE omega</p>
+    <textarea id="notes" style="margin:24px;width:380px;height:80px"></textarea>
+    <button id="recordNotes">Submit review</button>
     <script>document.cookie='profile=isolated; SameSite=Lax';
+    recordNotes.onclick=event=>fetch('/receipt',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({notes:notes.value,trusted:event.isTrusted})});
     let press=null;submit.onmousedown=event=>{press={buttons:event.buttons,trusted:event.isTrusted}};
     submit.onclick=async event=>{
       const response=await fetch('/receipt',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -77,7 +82,8 @@ async def remote_site():
         <script type="module">
         import {PageSurface} from '/page-view.js';
         const ws=new WebSocket(location.origin.replace('http','ws')+'/view');
-        const surface=new PageSurface(document.querySelector('#screen'), value=>ws.send(JSON.stringify(value)));
+        const surface=new PageSurface(document.querySelector('#screen'), value=>ws.send(JSON.stringify(value)),
+          {drag:new URLSearchParams(location.search).has('drag')});
         ws.onopen=()=>ws.send(JSON.stringify({token:'fixture-controller'}));
         ws.onmessage=event=>{const value=JSON.parse(event.data);surface.frame(value);};
         document.querySelector('#insert').onclick=()=>{
