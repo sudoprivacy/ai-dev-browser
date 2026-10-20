@@ -58,15 +58,20 @@ Local live PTY acceptance on Windows, Python 3.13 and Chrome for Testing 155:
 | Load unmodified extension 0.4.3 from the public 0.57.7 wheel, connect with current Python, receive actionable unsupported window result | legacy, asyncio | Both passed |
 
 The generated suites passed all 6 checks, including two import checks, with no
-skips. While occluded, the field and DOM event ledger stayed empty and the HTTP
-server received no submission. Afterwards, input and click events were trusted
+skips. While occluded, refused actions produced no `Input.*` bridge commands,
+the field stayed empty, no form-control events occurred, and the HTTP server
+received no submission. One recheck observed three trusted keydown events before
+the first refused action; their exact origin was not established. All page events
+remain in the evidence separately from the dispatch ledger. Afterwards, input and click events were trusted
 and exactly one HTTP submission arrived. The final rendered PNG was inspected.
 
 Ladder's existing eight input-policy tests passed against this source checkout.
-The Python unit suite passed 240 checks; the JavaScript ownership suite passed
+The Python unit suite passed 241 checks; the JavaScript ownership suite passed
 eight. The 63-tool CLI catalog passed its 69 steering contracts; regenerating the
 tools changed no wrapper files. The related typing, viewport, mouse and CLI
 recovery regression suites passed 26 checks.
+Four bridge regression checks also passed. The final traced acceptance is retained
+under `scratch/window-traced-acceptance`, including the zero-dispatch evidence.
 
 Scenario JSON files are the source for the generated tests. CI runs the previous
 released extension on all three extension matrix entries and native occlusion on

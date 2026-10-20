@@ -3,7 +3,7 @@
 AUTO-GENERATED - DO NOT EDIT
 
 This file was auto-generated from SKILL.md by integration-test-generator.
-Generated: 2026-10-20 09:02:21
+Generated: 2026-10-20 09:29:38
 
 To modify test behavior:
   1. Update SKILL.md with better workflow examples
@@ -54,7 +54,9 @@ def _integration_guard():
         pytest.skip("SKIP_INTEGRATION is set — skipping integration tests")
 
 
-async def test_real_extension_window_restore_and_hidden_input(live_extension, tmp_path):
+async def test_real_extension_window_restore_and_hidden_input(
+    live_extension, tmp_path, caplog
+):
     """
     Real scenario: Restore an owned Chrome window and withhold input under real native occlusion
 
@@ -66,7 +68,7 @@ async def test_real_extension_window_restore_and_hidden_input(live_extension, tm
       1. inline code operation
     """
     # Step 1: Execute operation
-    await window_visibility_journey(live_extension, tmp_path)
+    await window_visibility_journey(live_extension, tmp_path, caplog)
 
 
 # Smoke test - can import without errors

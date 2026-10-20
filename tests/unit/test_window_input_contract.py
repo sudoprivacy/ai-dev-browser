@@ -107,3 +107,13 @@ def test_input_refusal_preserves_a_useful_cli_envelope():
     )
     assert failure["details"] == details and failure["retryable"] is False
     assert "chrome://extensions" in failure["hint"]
+
+
+def test_bridge_records_insert_text_command_without_its_value(caplog):
+    from ai_dev_browser.core.ext_bridge import _Bridge
+
+    caplog.set_level("INFO", logger="ai_dev_browser.core.ext_bridge")
+    _Bridge()._log_action("Input.insertText", {"text": "private fixture value"})
+    assert [record.getMessage() for record in caplog.records] == [
+        "action: Input.insertText"
+    ]

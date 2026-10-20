@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import sys
 import time
@@ -56,7 +57,8 @@ async def extension_cli(extension, tool, *flags):
     return process.returncode, json.loads(stdout)
 
 
-async def window_visibility_journey(extension, root):
+async def window_visibility_journey(extension, root, caplog):
+    caplog.set_level(logging.INFO, logger="ai_dev_browser.core.ext_bridge")
     receipts = []
     history = []
     title = "ADB neutral native visibility"
@@ -68,7 +70,7 @@ async def window_visibility_journey(extension, root):
 <h1>Native window acceptance</h1><label>Request name <input id="name"></label>
 <button id="submit">Submit once</button><pre id="result">No input received</pre>
 <script>window.inputEvents=[];
-['mousedown','mouseup','click','keydown','input'].forEach(type=>document.addEventListener(type,e=>inputEvents.push({{type,trusted:e.isTrusted}}),true));
+['mousedown','mouseup','click','keydown','input'].forEach(type=>document.addEventListener(type,e=>inputEvents.push({{type,trusted:e.isTrusted,target:e.target.id,tag:e.target.tagName}}),true));
 document.querySelector('#submit').onclick=async e=>{{const receipt={{name:document.querySelector('#name').value,trusted:e.isTrusted}};await fetch('/receipt',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(receipt)}});document.querySelector('#result').textContent=JSON.stringify(receipt)}};
 </script>""",
             content_type="text/html",
@@ -172,7 +174,7 @@ document.querySelector('#submit').onclick=async e=>{{const receipt={{name:docume
                 extension.chrome_pid, handle, "Unrelated neutral window"
             ):
                 await _hidden_refusals(
-                    extension, url, state, visible, history, receipts
+                    extension, url, state, visible, history, receipts, caplog
                 )
             await visible(True)
             typed = await extension.call(
@@ -202,7 +204,7 @@ document.querySelector('#submit').onclick=async e=>{{const receipt={{name:docume
         await runner.cleanup()
 
 
-async def _hidden_refusals(extension, url, state, visible, history, receipts):
+async def _hidden_refusals(extension, url, state, visible, history, receipts, caplog):
     hidden = await visible(False)
     hidden_result = await extension.call(
         window_set, tab_url=url + "/", state="normal", focus=True
@@ -222,6 +224,7 @@ async def _hidden_refusals(extension, url, state, visible, history, receipts):
         and cli_focus["input_ready"] is False
     )
     assert "hint" in cli_focus and cli_focus["retryable"] is False
+    start = len(caplog.records)
 
     for function, options in (
         (type_by_text, {"name": "Request name", "text": "must stay empty"}),
@@ -239,7 +242,10 @@ async def _hidden_refusals(extension, url, state, visible, history, receipts):
         assert error.details["extension_version_matches_bundle"] is True
         history.append({"refused": function.__name__, "details": error.details})
     untouched = await state()
-    assert untouched["value"] == "" and untouched["events"] == [] and receipts == []
+    assert untouched["value"] == "" and receipts == []
+    assert not any(
+        event["target"] in {"name", "submit"} for event in untouched["events"]
+    )
     code, refused = await extension_cli(
         extension,
         "type_by_text",
@@ -262,8 +268,27 @@ async def _hidden_refusals(extension, url, state, visible, history, receipts):
     assert (
         "chrome://extensions" in refused["hint"] and "was not sent" in refused["error"]
     )
-    history.append({"cli_refusal": refused, "window_cli": cli_focus})
-    assert (await state())["events"] == [] and receipts == []
+    after = await state()
+    dispatched = [
+        record.args[0]
+        for record in caplog.records[start:]
+        if record.name == "ai_dev_browser.core.ext_bridge"
+        and record.msg == "action: %s%s"
+        and record.args[0].startswith("Input.")
+    ]
+    # A recheck observed native keydown events before the attempted action.
+    # Preserve them in evidence; the actual bridge command ledger and
+    # form-control effects identify whether adb dispatched input.
+    history.append(
+        {
+            "cli_refusal": refused,
+            "window_cli": cli_focus,
+            "all_page_events": after["events"],
+            "input_commands_during_refusal": dispatched,
+        }
+    )
+    assert dispatched == [] and after["value"] == "" and receipts == []
+    assert not any(event["target"] in {"name", "submit"} for event in after["events"])
 
 
 async def previous_extension_journey(extension, root):
