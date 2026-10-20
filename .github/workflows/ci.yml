@@ -306,6 +306,8 @@ jobs:
             native-window-results/**/native-window-evidence.json
             native-window-results/**/native-window-accepted.png
             native-window-results/**/extension-chrome.log
+            native-window-results/**/extension-cleanup-evidence.json
+            native-window-results/**/extension-cleanup-stacks.txt
             previous-extension-results/**/previous-extension-evidence.json
 
   # ─────────────────────────────────────────────────────────────────────
