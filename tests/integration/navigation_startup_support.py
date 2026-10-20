@@ -9,16 +9,23 @@ import pytest
 from aiohttp import web
 
 from ai_dev_browser.core.browser import browser_start, browser_stop
-from tests.integration.test_remote_view import connect_page, navigate_owned_browser
+from tests.integration.test_remote_view import (
+    connect_page,
+    navigate_owned_browser,
+    wait_for,
+)
 
 
 async def startup_race_journey(folder, accepted=True):
     first_request = asyncio.Event()
     release_first = asyncio.Event()
     requests = []
+    bootstrap_requests = []
+    phases = []
 
     async def page(request):
         requests.append(request.path)
+        phases.append({"phase": "target-request", "count": len(requests)})
         if len(requests) == 1:
             first_request.set()
             await release_first.wait()
@@ -31,7 +38,18 @@ async def startup_race_journey(folder, accepted=True):
     app = web.Application()
     app.router.add_get("/target", page)
 
+    async def bootstrap(request):
+        bootstrap_requests.append(request.path)
+        return web.Response(
+            text='<title>Race fixture ready</title><main id="bootstrap">Ready</main>',
+            content_type="text/html",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    app.router.add_get("/bootstrap", bootstrap)
+
     async def redirect(request):
+        phases.append({"phase": "competing-redirect"})
         raise web.HTTPFound("/target" if accepted else "/wrong")
 
     app.router.add_get("/redirect", redirect)
@@ -47,12 +65,14 @@ async def startup_race_journey(folder, accepted=True):
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
     url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}/target"
+    bootstrap_url = url.replace("/target", "/bootstrap")
     browser = None
     navigation = None
     try:
         browser = await asyncio.to_thread(
             browser_start,
             headless=True,
+            url=bootstrap_url,
             temp=True,
             stealth=False,
             silent_stderr=True,
@@ -64,12 +84,29 @@ async def startup_race_journey(folder, accepted=True):
                 http, browser["port"], browser["automation_target_id"]
             )
             try:
+                # Cold Chrome can still commit its own initial about:blank.
+                # Start the controlled cancellation only after the browser's
+                # explicit bootstrap URL and real DOM have settled. Otherwise
+                # startup can abort the helper before our first HTTP gate exists.
+                ready = await wait_for(
+                    lambda: peer.js(
+                        "({url:location.href,ready:document.readyState,"
+                        "marker:document.querySelector('#bootstrap')?.textContent})"
+                    ),
+                    lambda value: value["url"] == bootstrap_url
+                    and value["ready"] in ("interactive", "complete")
+                    and value["marker"] == "Ready",
+                    timeout=10,
+                )
+                assert bootstrap_requests and requests == []
+                phases.append({"phase": "bootstrap-ready", "observed": ready})
                 navigation = asyncio.create_task(
                     navigate_owned_browser(
                         browser, url, folder, settle_timeout=15 if accepted else 2
                     )
                 )
                 await asyncio.wait_for(first_request.wait(), 10)
+                phases.append({"phase": "first-target-held"})
                 # This independent owned driver is the controlled competing
                 # browser navigation; the helper itself still dispatches once.
                 await asyncio.wait_for(
@@ -108,6 +145,18 @@ async def startup_race_journey(folder, accepted=True):
                 await peer.close()
     finally:
         release_first.set()
+        (folder / "startup-navigation-race-evidence.json").write_text(
+            json.dumps(
+                {
+                    "bootstrapRequests": bootstrap_requests,
+                    "targetRequests": requests,
+                    "phases": phases,
+                    "acceptedDestination": accepted,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         if browser and "session_id" in browser:
             stopped = await asyncio.to_thread(
                 browser_stop, session_id=browser["session_id"]
