@@ -231,6 +231,9 @@ class Worker:
             if self.browser
             else "extension",
             "capabilities": {
+                "dragInput": True,
+                "clipboardText": True,
+                "selectionRead": True,
                 "lifecycle": self.personal_reference is None,
                 "fileTransfer": self.personal_reference is None,
                 "existingExtension": self.existing_extension is not None,
@@ -710,6 +713,10 @@ class Worker:
                         **await self.session.frame(owned, epoch, target_epoch),
                         "surface": "page",
                     }
+            elif kind == "copy-selection":
+                extra["selection"] = await self.session.selection(
+                    controller, epoch, target_epoch
+                )
             elif kind == "input" and self.surface(action) == "window":
                 await self.input_window(
                     controller, epoch, target_epoch, action["input"]

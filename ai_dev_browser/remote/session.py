@@ -234,6 +234,16 @@ class BrowserSession:
             "ai", epoch, target_epoch, self._observe, observation=True
         )
 
+    async def selection(self, controller: str, epoch: int, target_epoch: int):
+        """Read only the selected text under the current human input barrier."""
+
+        async def read():
+            if self._dialog:
+                raise ControlError("browser_dialog_open")
+            return await PageView().selection(await self._connect_page())
+
+        return await self.control.run(controller, epoch, target_epoch, read)
+
     async def take(self, controller: str, epoch: int, target_epoch: int):
         if epoch != self.control.epoch or target_epoch != self.control.target_epoch:
             raise ControlError("stale_browser_operation")

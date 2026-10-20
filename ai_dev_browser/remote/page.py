@@ -1,6 +1,7 @@
 """Page pixels and trusted input, independent of business and user policy."""
 
 import math
+import time
 
 
 class PageView:
@@ -56,6 +57,55 @@ class PageView:
             return True
         if dialog:
             return False
+        if kind == "drag":
+            points = drag_points(event, width, height)
+            if points is None:
+                return False
+            # One bounded gesture stays inside the host's input barrier. A tab
+            # change cannot split a held mouse button across different pages.
+            deadline = time.monotonic() + 5
+
+            async def send(params):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Browser drag timed out; input was not replayed")
+                await page.call("Input.dispatchMouseEvent", params, timeout=remaining)
+
+            await page.call("Page.bringToFront", timeout=5)
+            position = points[0]
+            await send({"type": "mouseMoved", **position})
+            try:
+                await send(
+                    {
+                        "type": "mousePressed",
+                        **position,
+                        "button": "left",
+                        "buttons": 1,
+                        "clickCount": 1,
+                    }
+                )
+                for position in points[1:]:
+                    await send(
+                        {
+                            "type": "mouseMoved",
+                            **position,
+                            "button": "left",
+                            "buttons": 1,
+                        }
+                    )
+            finally:
+                await page.call(
+                    "Input.dispatchMouseEvent",
+                    {
+                        "type": "mouseReleased",
+                        **position,
+                        "button": "left",
+                        "buttons": 0,
+                        "clickCount": 1,
+                    },
+                    timeout=2,
+                )
+            return True
         if kind in ("click", "wheel"):
             try:
                 if isinstance(event.get("x"), bool) or isinstance(event.get("y"), bool):
@@ -110,12 +160,14 @@ class PageView:
                     },
                 )
             return True
-        if kind == "text":
+        if kind in ("text", "paste"):
             text = event.get("text", "")
             if (
                 isinstance(text, str)
-                and 0 < len(text) <= self.max_text
-                and not any(ord(c) < 32 for c in text)
+                and 0 < len(text) <= (8192 if kind == "paste" else self.max_text)
+                and not any(
+                    ord(c) < 32 and (kind != "paste" or c not in "\n\r\t") for c in text
+                )
             ):
                 await page.call("Input.insertText", {"text": text})
                 return True
@@ -154,3 +206,50 @@ class PageView:
                 await page.call("Input.dispatchKeyEvent", {"type": phase, **params})
             return True
         return False
+
+    async def selection(self, page):
+        """Read bounded selected text from the current page, never the OS clipboard.
+
+        The host must hold its authenticated human lease and target epoch. This
+        deliberately does not search another tab or cross-origin iframe.
+        """
+        return await page.js("""(() => {
+            let doc = document;
+            for (let depth = 0; depth < 8; depth++) {
+                const active = doc.activeElement;
+                if (active?.tagName !== 'IFRAME') break;
+                try {
+                    if (!active.contentDocument) return {text: '', isAvailable: false};
+                    doc = active.contentDocument;
+                } catch { return {text: '', isAvailable: false}; }
+            }
+            const active = doc.activeElement;
+            let text;
+            if (active?.tagName === 'INPUT' && active.type === 'password')
+                return {text: '', isAvailable: false};
+            if (typeof active?.selectionStart === 'number')
+                text = active.value.slice(active.selectionStart, active.selectionEnd);
+            else text = doc.getSelection()?.toString() || '';
+            if (text.length > 8192) return {text: '', isAvailable: false};
+            return {text, isAvailable: true};
+        })()""")
+
+
+def drag_points(event, width, height):
+    """Validate the complete path before any native button is pressed."""
+    points = event.get("points")
+    if not isinstance(points, list) or not 2 <= len(points) <= 64:
+        return None
+    result = []
+    for point in points:
+        if not isinstance(point, dict):
+            return None
+        if any(type(point.get(key)) not in (int, float) for key in ("x", "y")):
+            return None
+        x, y = point["x"], point["y"]
+        if not (
+            math.isfinite(x) and math.isfinite(y) and 0 <= x < width and 0 <= y < height
+        ):
+            return None
+        result.append({"x": x, "y": y})
+    return result

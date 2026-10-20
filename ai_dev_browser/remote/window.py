@@ -11,6 +11,8 @@ from contextlib import suppress
 
 from PIL import ImageGrab
 
+from .page import drag_points
+
 
 class XDisplay:
     """Own a headful display and its window manager, with no public listener.
@@ -239,6 +241,32 @@ class WindowView:
         if not isinstance(event, dict):
             return False
         kind = event.get("kind")
+        if kind == "drag":
+            points = drag_points(event, self.width, self.height)
+            if points is None:
+                return False
+            first = points[0]
+            try:
+                await self._run(
+                    "mousemove",
+                    str(round(first["x"])),
+                    str(round(first["y"])),
+                    "mousedown",
+                    "1",
+                )
+                moves = []
+                for point in points[1:]:
+                    moves.extend(
+                        [
+                            "mousemove",
+                            str(round(point["x"])),
+                            str(round(point["y"])),
+                        ]
+                    )
+                await self._run(*moves)
+            finally:
+                await self._run("mouseup", "1")
+            return True
         if kind in ("click", "wheel"):
             try:
                 if any(isinstance(event.get(key), bool) for key in ("x", "y")):
@@ -273,15 +301,18 @@ class WindowView:
                         "4" if delta < 0 else "5",
                     )
             return True
-        if kind == "text":
+        if kind in ("text", "paste"):
             text = event.get("text")
             if (
                 not isinstance(text, str)
-                or not 0 < len(text) <= self.max_text
-                or any(ord(char) < 32 for char in text)
+                or not 0 < len(text) <= (8192 if kind == "paste" else self.max_text)
+                or any(
+                    ord(char) < 32 and (kind != "paste" or char not in "\n\r\t")
+                    for char in text
+                )
             ):
                 return False
-            if not text.isascii():
+            if kind == "paste" or not text.isascii():
                 await self._paste(text)
                 return True
             # Stdin keeps passwords out of process arguments.
