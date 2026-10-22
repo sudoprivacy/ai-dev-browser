@@ -82,14 +82,16 @@ async def test_explicit_display_without_inherited_gui(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize(
-    "is_headless,display_mode,transport",
+    "is_headless,display_mode,transport,viewport_height",
     [
-        (True, "native", "cdp"),
-        (False, "native", "cdp"),
+        (True, "native", "cdp", None),
+        (False, "native", "cdp", None),
+        pytest.param(True, "native", "cdp", 360, id="short-headless-viewport"),
         pytest.param(
             False,
             "x11",
             "cdp",
+            None,
             marks=pytest.mark.skipif(
                 sys.platform != "linux",
                 reason="Isolated X11 window view requires Linux",
@@ -100,6 +102,7 @@ async def test_explicit_display_without_inherited_gui(monkeypatch, tmp_path):
                 headless,
                 mode,
                 "extension",
+                None,
                 marks=pytest.mark.skipif(
                     not Path("/opt/browser/extension/identity.json").is_file(),
                     reason="Signed managed extension policy fixture required",
@@ -110,7 +113,7 @@ async def test_explicit_display_without_inherited_gui(monkeypatch, tmp_path):
     ],
 )
 async def test_worker_selection_paste_and_lease(
-    remote_site, tmp_path, is_headless, display_mode, transport
+    remote_site, tmp_path, is_headless, display_mode, transport, viewport_height
 ):
     """Select exact words -> copy -> Unicode multiline paste -> reject stale copy."""
     token = secrets.token_hex(32)
@@ -145,6 +148,26 @@ async def test_worker_selection_paste_and_lease(
                 body = await response.json()
                 assert response.status == status, body
                 return body
+
+        async def visible_point(selector):
+            # Focusing/pasting into a textarea can scroll a short native
+            # viewport. Measure the target only after bringing it into view;
+            # the worker must keep rejecting coordinates outside that viewport.
+            point = await (await worker.session._connect_page()).js(
+                """(selector => {
+                    const element = document.querySelector(selector);
+                    element.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
+                    const r = element.getBoundingClientRect();
+                    return {x:r.left+r.width/2,y:r.top+r.height/2,
+                        width:innerWidth,height:innerHeight};
+                })"""
+                + "("
+                + json.dumps(selector)
+                + ")"
+            )
+            assert 0 <= point["x"] < point["width"], point
+            assert 0 <= point["y"] < point["height"], point
+            return {key: point[key] for key in ("x", "y")}
 
         def epochs(state):
             return {key: state[key] for key in ("controlEpoch", "targetEpoch")}
@@ -189,6 +212,19 @@ async def test_worker_selection_paste_and_lease(
                 and held["capabilities"]["selectionRead"]
             )
             page = await worker.session._connect_page()
+            if viewport_height is not None:
+                await page.call(
+                    "Emulation.setDeviceMetricsOverride",
+                    {
+                        "width": 800,
+                        "height": viewport_height,
+                        "deviceScaleFactor": 1,
+                        "mobile": False,
+                    },
+                )
+                assert await page.js(
+                    "recordNotes.getBoundingClientRect().top >= innerHeight"
+                ), "Short viewport must put the submission below the fold"
             if display_mode == "x11":
                 await host(
                     {"kind": "attach", "viewerId": "window", "surface": "window"}
@@ -231,8 +267,7 @@ async def test_worker_selection_paste_and_lease(
                 "user-another",
             )
             assert denied["error"] == "browser_control_not_owned"
-            notes = await page.js("""(() => {const r=notes.getBoundingClientRect();
-                return {x:r.left+10,y:r.top+10}})()""")
+            notes = await visible_point("#notes")
             await input_event({"kind": "click", **notes}, held)
             await page.js(
                 "window.pastes=[];notes.addEventListener('input',e=>pastes.push({trusted:e.isTrusted,value:notes.value}));true"
@@ -244,8 +279,7 @@ async def test_worker_selection_paste_and_lease(
             # Chromium emits several native input events for multiline text.
             # Count the actual review submission, not internal DOM events.
             assert paste_events and all(event["trusted"] for event in paste_events)
-            button = await page.js("""(() => {const r=recordNotes.getBoundingClientRect();
-                return {x:r.left+10,y:r.top+10}})()""")
+            button = await visible_point("#recordNotes")
             await input_event({"kind": "click", **button}, held)
             receipts = await wait_for(
                 lambda: asyncio.sleep(0, result=remote_site[1]), bool
@@ -267,6 +301,8 @@ async def test_worker_selection_paste_and_lease(
                         "headless": is_headless,
                         "displayMode": display_mode,
                         "transport": transport,
+                        "constrainedViewportHeight": viewport_height,
+                        "submissionPoint": button,
                         "selected": copied["selection"],
                         "trustedTextExact": True,
                         "serverSubmissionCount": len(receipts),
