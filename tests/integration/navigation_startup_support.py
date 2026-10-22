@@ -72,7 +72,6 @@ async def startup_race_journey(folder, accepted=True):
         browser = await asyncio.to_thread(
             browser_start,
             headless=True,
-            url=bootstrap_url,
             temp=True,
             stealth=False,
             silent_stderr=True,
@@ -84,10 +83,13 @@ async def startup_race_journey(folder, accepted=True):
                 http, browser["port"], browser["automation_target_id"]
             )
             try:
-                # Cold Chrome can still commit its own initial about:blank.
-                # Start the controlled cancellation only after the browser's
-                # explicit bootstrap URL and real DOM have settled. Otherwise
-                # startup can abort the helper before our first HTTP gate exists.
+                # Chrome for Testing 155 on Windows advertises the CLI startup
+                # URL while its document remains about:blank. Prepare this neutral
+                # fixture through the existing owned CDP connection exactly once;
+                # the cancellation under test is dispatched separately afterwards.
+                prepared = await peer.call("Page.navigate", {"url": bootstrap_url})
+                assert "errorText" not in prepared, prepared
+                await peer.wait_navigation(prepared, timeout=10)
                 ready = await wait_for(
                     lambda: peer.js(
                         "({url:location.href,ready:document.readyState,"
@@ -98,7 +100,7 @@ async def startup_race_journey(folder, accepted=True):
                     and value["marker"] == "Ready",
                     timeout=10,
                 )
-                assert bootstrap_requests and requests == []
+                assert bootstrap_requests == ["/bootstrap"] and requests == []
                 phases.append({"phase": "bootstrap-ready", "observed": ready})
                 navigation = asyncio.create_task(
                     navigate_owned_browser(
