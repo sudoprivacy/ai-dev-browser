@@ -428,3 +428,10 @@ The managed Chrome CI job also runs `test_remote_window_live.py` with CDP and
 the signed extension. It opens a native Chrome tab, follows it, types Unicode
 through X11, rejects an AI write during human control, returns a fresh view of
 that same tab and verifies one trusted submission with its original cookie.
+
+Native X11 dragging paces the press and bounded motion sequence so Chrome can
+deliver multiple movement events to canvas editors. A single coalesced movement
+may only cross an editor's drag threshold and leave its first gesture unmoved.
+The real canvas regression checks two consecutive gestures, trusted events and
+exact pan displacement with both CDP and the signed extension. The gesture stays
+inside the existing control lease; its input limits and deadlines are unchanged.

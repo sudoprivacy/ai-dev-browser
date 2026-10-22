@@ -74,6 +74,31 @@ async def remote_site():
         receipts.append(value)
         return web.json_response(value)
 
+    async def native_drag_page(request):
+        return web.Response(
+            text="""<!doctype html><meta charset="utf-8">
+            <style>body{margin:24px}canvas{display:block;touch-action:none;background:#17212b}</style>
+            <canvas id="stage" width="600" height="300"></canvas>
+            <script>
+            const ctx=stage.getContext('2d');
+            window.pan={x:0,y:0};window.panEvents=[];
+            let gesture=null;
+            function draw(){ctx.clearRect(0,0,600,300);ctx.fillStyle='#66bb99';ctx.fillRect(200+pan.x,120+pan.y,100,60)}
+            draw();
+            for(const kind of ['pointerdown','pointermove','pointerup'])stage.addEventListener(kind,e=>{
+              panEvents.push({kind:e.type,trusted:e.isTrusted,buttons:e.buttons});
+              if(e.type==='pointerdown'){gesture={x:e.clientX,y:e.clientY,ox:pan.x,oy:pan.y,armed:false};return}
+              if(e.type==='pointerup'){gesture=null;return}
+              if(!gesture)return;
+              const dx=e.clientX-gesture.x,dy=e.clientY-gesture.y;
+              // Like a canvas editor, cross the activation threshold before panning.
+              if(!gesture.armed){if(Math.hypot(dx,dy)>8)gesture.armed=true;return}
+              pan.x=gesture.ox+dx;pan.y=gesture.oy+dy;draw();
+            });
+            </script>""",
+            content_type="text/html",
+        )
+
     async def viewer(request):
         return web.Response(
             text="""<!doctype html><meta charset="utf-8">
@@ -146,6 +171,7 @@ async def remote_site():
     app.add_routes(
         [
             web.get("/", page),
+            web.get("/native-drag", native_drag_page),
             web.post("/receipt", receipt),
             web.get("/viewer", viewer),
             web.get("/view", socket),
