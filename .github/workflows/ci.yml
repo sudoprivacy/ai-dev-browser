@@ -161,7 +161,9 @@ jobs:
       - run: python -m pip install ".[dev,remote]"
       - name: Install the real X11 and noVNC viewer
         if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y xvfb xauth x11vnc novnc websockify openbox xdotool xclip
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends xvfb xauth x11vnc novnc websockify openbox xdotool xclip
       - name: Run page, extension and full-window workflows on Linux
         if: runner.os == 'Linux'
         env:
@@ -278,7 +280,9 @@ jobs:
 
       - name: Install native Chrome interaction tools
         if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y xvfb xauth openbox xdotool
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends xvfb xauth openbox xdotool
 
       - name: Honor real native debugger consent cancellation
         if: runner.os == 'Linux'
