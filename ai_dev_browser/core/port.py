@@ -1,7 +1,7 @@
 """Port management for Chrome debugging.
 
-Discovery uses port scanning + CDP (no process enumeration):
-  1. Scan port range for listening ports (socket.connect)
+Discovery uses the OS listener table + CDP (no process enumeration):
+  1. Read listening ports, with bounded probes on unsupported hosts
   2. Hit /json/version to confirm Chrome debug port
   3. CDP Browser.getBrowserCommandLine() to read workspace tag
 
@@ -11,6 +11,7 @@ Example:
 """
 
 import ipaddress
+import errno
 import json
 import logging
 import os
@@ -146,7 +147,10 @@ def _query_chrome_version(
 
 
 def _guid_from_version(info: dict) -> str | None:
-    m = _BROWSER_GUID_RE.search(info.get("webSocketDebuggerUrl", "") or "")
+    url = info.get("webSocketDebuggerUrl")
+    if not isinstance(url, str):
+        return None
+    m = _BROWSER_GUID_RE.search(url)
     return m.group(1) if m else None
 
 
@@ -174,9 +178,13 @@ def _resolve_instance(
     so the CDP cmdline is populated) or by an older build.
     """
     info = _query_chrome_version(port, host, timeout)
-    if info is None:
+    if not isinstance(info, dict):
         return None
     guid = _guid_from_version(info)
+    if not guid:
+        # An unrelated local HTTP service can also return JSON at this path.
+        # It has no browser identity and must not become a CDP candidate.
+        return None
 
     from . import registry
 
@@ -454,32 +462,65 @@ def _fast_listening_check(
         return False
 
 
+def _listening_ports(port_range: tuple[int, int]) -> list[int] | None:
+    """Read local IPv4 listeners without opening sockets to every candidate.
+
+    Some hosts do not expose their socket table to ordinary users. Retain the
+    existing probe path there, without changing process privileges. Resource
+    exhaustion must propagate instead of triggering more socket allocation.
+    """
+    import psutil
+
+    try:
+        connections = psutil.net_connections(kind="tcp4")
+    except OSError as error:
+        if (
+            error.errno in (errno.ENOBUFS, errno.ENOMEM, errno.EMFILE, errno.ENFILE)
+            or getattr(error, "winerror", None) == 10055
+        ):
+            raise
+        return None
+    except (psutil.Error, NotImplementedError):
+        return None
+    return sorted(
+        {
+            connection.laddr.port
+            for connection in connections
+            if connection.status == psutil.CONN_LISTEN
+            and connection.laddr
+            and connection.laddr.ip in (DEFAULT_DEBUG_HOST, "0.0.0.0")
+            and port_range[0] <= connection.laddr.port < port_range[1]
+        }
+    )
+
+
 def _scan_ports_for_chrome(
     port_range: tuple[int, int],
-    listening_workers: int = 256,
+    listening_workers: int = 16,
     cdp_workers: int = 16,
     cdp_timeout: float = 0.5,
 ) -> list[tuple[int, int | None, str | None]]:
     """Scan a port range for Chrome debug instances (parallelized).
 
     Two stages:
-      1. Parallel _fast_listening_check() — filter down to listening ports
-         (bind-first + tight-timeout IPv4 connect, no IPv6)
+      1. OS listener inventory; bounded IPv4 probes only when unavailable
       2. Parallel _resolve_instance() — verify each is Chrome (via
          /json/version) and read its workspace from the instance registry
          (GUID-matched), falling back to Browser.getBrowserCommandLine
 
-    Wide worker counts and short timeouts keep scans of the full OS
-    ephemeral range (~14-16k ports) under 2s.
+    Listener inventory avoids hundreds of probe threads and empty TCP
+    connections. The fallback keeps a bounded worker count.
     """
     ports = list(range(port_range[0], port_range[1]))
 
-    with ThreadPoolExecutor(max_workers=listening_workers) as pool:
-        listening = [
-            p
-            for p, live in pool.map(lambda p: (p, _fast_listening_check(p)), ports)
-            if live
-        ]
+    listening = _listening_ports(port_range)
+    if listening is None:
+        with ThreadPoolExecutor(max_workers=listening_workers) as pool:
+            listening = [
+                p
+                for p, live in pool.map(lambda p: (p, _fast_listening_check(p)), ports)
+                if live
+            ]
 
     if not listening:
         return []

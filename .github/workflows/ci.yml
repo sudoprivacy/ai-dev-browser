@@ -167,13 +167,13 @@ jobs:
         env:
           AI_DEV_BROWSER_CHROME: ${{ steps.chrome.outputs.chrome-path }}
           AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.chrome.outputs.chrome-path }}
-        run: xvfb-run -a -s "-screen 0 1280x1000x24" python -m pytest -v --full-trace -o faulthandler_timeout=180 tests/integration/test_remote_view.py tests/integration/test_remote_selection_live.py tests/integration/test_remote_vnc.py tests/integration/test_browser_control_live.py tests/integration/test_browser_session_live.py tests/integration/test_browser_files_live.py tests/integration/test_browser_worker_live.py tests/integration/test_existing_worker_live.py tests/integration/test_navigation_startup.py --basetemp remote-results
+        run: xvfb-run -a -s "-screen 0 1280x1000x24" python -m pytest -v --full-trace -o faulthandler_timeout=180 tests/integration/test_remote_view.py tests/integration/test_discovery_socket_pressure.py tests/integration/test_remote_selection_live.py tests/integration/test_remote_vnc.py tests/integration/test_browser_control_live.py tests/integration/test_browser_session_live.py tests/integration/test_browser_files_live.py tests/integration/test_browser_worker_live.py tests/integration/test_existing_worker_live.py tests/integration/test_navigation_startup.py --basetemp remote-results
       - name: Run page and extension workflows on Windows
         if: runner.os == 'Windows'
         env:
           AI_DEV_BROWSER_CHROME: ${{ steps.chrome.outputs.chrome-path }}
           AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.chrome.outputs.chrome-path }}
-        run: python -m pytest -v --full-trace -o faulthandler_timeout=180 tests/integration/test_remote_view.py tests/integration/test_remote_selection_live.py tests/integration/test_browser_control_live.py tests/integration/test_browser_session_live.py tests/integration/test_browser_files_live.py tests/integration/test_browser_worker_live.py tests/integration/test_existing_worker_live.py tests/integration/test_navigation_startup.py --basetemp remote-results
+        run: python -m pytest -v --full-trace -o faulthandler_timeout=180 tests/integration/test_remote_view.py tests/integration/test_discovery_socket_pressure.py tests/integration/test_remote_selection_live.py tests/integration/test_browser_control_live.py tests/integration/test_browser_session_live.py tests/integration/test_browser_files_live.py tests/integration/test_browser_worker_live.py tests/integration/test_existing_worker_live.py tests/integration/test_navigation_startup.py --basetemp remote-results
       - name: Retain real viewer evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -193,7 +193,7 @@ jobs:
         run: docker build -f deploy/managed-chrome/Dockerfile --secret "id=extension_key,src=$RUNNER_TEMP/extension-fixture.pem" --build-arg "SOURCE_REVISION=$GITHUB_SHA" -t adb-managed-chrome:ci .
       - name: Run real signed extension, handoff and viewer workflows
         run: |
-          docker create --name "adb-managed-live-$GITHUB_RUN_ID" --memory=1536m --shm-size=256m --pids-limit=384 \
+          docker create --init --name "adb-managed-live-$GITHUB_RUN_ID" --memory=1536m --shm-size=256m --pids-limit=384 \
             --mount "type=bind,source=$PWD/tests,target=/opt/browser/tests,readonly" \
             adb-managed-chrome:ci /bin/sleep infinity
           docker start "adb-managed-live-$GITHUB_RUN_ID"
@@ -301,11 +301,14 @@ jobs:
             extension-results/**/installed-extension.png
             extension-results/**/extension-startup-evidence.json
             extension-results/**/extension-chrome.log
+            extension-results/**/host-resources-*.json
+            extension-results/**/navigation-readiness.json
             extension-results/**/extension-cleanup-stacks.txt
             native-ownership-results/**
             native-window-results/**/native-window-evidence.json
             native-window-results/**/native-window-accepted.png
             native-window-results/**/extension-chrome.log
+            native-window-results/**/host-resources-*.json
             native-window-results/**/extension-cleanup-evidence.json
             native-window-results/**/extension-cleanup-stacks.txt
             previous-extension-results/**/previous-extension-evidence.json

@@ -208,6 +208,11 @@ refuses arbitrary existing profiles. The host provides the policy/update server
 and exclusive profile ownership; the SDK does not modify extension preferences
 or install unpacked code into a user's browser.
 
+An extension launch keeps its owned loopback handshake page until the caller
+navigates. The handshake does not schedule an additional blank-page navigation:
+that can invalidate Chrome's debugger target after readiness was announced.
+An explicit launch URL still uses the normal caller-requested navigation.
+
 ### Managed Chrome image
 
 `deploy/managed-chrome/Dockerfile` is the shared Linux runtime for consuming
@@ -228,6 +233,8 @@ X11 or VNC service by default; hosts provide their authorized session API and
 start display resources when required. Chrome runs as UID 10001. Persist its
 host-owned profile separately from the image, enforce one runtime owner, and
 pin production images by digest after validating their recorded Chrome version.
+Docker hosts must use `--init` or another child-reaping supervisor so exited
+Chrome descendants do not accumulate against the runtime's process limit.
 The `Managed branded Chrome` CI job uses an isolated fixture signing key and
 real installed headless extension to exercise the same shared-session workflow
 as CDP, including trusted input, handoff and stale-target rejection.
