@@ -27,6 +27,22 @@ from ai_dev_browser.core.extension import extension_dir
 from .test_remote_view import remote_site as remote_site
 
 
+@pytest.fixture(autouse=True)
+def live_host_resource_receipts(request, tmp_path):
+    if "live_extension" not in request.fixturenames and not os.environ.get(
+        "AI_DEV_BROWSER_MANAGED_EXTENSION_PROFILE"
+    ):
+        yield
+        return
+    from .live_resources import record_host_resources
+
+    record_host_resources(tmp_path, "before")
+    try:
+        yield
+    finally:
+        record_host_resources(tmp_path, "after")
+
+
 @pytest.fixture
 def lifecycle(tmp_path):
     from .browser_lifecycle_journeys import LifecycleJourneys

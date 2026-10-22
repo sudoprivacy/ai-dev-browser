@@ -440,7 +440,7 @@ def _launch_page(connection_or_path, request_or_headers):
     path = connection_or_path if legacy else request_or_headers.path
     if not re.fullmatch(r"/adb-launch/[a-f0-9]{32}", path):
         return None
-    body = "<!doctype html><meta charset=utf-8><title>Connecting AI Dev Browser</title><p>Waiting for the configured browser extension.</p>"
+    body = "<!doctype html><meta charset=utf-8><title>AI Dev Browser</title><p>This window is reserved for your browser task.</p>"
     if legacy:
         return (
             HTTPStatus.OK,

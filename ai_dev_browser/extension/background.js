@@ -243,7 +243,6 @@ async function ensureDedicatedTabSelected() {
     if (marker) {
       launchToken = launchMarker(marker);
       await chrome.storage.session.set({ adbLaunchToken: launchToken });
-      await chrome.tabs.update(marker.id, { url: "about:blank" });
     }
     mainTabId = t.id;
     claim(t.id);
@@ -300,7 +299,9 @@ function adoptLaunch(tab) {
     await chrome.storage.session.set({ adbLaunchToken: token });
     claim(tab.id, null, "launch");
     await attachTab(tab.id);
-    await chrome.tabs.update(tab.id, { url: "about:blank" });
+    // The nonce page already belongs to this launch. Keep it until the caller
+    // navigates: an extra startup navigation can invalidate Chrome's debugger
+    // target after the ownership handshake has announced readiness.
     if (old != null && old !== tab.id && autoTabs.has(old)) {
       const previous = await chrome.tabs.get(old).catch(() => null);
       if (previous && previous.url === "about:blank") {

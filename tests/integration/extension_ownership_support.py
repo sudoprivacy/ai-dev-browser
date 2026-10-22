@@ -97,6 +97,7 @@ async def cli(extension, folder, *arguments, code=0):
 
 async def navigation_journey(extension, folder: Path, mode: str):
     receipts = []
+    visits = []
     url = ""
 
     async def receipt(request):
@@ -104,6 +105,7 @@ async def navigation_journey(extension, folder: Path, mode: str):
         return web.json_response({"accepted": True})
 
     async def page(request):
+        visits.append(request.path)
         destination = url.replace("127.0.0.1", "localhost") if mode != "same" else url
         landing = destination + "/result?private=must-not-log#private-fragment"
         action = f"location.href={json.dumps(landing)}"
@@ -138,6 +140,22 @@ await fetch('/receipt',{{method:'POST',headers:{{'Content-Type':'application/jso
     try:
         browser = await connect(extension)
         parent = await browser.get(url)
+        readiness = await wait_until(
+            lambda: parent.evaluate(
+                "({protocol:location.protocol,path:location.pathname,"
+                "ready:document.readyState,hasSubmit:!!document.querySelector('#submit'),"
+                "errorCode:document.querySelector('#error-code')?.textContent||null})"
+            ),
+            lambda value: value["protocol"] == "chrome-error:"
+            or (value["ready"] == "complete" and value["hasSubmit"]),
+        )
+        (folder / "navigation-readiness.json").write_text(
+            json.dumps(
+                {"mode": mode, "page": readiness, "fixtureVisits": visits}, indent=2
+            ),
+            encoding="utf8",
+        )
+        assert readiness["protocol"] == "http:" and readiness["hasSubmit"], readiness
         parent_id = str(parent.target_id)
         sentinel = await worker_call(
             extension,

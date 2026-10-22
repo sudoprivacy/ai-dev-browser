@@ -46,6 +46,29 @@ test('Chrome replacement transfers only proven ownership and reports successor',
   assert.equal(run('autoTabs.has(88) || autoTabs.has(99)'), false);
 });
 
+for (const route of ['initial', 'late']) {
+  test(`launch handshake keeps its owned page until the caller navigates (${route})`, async () => {
+    const { chrome, tabs, run } = await fixture();
+    const token = '0'.repeat(32);
+    const marker = { id: 12, url: `http://127.0.0.1:9522/adb-launch/${token}` };
+    tabs.set(12, marker);
+    const navigation = [];
+    chrome.tabs.update = async (id, change) => {
+      navigation.push({ id, change });
+      return Object.assign(tabs.get(id), change);
+    };
+    if (route === 'initial') await run('ensureDedicatedTab()');
+    else await run(`adoptLaunch(${JSON.stringify(marker)})`);
+    assert.deepEqual(navigation, []);
+    assert.equal(run('mainTabId'), 12);
+    assert.equal(run('attached.has(12)'), true);
+    assert.equal(run('autoTabs.size'), 1);
+    assert.equal(run('autoTabs.has(99)'), false);
+    assert.equal(run('launchToken'), token);
+    assert.equal(tabs.get(12).url, marker.url);
+  });
+}
+
 test('cancellation interrupts pending attachment and survives managed discovery/worker restore', async () => {
   const state = await fixture();
   const { chrome, run, saved } = state;
