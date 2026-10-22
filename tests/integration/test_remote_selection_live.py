@@ -34,6 +34,120 @@ RANGE = """(() => {
 
 
 @pytest.mark.skipif(
+    sys.platform != "linux", reason="Owned X11 native input requires Linux"
+)
+@pytest.mark.parametrize("transport", ["cdp", "extension"])
+async def test_ordered_native_canvas_drag(remote_site, tmp_path, transport):
+    """The first native gesture crosses a real canvas threshold and pans exactly once."""
+    if (
+        transport == "extension"
+        and not Path("/opt/browser/extension/identity.json").is_file()
+    ):
+        pytest.skip("Signed managed extension policy fixture required")
+    token = secrets.token_hex(32)
+    worker = Worker(
+        tmp_path,
+        token,
+        secrets.token_hex(32),
+        display_mode="x11",
+        extension_directory=Path("/opt/browser/extension")
+        if transport == "extension"
+        else None,
+        chrome_args=["--no-sandbox"],
+    )
+    runner = web.AppRunner(application(worker))
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 8080 if transport == "extension" else 0)
+    await site.start()
+    url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
+    binding = {"orgId": "local", "userId": "canvas-drag", "sessionId": "canvas-drag"}
+    controller = "user-canvas-drag"
+    async with aiohttp.ClientSession() as http:
+
+        async def host(action):
+            async with http.post(
+                url + "/invoke",
+                headers={"Authorization": "Bearer " + token},
+                json={"binding": binding, "controller": controller, "action": action},
+            ) as response:
+                body = await response.json()
+                assert response.status == 200, body
+                return body
+
+        def epochs(state):
+            return {key: state[key] for key in ("controlEpoch", "targetEpoch")}
+
+        try:
+            await host({"kind": "state"})
+            await worker.agent(
+                {"kind": "start", "isHeadless": False, "transport": transport}
+            )
+            await worker.agent(
+                {
+                    "kind": "navigate",
+                    "url": remote_site[0] + "/native-drag",
+                    **epochs(await worker.state(controller)),
+                }
+            )
+            held = (
+                await host({"kind": "take", **epochs(await worker.state(controller))})
+            )["session"]
+            await host({"kind": "attach", "viewerId": "canvas", "surface": "window"})
+            await host(
+                {
+                    "kind": "frame",
+                    "viewerId": "canvas",
+                    "surface": "window",
+                    **epochs(held),
+                }
+            )
+            page = await worker.session._connect_page()
+            geometry = await page.js("""(()=>{const r=stage.getBoundingClientRect();return {
+                x:r.x+r.width*.85,y:r.y+r.height*.85,
+                offsetX:screenX+(outerWidth-innerWidth)/2,
+                offsetY:screenY+outerHeight-innerHeight-(outerWidth-innerWidth)/2}})()""")
+            outcomes = []
+            for index in range(2):
+                points = [
+                    {
+                        "x": geometry["x"] + geometry["offsetX"] - step * 10,
+                        "y": geometry["y"] + geometry["offsetY"] - step * 5,
+                    }
+                    for step in range(11)
+                ]
+                await host(
+                    {
+                        "kind": "input",
+                        "surface": "window",
+                        "input": {"kind": "drag", "points": points},
+                        **epochs(held),
+                    }
+                )
+                observed = await wait_for(
+                    lambda: page.js("({pan,events:panEvents})"),
+                    lambda value: value["pan"]
+                    == {"x": -100 * (index + 1), "y": -50 * (index + 1)},
+                )
+                outcomes.append(observed)
+            events = outcomes[-1]["events"]
+            assert all(event["trusted"] for event in events)
+            assert sum(event["kind"] == "pointerdown" for event in events) == 2
+            assert sum(event["kind"] == "pointerup" for event in events) == 2
+            (tmp_path / "native-canvas-drag.json").write_text(
+                json.dumps(
+                    {
+                        "transport": transport,
+                        "firstAndSecondGesturePanned": True,
+                        "outcomes": outcomes,
+                    },
+                    indent=2,
+                )
+            )
+        finally:
+            await runner.cleanup()
+
+
+@pytest.mark.skipif(
     sys.platform != "linux", reason="Isolated X11 display requires Linux"
 )
 async def test_explicit_display_without_inherited_gui(monkeypatch, tmp_path):

@@ -247,12 +247,17 @@ class WindowView:
                 return False
             first = points[0]
             try:
+                # Give Chrome time to process the native press and successive
+                # motion events. An unpaced X11 batch can collapse to one move,
+                # which only arms the drag threshold in canvas applications.
                 await self._run(
                     "mousemove",
                     str(round(first["x"])),
                     str(round(first["y"])),
                     "mousedown",
                     "1",
+                    "sleep",
+                    "0.05",
                 )
                 moves = []
                 for point in points[1:]:
@@ -261,6 +266,8 @@ class WindowView:
                             "mousemove",
                             str(round(point["x"])),
                             str(round(point["y"])),
+                            "sleep",
+                            "0.01",
                         ]
                     )
                 await self._run(*moves)
