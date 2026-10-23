@@ -235,7 +235,7 @@ def browser_start(
     handshake leaves the explicitly launched Chrome running and reports its PID.
     Read extension_warning before input: an attached extension's unknown or
     mismatched version needs an ordinary update/reload and a fresh connection.
-    Fresh CDP launches create their owned page after the browser handshake.
+    Fresh CDP launches prepare their owned page before the initial URL navigation.
 
     Proxy consistency (automatic): if `extra_args` carries a `--proxy-server`
     and you don't pass an explicit `timezone`/`geo`, this auto-aligns the
@@ -603,20 +603,21 @@ def browser_start(
             _create_startup_page(
                 port,
                 ready_guid,
-                start_url,
+                "about:blank",
                 max(0.0, startup_timeout - (time.monotonic() - wait_started)),
             )
         )
         _run_coro(
-            _wait_startup_page(
+            _prepare_startup_page(
                 port,
                 ready_target,
+                start_url,
                 max(0.0, startup_timeout - (time.monotonic() - wait_started)),
             )
         )
     except Exception as error:
-        # A lost createTarget reply is ambiguous. Retain ownership and Chrome;
-        # another launch or createTarget could replay the requested URL.
+        # A lost creation or navigation reply is ambiguous. Retain Chrome and
+        # the known target so reconnect can inspect the outcome.
         registry.register_instance(
             port=port,
             guid=ready_guid,
@@ -753,21 +754,26 @@ async def _create_startup_page(port: int, guid: str, url: str, timeout: float) -
         await connection.disconnect()
 
 
-async def _wait_startup_page(port: int, target_id: str, timeout: float) -> None:
-    """Wait read-only for the created target's initial document to finish parsing.
+async def _prepare_startup_page(
+    port: int, target_id: str, url: str, timeout: float
+) -> None:
+    """Prepare the blank owned page, then issue the requested navigation once.
 
     Chrome's temporary empty document can already report readyState=complete.
     Its navigation entry has no name and no DOMContentLoaded timestamp.
     """
-    from ai_dev_browser.cdp import runtime
+    from ai_dev_browser.cdp import page, runtime
     from ._transport import CDPConnection, ProtocolException
 
     connection = CDPConnection(f"ws://127.0.0.1:{port}/devtools/page/{target_id}")
 
-    async def wait():
-        await connection.connect()
+    async def wait_document(previous_loader=None):
         while True:
             try:
+                frame = (await connection.send(page.get_frame_tree())).frame
+                if previous_loader is not None and frame.loader_id == previous_loader:
+                    await asyncio.sleep(0.01)
+                    continue
                 result, exception = await connection.send(
                     runtime.evaluate(
                         "performance.getEntriesByType('navigation').some("
@@ -783,8 +789,23 @@ async def _wait_startup_page(port: int, target_id: str, timeout: float) -> None:
                     raise
             await asyncio.sleep(0.01)
 
+    async def prepare():
+        await connection.connect()
+        await connection.send(page.enable())
+        await wait_document()
+        if url != "about:blank":
+            previous_loader = (
+                await connection.send(page.get_frame_tree())
+            ).frame.loader_id
+            _, loader, error, *_ = await connection.send(page.navigate(url))
+            if error:
+                raise ProtocolException(
+                    f"Navigation failed: {error}", method="Page.navigate"
+                )
+            await wait_document(previous_loader if loader else None)
+
     try:
-        await asyncio.wait_for(wait(), timeout=timeout)
+        await asyncio.wait_for(prepare(), timeout=timeout)
     finally:
         await connection.disconnect()
 

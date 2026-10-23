@@ -17,8 +17,9 @@ These results show that ordinary repetition alone does not establish a fix.
 
 Fresh CDP launches establish the browser identity, create one owned target through
 the existing CDP transport, and retain the returned target ID. Chrome starts with
-the standard no-startup-window switch; the requested URL is supplied to that one
-target creation. The initial page is created within the existing startup timeout.
+the standard no-startup-window switch. Startup creates and prepares a blank owned
+page, then issues the requested URL once through its established page connection.
+Creation, initial navigation and document readiness share the existing budget.
 
 The first PR #38 Windows run still caught one bootstrap navigation being aborted.
 A held-response probe showed that the target can exist while its temporary empty
@@ -30,6 +31,15 @@ session and exact owned target; reconnect retains both and sends no navigation.
 If the creation reply is lost, startup retains the Chrome process and its ownership
 record, returns a transient failure, and directs the caller to reconnect and
 inspect current pages. It issues no second creation or navigation.
+
+Later CI traces caught explicit startup URLs being cancelled before the HTTP
+server received any request, while Chrome initialized its network context.
+Creating the application URL before attaching the page connection left that
+initialization interleaved with navigation. Preparing the blank page first keeps
+page setup before the application request. Readiness also checks that a navigation
+with a new loader has left the previous blank document. No request is replayed.
+The startup fixture retains native Chrome navigation traces and network logs;
+it observes target inventory without opening an extra page debugger session.
 
 The locale observation reads the created target explicitly. Reuse, connection,
 extension startup, page navigation and input retain their existing APIs.

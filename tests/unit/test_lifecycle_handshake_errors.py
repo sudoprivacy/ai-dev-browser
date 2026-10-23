@@ -54,10 +54,13 @@ def test_launch_creates_one_page_after_identity_without_replay(
 
     monkeypatch.setattr(browser, "_create_startup_page", create)
 
-    async def wait_page(port, target_id, timeout):
-        assert (port, target_id) == (9355, "page") and timeout > 0
+    preparations = []
 
-    monkeypatch.setattr(browser, "_wait_startup_page", wait_page)
+    async def wait_page(port, target_id, url, timeout):
+        assert (port, target_id) == (9355, "page") and timeout > 0
+        preparations.append(url)
+
+    monkeypatch.setattr(browser, "_prepare_startup_page", wait_page)
     killed = []
     monkeypatch.setattr(browser, "_kill_process_tree", killed.append)
     monkeypatch.setattr(browser, "_query_chrome_version", lambda port: None)
@@ -74,18 +77,22 @@ def test_launch_creates_one_page_after_identity_without_replay(
         },
     )
     monkeypatch.setattr(_session, "write", lambda record: None)
-    result = browser.browser_start(temp=True, headless=True, startup_timeout=3)
+    result = browser.browser_start(
+        temp=True, headless=True, startup_timeout=3, url="https://neutral.test/once"
+    )
     assert len(launches) == 1 and queries == [9355, 9355]
     assert launches[0]["start_url"] == ""
     assert launches[0]["override_default_args"]["--no-startup-window"] == ""
     assert creations == [(9355, "ready", "about:blank")] and killed == []
     if ambiguous_reply:
+        assert preparations == []
         assert result["error_code"] == "transient" and not result["connected"]
         assert result["pid"] == 1234 and not result["browser_closed"]
         assert "create reply lost" in result["error"]
         return
     assert result["connected"] and result["session_id"] == "cdp-ready"
     assert result["automation_target_id"] == "page"
+    assert preparations == ["https://neutral.test/once"]
 
 
 def test_restart_options_keep_launch_path_separate_from_runtime_clone(monkeypatch):

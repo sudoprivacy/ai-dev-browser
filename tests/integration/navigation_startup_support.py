@@ -41,33 +41,7 @@ async def startup_target_journey(
     browser = process = actor = root = controller = navigation = launch_task = None
     early_id = None
     real_launch = lifecycle.launch_chrome
-    real_create = lifecycle._create_startup_page
-    observers, observer_tasks, timeline = [], [], []
-
-    async def watch_target(port, target_id):
-        http = aiohttp.ClientSession()
-        observers.append((http, None))
-        peer = CDP(
-            await http.ws_connect(f"ws://127.0.0.1:{port}/devtools/page/{target_id}"),
-            on_event=lambda method, params: timeline.append(
-                {"target": target_id, "method": method, "params": params}
-            ),
-        )
-        observers[-1] = (http, peer)
-        await peer.call("Page.enable")
-        await peer.call("Network.enable")
-
-    async def observe_creation(port, guid, requested_url, timeout):
-        target_id = await real_create(port, guid, requested_url, timeout)
-        timeline.append(
-            {"phase": "target-created", "target": target_id, "url": requested_url}
-        )
-        # browser_start uses a temporary worker event loop. Keep the observer
-        # on the test loop so it survives that startup coroutine's return.
-        observer_tasks.append(
-            asyncio.run_coroutine_threadsafe(watch_target(port, target_id), loop)
-        )
-        return target_id
+    timeline = []
 
     async def page(request):
         requests.append(request.path)
@@ -116,7 +90,6 @@ async def startup_target_journey(
         return owned
 
     monkeypatch.setattr(lifecycle, "launch_chrome", launch)
-    monkeypatch.setattr(lifecycle, "_create_startup_page", observe_creation)
     try:
         launch_task = asyncio.create_task(
             asyncio.to_thread(
@@ -268,33 +241,18 @@ async def startup_target_journey(
             outcome = await asyncio.gather(launch_task, return_exceptions=True)
             if isinstance(outcome[0], dict):
                 browser = outcome[0]
-        if observer_tasks:
-            observations = await asyncio.gather(
-                *(asyncio.wrap_future(task) for task in observer_tasks),
-                return_exceptions=True,
-            )
-            for outcome in observations:
-                if isinstance(outcome, BaseException):
-                    timeline.append(
-                        {"phase": "observer-setup-error", "error": str(outcome)}
-                    )
-        for http, peer in observers:
-            if peer:
-                try:
-                    timeline.append(
-                        {
-                            "phase": "final-document",
-                            "value": await peer.js(
-                                "({url:location.href,ready:document.readyState,entries:performance.getEntriesByType('navigation').map(n=>n.toJSON())})"
-                            ),
-                        }
-                    )
-                except Exception as error:
-                    timeline.append(
-                        {"phase": "final-observation-error", "error": str(error)}
-                    )
-                await peer.close()
-            await http.close()
+        if root:
+            try:
+                timeline.append(
+                    {
+                        "phase": "final-targets",
+                        "value": await root.call("Target.getTargets", timeout=5),
+                    }
+                )
+            except Exception as error:
+                timeline.append(
+                    {"phase": "final-observation-error", "error": str(error)}
+                )
         (folder / "startup-target-observations-evidence.json").write_text(
             json.dumps(
                 {"browser": browser, "http_requests": requests, "timeline": timeline},
