@@ -3,7 +3,7 @@
 AUTO-GENERATED - DO NOT EDIT
 
 This file was auto-generated from SKILL.md by integration-test-generator.
-Generated: 2026-10-24 02:32:50
+Generated: 2026-10-24 03:50:09
 
 To modify test behavior:
   1. Update SKILL.md with better workflow examples
@@ -11,10 +11,11 @@ To modify test behavior:
 
 Manual edits will be lost when regenerated!
 
-Coverage: 4/4 real workflows (100%)
+Coverage: 5/5 real workflows (100%)
 Identified using AI scenario recognition with complete code generation
 
 Coverage Report:
+  ✅ Start actual Chrome with a held initial response -> startup timeout retains process and owned target -> release response -> reconnect same session and target -> one GET and one trusted submission
   ✅ Launch actual Chrome -> arrange an early startup page -> finish browser_start -> first owned navigation held by HTTP -> independent early page navigates to blank -> release one request -> correct owned page -> trusted typing and one submission
   ✅ Launch actual Chrome with URL -> independent early page exists -> startup returns owned identity -> hold initial HTTP request -> early page finishes to blank -> requested page loads once -> trusted typing and one submission
   ✅ Own Chrome target -> hold first HTTP request -> competing owned driver navigates -> real ERR_ABORTED -> inspect URL and readiness -> verify destination DOM -> helper dispatched only once
@@ -48,6 +49,25 @@ def _integration_guard():
     """Skip if SKIP_INTEGRATION is set."""
     if SKIP_INTEGRATION:
         pytest.skip("SKIP_INTEGRATION is set — skipping integration tests")
+
+
+async def test_real_chrome_initial_document_timeout_preserves_owned_page(
+    tmp_path, monkeypatch, startup_mode
+):
+    """
+    Real scenario: Keep the owned page when the initial HTTP document exceeds the startup budget
+
+    Workflow: Start actual Chrome with a held initial response -> startup timeout retains process and owned target -> release response -> reconnect same session and target -> one GET and one trusted submission
+
+    User problem: A temporary empty document must not be reported ready or cause startup navigation to be replayed.
+
+    Data flow:
+      1. inline code operation
+    """
+    # Step 1: Execute operation
+    await startup_target_journey(
+        tmp_path, monkeypatch, startup_mode, with_url=True, slow_initial=True
+    )
 
 
 async def test_real_chrome_startup_target_first_navigation(

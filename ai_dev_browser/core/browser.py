@@ -592,12 +592,25 @@ def browser_start(
             continue
         return last_error
 
+    ready_target = None
+    start_options["headless"] = headless_resolved
+    spawned_args = getattr(process, "args", None)
+    if isinstance(spawned_args, (list, tuple)) and spawned_args:
+        # Preserve the executable launched when macOS reports a code-sign clone.
+        start_options["chrome_path"] = str(spawned_args[0])
     try:
         ready_target = _run_coro(
             _create_startup_page(
                 port,
                 ready_guid,
                 start_url,
+                max(0.0, startup_timeout - (time.monotonic() - wait_started)),
+            )
+        )
+        _run_coro(
+            _wait_startup_page(
+                port,
+                ready_target,
                 max(0.0, startup_timeout - (time.monotonic() - wait_started)),
             )
         )
@@ -611,16 +624,25 @@ def browser_start(
             pid=process.pid,
             user_data_dir=str(cdp_data_dir),
         )
+        state = {
+            "transport": "cdp",
+            "port": port,
+            "pid": process.pid,
+            "browser_closed": False,
+            "user_data_dir": str(cdp_data_dir),
+            "headless": headless_resolved,
+        }
+        if ready_target:
+            state = _describe_cdp(
+                {**state, "automation_target_id": ready_target},
+                start_options=start_options,
+                guid=ready_guid,
+            )
         return _session.failure(
             "transient",
             f"Chrome's initial page could not be confirmed: {str(error) or type(error).__name__}. "
             "Reconnect and inspect its pages before continuing.",
-            transport="cdp",
-            port=port,
-            pid=process.pid,
-            browser_closed=False,
-            user_data_dir=str(cdp_data_dir),
-            headless=headless_resolved,
+            **state,
         )
 
     # Record this instance so workspace/profile discovery can find it WITHOUT
@@ -711,12 +733,6 @@ def browser_start(
                 result["locale_requested"] = requested
         if egress_ip:
             result["egress_ip"] = egress_ip
-    start_options["headless"] = headless_resolved
-    spawned_args = getattr(process, "args", None)
-    if isinstance(spawned_args, (list, tuple)) and spawned_args:
-        # psutil can observe a temporary macOS code-sign clone. Restart the
-        # executable we actually launched; retain the observed path for PID checks.
-        start_options["chrome_path"] = str(spawned_args[0])
     return _describe_cdp(result, start_options=start_options, guid=ready_guid)
 
 
@@ -733,6 +749,42 @@ async def _create_startup_page(port: int, guid: str, url: str, timeout: float) -
 
     try:
         return await asyncio.wait_for(create(), timeout=timeout)
+    finally:
+        await connection.disconnect()
+
+
+async def _wait_startup_page(port: int, target_id: str, timeout: float) -> None:
+    """Wait read-only for the created target's initial document to finish parsing.
+
+    Chrome's temporary empty document can already report readyState=complete.
+    Its navigation entry has no name and no DOMContentLoaded timestamp.
+    """
+    from ai_dev_browser.cdp import runtime
+    from ._transport import CDPConnection, ProtocolException
+
+    connection = CDPConnection(f"ws://127.0.0.1:{port}/devtools/page/{target_id}")
+
+    async def wait():
+        await connection.connect()
+        while True:
+            try:
+                result, exception = await connection.send(
+                    runtime.evaluate(
+                        "performance.getEntriesByType('navigation').some("
+                        "n => n.name && n.domContentLoadedEventEnd > 0)",
+                        return_by_value=True,
+                    )
+                )
+                if not exception and result.value is True:
+                    return
+            except ProtocolException as error:
+                # The initial navigation can replace the temporary JS context.
+                if "Execution context was destroyed" not in str(error):
+                    raise
+            await asyncio.sleep(0.01)
+
+    try:
+        await asyncio.wait_for(wait(), timeout=timeout)
     finally:
         await connection.disconnect()
 

@@ -20,6 +20,13 @@ the existing CDP transport, and retain the returned target ID. Chrome starts wit
 the standard no-startup-window switch; the requested URL is supplied to that one
 target creation. The initial page is created within the existing startup timeout.
 
+The first PR #38 Windows run still caught one bootstrap navigation being aborted.
+A held-response probe showed that the target can exist while its temporary empty
+document reports readyState=complete. Startup now waits read-only for the initial
+document's navigation entry and DOMContentLoaded timestamp within the same budget.
+When that budget expires after target creation, the failure includes the persisted
+session and exact owned target; reconnect retains both and sends no navigation.
+
 If the creation reply is lost, startup retains the Chrome process and its ownership
 record, returns a transient failure, and directs the caller to reconnect and
 inspect current pages. It issues no second creation or navigation.
@@ -67,3 +74,10 @@ and Linux and retain the JSON receipts and rendered neutral-form screenshots.
 Local evidence: "scratch/extension-runtime-20261023". The failed CI logs and the
 before/after live receipts are retained. This work leaves the real user Chrome
 profile recovered by PR #37 untouched.
+
+The added held-initial-document regression failed on the previous commit in both
+headless and windowed Chrome: startup incorrectly reported connected before the
+HTTP response was released. After the readiness change, both scenarios confirm
+the timeout, unchanged process/session/target, one initial GET and one trusted
+submission after reconnect. The nine startup checks and eight lifecycle/retry
+contracts passed together (17 passed, zero skips).

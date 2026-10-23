@@ -53,6 +53,11 @@ def test_launch_creates_one_page_after_identity_without_replay(
         return "page"
 
     monkeypatch.setattr(browser, "_create_startup_page", create)
+
+    async def wait_page(port, target_id, timeout):
+        assert (port, target_id) == (9355, "page") and timeout > 0
+
+    monkeypatch.setattr(browser, "_wait_startup_page", wait_page)
     killed = []
     monkeypatch.setattr(browser, "_kill_process_tree", killed.append)
     monkeypatch.setattr(browser, "_query_chrome_version", lambda port: None)

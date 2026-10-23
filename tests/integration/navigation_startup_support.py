@@ -13,6 +13,7 @@ from ai_dev_browser.core.browser import browser_start, browser_stop
 from ai_dev_browser.core import browser as lifecycle
 from ai_dev_browser.core import (
     click_by_html_id,
+    browser_reconnect,
     page_goto,
     page_screenshot,
     type_by_text,
@@ -27,7 +28,9 @@ from tests.integration.test_remote_view import (
 )
 
 
-async def startup_target_journey(folder, monkeypatch, headless, with_url=False):
+async def startup_target_journey(
+    folder, monkeypatch, headless, with_url=False, slow_initial=False
+):
     """Let an independent startup actor navigate its early page during first use."""
     loop = asyncio.get_running_loop()
     announced = loop.create_future()
@@ -87,6 +90,7 @@ async def startup_target_journey(folder, monkeypatch, headless, with_url=False):
                 stealth=False,
                 silent_stderr=True,
                 url=url if with_url else None,
+                startup_timeout=3 if slow_initial else None,
                 extra_args=["--no-sandbox"] if sys.platform == "linux" else [],
             )
         )
@@ -120,7 +124,26 @@ async def startup_target_journey(folder, monkeypatch, headless, with_url=False):
             )
             await actor.call("Page.enable")
             release_launch.set()
+            if with_url:
+                await asyncio.wait_for(first_request.wait(), 10)
+                await actor.call("Page.navigate", {"url": "about:blank"})
+                if not slow_initial:
+                    release_request.set()
             browser = await asyncio.wait_for(launch_task, 15)
+            initial_timeout = None
+            if slow_initial:
+                initial_timeout = browser
+                assert browser.get("error_code") == "transient", browser
+                assert browser["connected"] is False and not browser["browser_closed"]
+                assert browser["automation_target_id"] != early_id
+                assert process.poll() is None and requests == ["/first"]
+                release_request.set()
+                browser = await browser_reconnect(browser["session_id"])
+                assert browser["session_id"] == initial_timeout["session_id"]
+                assert (
+                    browser["automation_target_id"]
+                    == initial_timeout["automation_target_id"]
+                )
             assert "error" not in browser, browser
             assert browser["pid"] == process.pid
             controller = await connect_browser(
@@ -170,6 +193,7 @@ async def startup_target_journey(folder, monkeypatch, headless, with_url=False):
                         "browser": version["Browser"],
                         "headless": headless,
                         "with_startup_url": with_url,
+                        "initial_document_timeout": initial_timeout,
                         "same_process": browser["pid"] == process.pid,
                         "early_target": early_id,
                         "owned_target": browser["automation_target_id"],

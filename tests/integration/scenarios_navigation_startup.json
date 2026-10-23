@@ -12,6 +12,15 @@
   },
   "scenarios": [
     {
+      "name": "real_chrome_initial_document_timeout_preserves_owned_page",
+      "title": "Keep the owned page when the initial HTTP document exceeds the startup budget",
+      "workflow": "Start actual Chrome with a held initial response -> startup timeout retains process and owned target -> release response -> reconnect same session and target -> one GET and one trusted submission",
+      "user_problem": "A temporary empty document must not be reported ready or cause startup navigation to be replayed.",
+      "async": true,
+      "fixtures": ["tmp_path", "monkeypatch", "startup_mode"],
+      "steps": [{"raw_code": ["await startup_target_journey(tmp_path, monkeypatch, startup_mode, with_url=True, slow_initial=True)"]}]
+    },
+    {
       "name": "real_chrome_startup_target_first_navigation",
       "title": "Keep the first navigation on the owned page while an early startup page finishes",
       "workflow": "Launch actual Chrome -> arrange an early startup page -> finish browser_start -> first owned navigation held by HTTP -> independent early page navigates to blank -> release one request -> correct owned page -> trusted typing and one submission",

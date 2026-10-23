@@ -37,6 +37,11 @@ def _stub_success_path(monkeypatch, tmp_path):
         return "initial-page"
 
     monkeypatch.setattr(b, "_create_startup_page", create)
+
+    async def wait_page(port, target_id, timeout):
+        assert target_id == "initial-page"
+
+    monkeypatch.setattr(b, "_wait_startup_page", wait_page)
     return creations
 
 
