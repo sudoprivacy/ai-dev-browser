@@ -3,7 +3,7 @@
 AUTO-GENERATED - DO NOT EDIT
 
 This file was auto-generated from SKILL.md by integration-test-generator.
-Generated: 2026-10-24 03:50:09
+Generated: 2026-10-24 04:56:22
 
 To modify test behavior:
   1. Update SKILL.md with better workflow examples
@@ -17,7 +17,7 @@ Identified using AI scenario recognition with complete code generation
 Coverage Report:
   ✅ Start actual Chrome with a held initial response -> startup timeout retains process and owned target -> release response -> reconnect same session and target -> one GET and one trusted submission
   ✅ Launch actual Chrome -> arrange an early startup page -> finish browser_start -> first owned navigation held by HTTP -> independent early page navigates to blank -> release one request -> correct owned page -> trusted typing and one submission
-  ✅ Launch actual Chrome with URL -> independent early page exists -> startup returns owned identity -> hold initial HTTP request -> early page finishes to blank -> requested page loads once -> trusted typing and one submission
+  ✅ Launch actual Chrome with URL -> independent early page exists -> prepare blank owned page -> hold its single initial HTTP request -> early page finishes to blank -> release response -> startup returns parsed owned destination -> trusted typing and one submission
   ✅ Own Chrome target -> hold first HTTP request -> competing owned driver navigates -> real ERR_ABORTED -> inspect URL and readiness -> verify destination DOM -> helper dispatched only once
   ✅ Own Chrome target -> hold first request -> actual competing redirect to wrong page -> ERR_ABORTED -> read-only inspection -> failure -> exactly one helper request
 
@@ -93,7 +93,7 @@ async def test_real_chrome_startup_target_explicit_url(
     """
     Real scenario: Load the requested startup URL once on the owned page
 
-    Workflow: Launch actual Chrome with URL -> independent early page exists -> startup returns owned identity -> hold initial HTTP request -> early page finishes to blank -> requested page loads once -> trusted typing and one submission
+    Workflow: Launch actual Chrome with URL -> independent early page exists -> prepare blank owned page -> hold its single initial HTTP request -> early page finishes to blank -> release response -> startup returns parsed owned destination -> trusted typing and one submission
 
     User problem: Chrome startup must keep the requested URL and target identity without replaying navigation.
 

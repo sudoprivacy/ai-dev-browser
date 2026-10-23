@@ -17,6 +17,7 @@ from ai_dev_browser.core import (
     page_goto,
     page_screenshot,
     type_by_text,
+    window_set,
 )
 from ai_dev_browser.core.connection import connect_browser, get_active_tab
 from ai_dev_browser.core.process import _kill_process_tree
@@ -52,7 +53,9 @@ async def startup_target_journey(
             <h1>Owned startup page</h1>
             <label>Request name<input name="name" id="name"></label>
             <button id="submit">Submit once</button><pre id="receipt"></pre>
-            <script>window.inputTrust=[];document.querySelector('#name').oninput=e=>inputTrust.push(e.isTrusted);
+            <script>window.inputTrust=[];window.clickTargets=[];
+            document.addEventListener('click',e=>clickTargets.push({id:e.target.id,trusted:e.isTrusted}));
+            document.querySelector('#name').oninput=e=>inputTrust.push(e.isTrusted);
             submit.onclick=async e=>{const r=await fetch('/receipt',{method:'POST',
             headers:{'Content-Type':'application/json'},body:JSON.stringify({
             name:document.querySelector('#name').value,trusted:e.isTrusted})});
@@ -191,6 +194,8 @@ async def startup_target_journey(
             )
             assert requests == ["/first"]
             assert await actor.js("location.href") == "about:blank"
+            window = await window_set(owned, state="normal", focus=True)
+            assert window["success"] and window["input_ready"], window
             typed = await type_by_text(
                 owned, name="Request name", text="Startup accepted"
             )
@@ -198,11 +203,15 @@ async def startup_target_journey(
             trust = await owned.evaluate("window.inputTrust", return_by_value=True)
             assert trust and all(trust)
             assert (await click_by_html_id(owned, html_id="submit"))["clicked"]
-            await wait_for(
+            interaction = await wait_for(
                 lambda: owned.evaluate(
-                    "document.querySelector('#receipt').textContent"
+                    "({receipt:document.querySelector('#receipt').textContent,"
+                    "value:document.querySelector('#name').value,"
+                    "visibility:document.visibilityState,focused:document.hasFocus(),"
+                    "clicks:window.clickTargets})",
+                    return_by_value=True,
                 ),
-                bool,
+                lambda state: bool(state["receipt"]),
             )
             assert receipts == [{"name": "Startup accepted", "trusted": True}]
             await page_screenshot(
@@ -220,6 +229,8 @@ async def startup_target_journey(
                         "owned_target": browser["automation_target_id"],
                         "early_target_url": await actor.js("location.href"),
                         "observed": observed,
+                        "window": window,
+                        "interaction": interaction,
                         "requests": requests,
                         "trusted_input": trust,
                         "receipts": receipts,
@@ -229,6 +240,7 @@ async def startup_target_journey(
                 encoding="utf-8",
             )
     finally:
+        failure = sys.exc_info()[1]
         release_launch.set()
         release_request.set()
         if navigation:
@@ -241,21 +253,15 @@ async def startup_target_journey(
             outcome = await asyncio.gather(launch_task, return_exceptions=True)
             if isinstance(outcome[0], dict):
                 browser = outcome[0]
-        if root:
-            try:
-                timeline.append(
-                    {
-                        "phase": "final-targets",
-                        "value": await root.call("Target.getTargets", timeout=5),
-                    }
-                )
-            except Exception as error:
-                timeline.append(
-                    {"phase": "final-observation-error", "error": str(error)}
-                )
         (folder / "startup-target-observations-evidence.json").write_text(
             json.dumps(
-                {"browser": browser, "http_requests": requests, "timeline": timeline},
+                {
+                    "browser": browser,
+                    "http_requests": requests,
+                    "receipts": receipts,
+                    "failure": str(failure) if failure else None,
+                    "timeline": timeline,
+                },
                 indent=2,
             ),
             encoding="utf-8",

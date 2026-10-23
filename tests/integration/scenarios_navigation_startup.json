@@ -32,7 +32,7 @@
     {
       "name": "real_chrome_startup_target_explicit_url",
       "title": "Load the requested startup URL once on the owned page",
-      "workflow": "Launch actual Chrome with URL -> independent early page exists -> startup returns owned identity -> hold initial HTTP request -> early page finishes to blank -> requested page loads once -> trusted typing and one submission",
+      "workflow": "Launch actual Chrome with URL -> independent early page exists -> prepare blank owned page -> hold its single initial HTTP request -> early page finishes to blank -> release response -> startup returns parsed owned destination -> trusted typing and one submission",
       "user_problem": "Chrome startup must keep the requested URL and target identity without replaying navigation.",
       "async": true,
       "fixtures": ["tmp_path", "monkeypatch", "startup_mode"],
