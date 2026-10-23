@@ -204,6 +204,13 @@ def inspect_recording():
     return inspect
 
 
+@pytest.fixture(params=[True, False], ids=["headless", "windowed"])
+def startup_mode(request):
+    if not request.param and sys.platform == "linux" and not os.environ.get("DISPLAY"):
+        pytest.skip("Windowed Chrome requires the CI desktop")
+    return request.param
+
+
 @pytest.fixture(params=["True", "False", "new", "old"])
 def cli_browser(request, cli):
     if (
@@ -366,7 +373,9 @@ async def live_extension(request, tmp_path, monkeypatch):
         from websockets.asyncio.server import serve
 
     bridge = _Bridge()
-    server = await serve(bridge.handler, "127.0.0.1", 0)
+    server = await serve(
+        bridge.handler, "127.0.0.1", 0, start_serving=not bool(bundle_env)
+    )
     port = server.sockets[0].getsockname()[1]
     # Only the endpoint changes, isolating this test from a user's live bridge.
     copied_extension = tmp_path / "extension"
@@ -380,12 +389,44 @@ async def live_extension(request, tmp_path, monkeypatch):
     chrome = None
     try:
         natural_occlusion = bool(request.node.get_closest_marker("extension_occlusion"))
+        legacy_window = {"--no-startup-window": None} if bundle_env else {}
+        if request.node.get_closest_marker("extension_windowless"):
+            from ai_dev_browser.core import browser as lifecycle
+
+            create_page = lifecycle._create_startup_page
+
+            async def after_extension_hello(number, guid, url, timeout):
+                before = time.monotonic()
+
+                async def hello():
+                    while bridge.extension is None:
+                        await asyncio.sleep(0.01)
+
+                await asyncio.wait_for(hello(), timeout)
+                proof = {
+                    "hello_received": True,
+                    "extension_version": bridge.identity.get("extension_version"),
+                    "owned_target_before_cdp_creation": bool(
+                        bridge.identity.get("automation_target_id")
+                    ),
+                }
+                (tmp_path / "windowless-startup-order.json").write_text(
+                    json.dumps(proof, indent=2), encoding="utf-8"
+                )
+                assert proof["owned_target_before_cdp_creation"], proof
+                return await create_page(
+                    number, guid, url, max(0.0, timeout - (time.monotonic() - before))
+                )
+
+            monkeypatch.setattr(
+                lifecycle, "_create_startup_page", after_extension_hello
+            )
         chrome = await asyncio.to_thread(
             browser_start,
             headless=not bool(request.node.get_closest_marker("extension_native")),
             temp=True,
             silent_stderr=True,
-            override_default_args={"--disable-extensions": None},
+            override_default_args={"--disable-extensions": None, **legacy_window},
             extra_args=[
                 f"--load-extension={copied_extension}",
                 f"--disable-extensions-except={copied_extension}",
@@ -400,9 +441,15 @@ async def live_extension(request, tmp_path, monkeypatch):
                     else ["--disable-backgrounding-occluded-windows"]
                 ),
                 "--no-sandbox",
+                # Published old extensions require an existing host window.
+                *(["about:blank"] if legacy_window else []),
             ],
         )
         assert "error" not in chrome, chrome
+        if bundle_env:
+            # Keep the published old extension unchanged and supply its required
+            # host window before accepting its first bridge connection.
+            await server.start_serving()
         # CDP readiness and the extension's first connection are different
         # startup barriers. Honor the same configured startup budget rather
         # than imposing an unrelated 10-second deadline on a cold profile.

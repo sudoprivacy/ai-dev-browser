@@ -227,6 +227,16 @@ function ensureDedicatedTab() {
   return selectDedicated(ensureDedicatedTabSelected);
 }
 
+async function createAutomationTab(url) {
+  const windows = await chrome.windows.getAll({ windowTypes: ["normal"] });
+  const host = windows.find(window => window.focused) || windows[0];
+  if (host) return chrome.tabs.create({ url, active: false, windowId: host.id });
+  const created = await chrome.windows.create({ url, focused: false, type: "normal" });
+  const tabs = await chrome.tabs.query({ windowId: created.id });
+  if (!tabs.length) throw new Error("Automation window has no page; inspect Chrome before retrying");
+  return tabs[0];
+}
+
 async function ensureDedicatedTabSelected() {
   // Reuse our own tab across reconnects; recreate if the user closed it. We
   // NEVER attach to the user's existing tabs — automation gets its own tab so a
@@ -239,7 +249,7 @@ async function ensureDedicatedTabSelected() {
   if (mainTabId == null) {
     const tabs = await chrome.tabs.query({});
     const marker = tabs.find(t => launchMarker(t));
-    const t = marker || await chrome.tabs.create({ url: "about:blank", active: false });
+    const t = marker || await createAutomationTab("about:blank");
     if (marker) {
       launchToken = launchMarker(marker);
       await chrome.storage.session.set({ adbLaunchToken: launchToken });
@@ -437,7 +447,7 @@ async function browserLevel(method, params, tab) {
       return { targetInfo: found };
     }
     case "Target.createTarget": {
-      const t = await chrome.tabs.create({ url: (params && params.url) || "about:blank", active: false });
+      const t = await createAutomationTab((params && params.url) || "about:blank");
       claim(t.id);
       await attachTab(t.id);
       return { targetId: String(t.id) };

@@ -144,7 +144,9 @@ def _resolve_do_match(
     return env_match if env_match is not None else _proxy_in_args(extra_args)
 
 
-async def _read_navigator_language(port: int) -> str | None:
+async def _read_navigator_language(
+    port: int, target_id: str | None = None
+) -> str | None:
     """The locale actually in effect — `navigator.language` read back from the
     launched browser. Chrome maps --lang to its nearest supported UI locale, so
     this is what a site sees, which may differ from the requested locale.
@@ -156,7 +158,11 @@ async def _read_navigator_language(port: int) -> str | None:
     browser = None
     try:
         browser = await connect_browser(port=port)
-        tab = await get_active_tab(browser)
+        tab = (
+            next(t for t in browser.tabs if str(t._target.target_id) == target_id)
+            if target_id
+            else await get_active_tab(browser)
+        )
         val = await tab.evaluate("navigator.language")
         return val if isinstance(val, str) and val else None
     except Exception:
@@ -229,6 +235,7 @@ def browser_start(
     handshake leaves the explicitly launched Chrome running and reports its PID.
     Read extension_warning before input: an attached extension's unknown or
     mismatched version needs an ordinary update/reload and a fresh connection.
+    Fresh CDP launches create their owned page after the browser handshake.
 
     Proxy consistency (automatic): if `extra_args` carries a `--proxy-server`
     and you don't pass an explicit `timezone`/`geo`, this auto-aligns the
@@ -269,8 +276,9 @@ def browser_start(
         reuse: "none" (always new) or "any" (reuse an idle same-profile
             Chrome, default). Only consulted for a named profile — an
             ephemeral session never reuses.
-        startup_timeout: Seconds to wait for Chrome's debug port and CDP browser
-            identity, or the configured extension handshake. `None` resolves to the
+        startup_timeout: Seconds to wait for Chrome's debug port, CDP browser
+            identity and initial owned page, or the extension handshake.
+            `None` resolves to the
             `AI_DEV_BROWSER_STARTUP_TIMEOUT` env var, else 30s — which
             covers cold-start on slow Windows machines (fresh profile init
             + Defender scan + I/O contention from the user's main Chrome).
@@ -508,23 +516,23 @@ def browser_start(
     from typing import Any
 
     launch_options: dict[str, Any] = {"chrome_path": chrome_path} if chrome_path else {}
+    launch_overrides = {"--no-startup-window": "", **(override_default_args or {})}
     if display is not None:
         launch_options["display"] = display
     for attempt in range(max_attempts):
         process = launch_chrome(
             port=port,
             headless=headless_resolved,
-            start_url=start_url,
+            start_url="",
             user_data_dir=str(cdp_data_dir),
             extra_args=extra_args,
-            override_default_args=override_default_args,
+            override_default_args=launch_overrides,
             silent_stderr=silent_stderr,
             stealth=stealth,
             **launch_options,
         )
 
-        # Browser identity can precede the first page on a loaded host.
-        # Wait for both read-only handshakes before reporting a usable session.
+        # Establish this process's browser identity before creating its owned page.
         bound = False
         ready_guid = None
         ready_target = None
@@ -534,10 +542,8 @@ def browser_start(
             if is_port_in_use(port=port):
                 ready_guid = _query_chrome_guid(port)
                 if ready_guid:
-                    ready_target = _query_initial_page(port)
-                    if ready_target:
-                        bound = True
-                        break
+                    bound = True
+                    break
             if process.poll() is not None:
                 stderr = process.stderr.read() if process.stderr else ""
                 if not stderr:
@@ -560,7 +566,7 @@ def browser_start(
             last_error = {
                 "error": (
                     f"Chrome started (PID {orphan_pid}) but port {port} not "
-                    f"ready with a CDP browser identity and initial page after {startup_timeout}s — process killed to "
+                    f"ready with a CDP browser identity after {startup_timeout}s — process killed to "
                     f"release profile lockfile. Retry with startup_timeout=<larger> "
                     f"if your environment is slow (Windows + main Chrome running, "
                     f"first-time profile init, AV scanning, etc.)."
@@ -585,6 +591,37 @@ def browser_start(
                 )
             continue
         return last_error
+
+    try:
+        ready_target = _run_coro(
+            _create_startup_page(
+                port,
+                ready_guid,
+                start_url,
+                max(0.0, startup_timeout - (time.monotonic() - wait_started)),
+            )
+        )
+    except Exception as error:
+        # A lost createTarget reply is ambiguous. Retain ownership and Chrome;
+        # another launch or createTarget could replay the requested URL.
+        registry.register_instance(
+            port=port,
+            guid=ready_guid,
+            workspace=os.getcwd(),
+            pid=process.pid,
+            user_data_dir=str(cdp_data_dir),
+        )
+        return _session.failure(
+            "transient",
+            f"Chrome's initial page could not be confirmed: {str(error) or type(error).__name__}. "
+            "Reconnect and inspect its pages before continuing.",
+            transport="cdp",
+            port=port,
+            pid=process.pid,
+            browser_closed=False,
+            user_data_dir=str(cdp_data_dir),
+            headless=headless_resolved,
+        )
 
     # Record this instance so workspace/profile discovery can find it WITHOUT
     # reading Chrome's command line over CDP (which needs --enable-automation,
@@ -666,7 +703,9 @@ def browser_start(
             # the locale applied while navigator.language was unchanged). Surface
             # the requested value too when Chrome normalized it away.
             requested = identity["locale"]
-            effective = _run_coro(_read_navigator_language(port)) or requested
+            effective = (
+                _run_coro(_read_navigator_language(port, ready_target)) or requested
+            )
             result["locale"] = effective
             if effective != requested:
                 result["locale_requested"] = requested
@@ -679,6 +718,23 @@ def browser_start(
         # executable we actually launched; retain the observed path for PID checks.
         start_options["chrome_path"] = str(spawned_args[0])
     return _describe_cdp(result, start_options=start_options, guid=ready_guid)
+
+
+async def _create_startup_page(port: int, guid: str, url: str, timeout: float) -> str:
+    """Create the one startup target on the verified browser, without replay."""
+    from ai_dev_browser.cdp import target
+    from ._transport import CDPConnection
+
+    connection = CDPConnection(f"ws://127.0.0.1:{port}/devtools/browser/{guid}")
+
+    async def create():
+        await connection.connect()
+        return str(await connection.send(target.create_target(url), timeout=timeout))
+
+    try:
+        return await asyncio.wait_for(create(), timeout=timeout)
+    finally:
+        await connection.disconnect()
 
 
 def _query_initial_page(port: int) -> str | None:

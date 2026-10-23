@@ -1,6 +1,7 @@
 """Guard the cold-start error observed on the actual Ubuntu release gate."""
 
 from ai_dev_browser.core import _session, browser
+import pytest
 
 
 def test_missing_identity_preserves_launch_message_without_overriding_failure(
@@ -15,7 +16,10 @@ def test_missing_identity_preserves_launch_message_without_overriding_failure(
     assert result["pid"] == 1234 and result["message"] == "Browser started"
 
 
-def test_launch_waits_for_identity_and_initial_page_on_the_same_process(monkeypatch):
+@pytest.mark.parametrize("ambiguous_reply", [False, True])
+def test_launch_creates_one_page_after_identity_without_replay(
+    monkeypatch, ambiguous_reply
+):
     class Process:
         pid = 1234
         stderr = None
@@ -39,8 +43,18 @@ def test_launch_waits_for_identity_and_initial_page_on_the_same_process(monkeypa
     monkeypatch.setattr(browser, "get_available_port", lambda **kw: 9355)
     monkeypatch.setattr(browser, "is_port_in_use", lambda **kw: True)
     monkeypatch.setattr(browser, "_query_chrome_guid", guid)
-    targets = iter([None, None, "page"])
-    monkeypatch.setattr(browser, "_query_initial_page", lambda port: next(targets))
+    creations = []
+
+    async def create(port, guid, url, timeout):
+        creations.append((port, guid, url))
+        assert timeout > 0
+        if ambiguous_reply:
+            raise TimeoutError("create reply lost")
+        return "page"
+
+    monkeypatch.setattr(browser, "_create_startup_page", create)
+    killed = []
+    monkeypatch.setattr(browser, "_kill_process_tree", killed.append)
     monkeypatch.setattr(browser, "_query_chrome_version", lambda port: None)
     monkeypatch.setattr(browser.registry, "register_instance", lambda **kw: None)
     monkeypatch.setattr(browser.registry, "lookup", lambda *args: None)
@@ -56,8 +70,16 @@ def test_launch_waits_for_identity_and_initial_page_on_the_same_process(monkeypa
     )
     monkeypatch.setattr(_session, "write", lambda record: None)
     result = browser.browser_start(temp=True, headless=True, startup_timeout=3)
+    assert len(launches) == 1 and queries == [9355, 9355]
+    assert launches[0]["start_url"] == ""
+    assert launches[0]["override_default_args"]["--no-startup-window"] == ""
+    assert creations == [(9355, "ready", "about:blank")] and killed == []
+    if ambiguous_reply:
+        assert result["error_code"] == "transient" and not result["connected"]
+        assert result["pid"] == 1234 and not result["browser_closed"]
+        assert "create reply lost" in result["error"]
+        return
     assert result["connected"] and result["session_id"] == "cdp-ready"
-    assert len(launches) == 1 and queries == [9355, 9355, 9355, 9355]
     assert result["automation_target_id"] == "page"
 
 

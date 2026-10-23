@@ -21,15 +21,27 @@ class _FakeProc:
         return None  # never exits on its own
 
 
-def _stub_success_path(monkeypatch):
+def _stub_success_path(monkeypatch, tmp_path):
     monkeypatch.setattr(b, "_kill_process_tree", lambda pid: None)
     monkeypatch.setattr(b, "_query_chrome_guid", lambda port: "guid")
     monkeypatch.setattr(b, "_query_initial_page", lambda port: "initial-page")
+    monkeypatch.setattr(b, "_query_chrome_version", lambda port: None)
     monkeypatch.setattr(b.registry, "register_instance", lambda **kw: None)
+    monkeypatch.setattr(b.registry, "lookup", lambda *args: None)
+    monkeypatch.setattr(b._session, "_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(b._session, "process_info", lambda pid: None)
+    creations = []
+
+    async def create(port, guid, url, timeout):
+        creations.append((port, url))
+        return "initial-page"
+
+    monkeypatch.setattr(b, "_create_startup_page", create)
+    return creations
 
 
-def test_auto_port_retries_on_cold_start_miss(monkeypatch):
-    _stub_success_path(monkeypatch)
+def test_auto_port_retries_on_cold_start_miss(monkeypatch, tmp_path):
+    creations = _stub_success_path(monkeypatch, tmp_path)
     ports = iter([9350, 9351])
     monkeypatch.setattr(b, "get_available_port", lambda **kw: next(ports))
 
@@ -37,6 +49,7 @@ def test_auto_port_retries_on_cold_start_miss(monkeypatch):
     procs = iter([_FakeProc(1001), _FakeProc(1002)])
 
     def fake_launch(**kw):
+        assert kw["start_url"] == ""
         launched.append(kw["port"])
         return next(procs)
 
@@ -44,15 +57,18 @@ def test_auto_port_retries_on_cold_start_miss(monkeypatch):
     # First port never binds; the retry port does.
     monkeypatch.setattr(b, "is_port_in_use", lambda port=None, **kw: port == 9351)
 
-    result = b.browser_start(temp=True, headless=True, startup_timeout=0.05)
+    result = b.browser_start(
+        temp=True, headless=True, startup_timeout=0.05, url="https://neutral.test/once"
+    )
 
     assert "error" not in result, result
     assert result["port"] == 9351, "should have retried on the fresh port"
     assert launched == [9350, 9351], "should relaunch exactly once, on a new port"
+    assert creations == [(9351, "https://neutral.test/once")]
 
 
-def test_pinned_port_does_not_retry(monkeypatch):
-    _stub_success_path(monkeypatch)
+def test_pinned_port_does_not_retry(monkeypatch, tmp_path):
+    _stub_success_path(monkeypatch, tmp_path)
     monkeypatch.setattr(b, "get_available_port", lambda **kw: 9999)  # must not be used
 
     launched: list[int] = []
