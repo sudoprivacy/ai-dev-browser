@@ -82,16 +82,29 @@ async def test_explicit_display_without_inherited_gui(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize(
-    "is_headless,display_mode,transport,viewport_height",
+    "is_headless,display_mode,transport,viewport_height,slow_pointer",
     [
-        (True, "native", "cdp", None),
-        (False, "native", "cdp", None),
-        pytest.param(True, "native", "cdp", 360, id="short-headless-viewport"),
+        (True, "native", "cdp", None, False),
+        (False, "native", "cdp", None, False),
+        pytest.param(True, "native", "cdp", 360, False, id="short-headless-viewport"),
         pytest.param(
             False,
             "x11",
             "cdp",
             None,
+            False,
+            marks=pytest.mark.skipif(
+                sys.platform != "linux",
+                reason="Isolated X11 window view requires Linux",
+            ),
+        ),
+        pytest.param(
+            False,
+            "x11",
+            "cdp",
+            None,
+            True,
+            id="slow-native-renderer",
             marks=pytest.mark.skipif(
                 sys.platform != "linux",
                 reason="Isolated X11 window view requires Linux",
@@ -103,6 +116,7 @@ async def test_explicit_display_without_inherited_gui(monkeypatch, tmp_path):
                 mode,
                 "extension",
                 None,
+                False,
                 marks=pytest.mark.skipif(
                     not Path("/opt/browser/extension/identity.json").is_file(),
                     reason="Signed managed extension policy fixture required",
@@ -113,7 +127,13 @@ async def test_explicit_display_without_inherited_gui(monkeypatch, tmp_path):
     ],
 )
 async def test_worker_selection_paste_and_lease(
-    remote_site, tmp_path, is_headless, display_mode, transport, viewport_height
+    remote_site,
+    tmp_path,
+    is_headless,
+    display_mode,
+    transport,
+    viewport_height,
+    slow_pointer,
 ):
     """Select exact words -> copy -> Unicode multiline paste -> reject stale copy."""
     token = secrets.token_hex(32)
@@ -137,6 +157,7 @@ async def test_worker_selection_paste_and_lease(
     url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
     binding = {"orgId": "local", "userId": "selection-fixture", "sessionId": "review"}
     controller = "user-selection-fixture"
+    native_gestures = []
     async with aiohttp.ClientSession() as http:
 
         async def host(action, status=200, actor=controller):
@@ -186,6 +207,7 @@ async def test_worker_selection_paste_and_lease(
                 elif event["kind"] == "click":
                     event["x"] += offset["x"]
                     event["y"] += offset["y"]
+                native_gestures.append({"offset": offset, "event": event})
             return await host(
                 {
                     "kind": "input",
@@ -239,7 +261,12 @@ async def test_worker_selection_paste_and_lease(
                 )
             points = await page.js(RANGE)
             await page.js(
-                "window.mousePresses=0;document.addEventListener('mousedown',()=>mousePresses++);true"
+                """window.mousePresses=0;window.gestureEvents=[];
+                document.addEventListener('mousedown',()=>mousePresses++);
+                for(const kind of ['mousedown','mousemove','mouseup','selectionchange'])
+                    document.addEventListener(kind,e=>gestureEvents.push({kind,t:performance.now(),
+                        x:e.clientX,y:e.clientY,sx:e.screenX,sy:e.screenY,buttons:e.buttons,
+                        target:e.target.id,trusted:e.isTrusted,selected:getSelection().toString()}));true"""
             )
             bad = await host(
                 {
@@ -255,9 +282,60 @@ async def test_worker_selection_paste_and_lease(
             )
             assert bad["error"] == "invalid_browser_input"
             assert await page.js("mousePresses") == 0
+            if slow_pointer:
+                await page.js("""document.addEventListener('mousemove', () => {
+                    const end=performance.now()+800;
+                    while(performance.now()<end) {}
+                }, {once:true});true""")
             await input_event({"kind": "drag", "points": points}, held)
+
+            # X11 acknowledges dispatch to the display, not completion of the
+            # renderer's native selection. A viewer waits for the highlight
+            # before copying. Observe that same real UI condition without
+            # replaying the gesture or changing the existing wait budget.
+            async def gesture_state():
+                return await page.js("""({events:gestureEvents,selected:getSelection().toString(),
+                    visibility:document.visibilityState,focused:document.hasFocus(),
+                    geometry:{screenX,screenY,outerWidth,outerHeight,innerWidth,innerHeight}})""")
+
+            try:
+                ready = await wait_for(
+                    gesture_state,
+                    lambda observed: observed["selected"] == PHRASE
+                    and any(
+                        e["kind"] == "mouseup" and e["trusted"]
+                        for e in observed["events"]
+                    ),
+                )
+            finally:
+                (tmp_path / "selection-drag-evidence.json").write_text(
+                    json.dumps(
+                        {
+                            "native": native_gestures,
+                            "points": points,
+                            "before_copy": await gesture_state(),
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            presses = [e for e in ready["events"] if e["kind"] == "mousedown"]
+            releases = [e for e in ready["events"] if e["kind"] == "mouseup"]
+            assert len(presses) == len(releases) == 1, ready
+            assert presses[0]["trusted"] and releases[0]["trusted"], ready
             copied = await host(
                 {"kind": "input", "input": {"kind": "copy-selection"}, **epochs(held)}
+            )
+            diagnostic = await gesture_state()
+            (tmp_path / "selection-drag-evidence.json").write_text(
+                json.dumps(
+                    {
+                        "native": native_gestures,
+                        "points": points,
+                        "copied": copied["selection"],
+                        "after_copy": diagnostic,
+                    }
+                ),
+                encoding="utf-8",
             )
             assert copied["selection"] == {"text": PHRASE, "isAvailable": True}
             # Another authenticated controller cannot read this user's selection.
@@ -269,11 +347,16 @@ async def test_worker_selection_paste_and_lease(
             assert denied["error"] == "browser_control_not_owned"
             notes = await visible_point("#notes")
             await input_event({"kind": "click", **notes}, held)
+            await wait_for(
+                lambda: page.js("document.activeElement?.id"),
+                lambda value: value == "notes",
+            )
             await page.js(
                 "window.pastes=[];notes.addEventListener('input',e=>pastes.push({trusted:e.isTrusted,value:notes.value}));true"
             )
             text = copied["selection"]["text"] + "\n中文 café 😀\tcomment"
             await input_event({"kind": "paste", "text": text}, held)
+            await wait_for(lambda: page.js("notes.value"), lambda value: value == text)
             assert await page.js("notes.value") == text
             paste_events = await page.js("pastes")
             # Chromium emits several native input events for multiline text.
