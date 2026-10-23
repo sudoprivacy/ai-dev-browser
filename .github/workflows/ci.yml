@@ -261,6 +261,15 @@ jobs:
           AI_DEV_BROWSER_TEST_PREVIOUS_EXTENSION: ${{ github.workspace }}/previous-extension-fixture/ai_dev_browser/extension
         run: uv run --no-sync python -m pytest -v tests/integration/test_extension_window_previous.py --basetemp previous-extension-results
 
+      - name: Install the released extension without version reporting
+        run: uv pip install --target unknown-extension-fixture --no-deps ai-dev-browser==0.54.0
+
+      - name: Recover an unknown extension runtime through an ordinary reload
+        env:
+          AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          AI_DEV_BROWSER_TEST_UNKNOWN_EXTENSION: ${{ github.workspace }}/unknown-extension-fixture/ai_dev_browser/extension
+        run: uv run --no-sync python -m pytest -v tests/integration/test_extension_runtime_upgrade.py --basetemp runtime-upgrade-results
+
       - name: Honor genuine Windows window visibility before input
         if: runner.os == 'Windows'
         env:
@@ -312,6 +321,10 @@ jobs:
             native-window-results/**/extension-cleanup-evidence.json
             native-window-results/**/extension-cleanup-stacks.txt
             previous-extension-results/**/previous-extension-evidence.json
+            runtime-upgrade-results/**/runtime-upgrade-evidence.json
+            runtime-upgrade-results/**/runtime-upgrade-accepted.png
+            runtime-upgrade-results/**/extension-*.json
+            runtime-upgrade-results/**/extension-chrome.log
 
   # ─────────────────────────────────────────────────────────────────────
   # CI-integration dogfood: prove the documented "consumer's CI" recipe

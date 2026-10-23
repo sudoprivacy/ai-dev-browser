@@ -347,12 +347,17 @@ async def live_extension(request, tmp_path, monkeypatch):
         )
     assert Path(binary).is_file(), binary
     bundle = extension_dir()
-    if request.node.get_closest_marker("extension_previous"):
-        previous = os.environ.get("AI_DEV_BROWSER_TEST_PREVIOUS_EXTENSION")
+    bundle_env = (
+        "AI_DEV_BROWSER_TEST_UNKNOWN_EXTENSION"
+        if request.node.get_closest_marker("extension_unknown")
+        else "AI_DEV_BROWSER_TEST_PREVIOUS_EXTENSION"
+        if request.node.get_closest_marker("extension_previous")
+        else None
+    )
+    if bundle_env:
+        previous = os.environ.get(bundle_env)
         if not previous:
-            pytest.skip(
-                "Set AI_DEV_BROWSER_TEST_PREVIOUS_EXTENSION to the released extension fixture"
-            )
+            pytest.skip(f"Set {bundle_env} to the released extension fixture")
         bundle = Path(previous)
     monkeypatch.setenv("AI_DEV_BROWSER_CHROME", binary)
     if request.param == "legacy":

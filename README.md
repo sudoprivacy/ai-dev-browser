@@ -411,11 +411,15 @@ and [GitHub Releases](https://github.com/sudoprivacy/ai-dev-browser/releases).
 Each GitHub release includes the same wheel and source distribution sent to PyPI,
 the bundled Chrome extension as an unpackable ZIP, and `SHA256SUMS`.
 For extension mode, extract the ZIP and load its directory in `chrome://extensions`.
-After upgrading, reload the extension and restart an already running bridge.
+After upgrading, ordinarily reload the extension in the intended Chrome profile,
+then reconnect with `browser_connect --transport extension`.
 `browser_connect` reports the actual loaded `extension_version`, the
 `bundled_extension_version`, and whether they match. Updating Python alone does
 not reload Chrome's extension. Reload can reset control; inspect the session and
 its owned page before resuming input.
+`extension_warning` is non-null when the loaded version is unknown or differs
+from the bundle. Follow its steps before input; `connected=true` confirms a
+connection. Version matching and actual page visibility are separate checks.
 
 For a hidden extension page, `window_set --state normal --focus` requests real
 window restoration and reports observed `visibility`, `focused`, and

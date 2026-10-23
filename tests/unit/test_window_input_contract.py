@@ -71,6 +71,9 @@ def test_unknown_loaded_version_remains_unknown_in_session_results():
         and info["extension_version_matches_bundle"] is None
     )
     assert info["bundled_extension_version"]
+    assert "unknown" in info["extension_warning"]
+    assert "Before page input" in info["extension_warning"]
+    assert "chrome://extensions" in info["extension_warning"]
     result = describe({"transport": "extension", **info})
     assert all(result[key] == value for key, value in info.items())
     assert (
@@ -80,6 +83,11 @@ def test_unknown_loaded_version_remains_unknown_in_session_results():
         is True
     )
     assert extension_version_info("0.0.0")["extension_version_matches_bundle"] is False
+    assert "differs" in extension_version_info("0.0.0")["extension_warning"]
+    assert (
+        extension_version_info(info["bundled_extension_version"])["extension_warning"]
+        is None
+    )
 
 
 async def test_live_version_report_wins_over_an_older_bridge_hello():

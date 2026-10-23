@@ -1,0 +1,22 @@
+{
+  "config": {
+    "imports": [
+      "from tests.integration.extension_runtime_support import runtime_upgrade_journey",
+      "pytestmark = pytest.mark.extension_unknown"
+    ],
+    "call_style": "function",
+    "required_env_vars": [],
+    "smoke_test_assertions": ["runtime_upgrade_journey is not None"]
+  },
+  "scenarios": [
+    {
+      "name": "real_extension_unknown_runtime_upgrade",
+      "title": "Resolve an unknown released runtime before input without restarting Chrome",
+      "workflow": "Released extension without version reporting -> connect warning and unsupported window -> ordinary extension reload in the same Chrome -> reject old session and preserve original tabs -> verify loaded/bundled match -> restore real window -> trusted neutral-form input and one submission",
+      "user_problem": "A Python upgrade must reveal an unverified running extension before a login workflow, and ordinary recovery must preserve Chrome and existing tabs without replaying input.",
+      "async": true,
+      "fixtures": ["live_extension", "tmp_path", "caplog"],
+      "steps": [{"raw_code": ["await runtime_upgrade_journey(live_extension, tmp_path, caplog)"]}]
+    }
+  ]
+}

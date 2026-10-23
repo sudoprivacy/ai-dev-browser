@@ -242,6 +242,7 @@ def describe(record: dict) -> dict:
                 "extension_version",
                 "bundled_extension_version",
                 "extension_version_matches_bundle",
+                "extension_warning",
             )
             if record.get("transport") == "extension"
         }

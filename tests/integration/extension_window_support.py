@@ -298,6 +298,9 @@ async def previous_extension_journey(extension, root):
         connection["extension_version"]
         and connection["extension_version_matches_bundle"] is False
     )
+    assert "Before page input" in connection["extension_warning"]
+    assert "chrome://extensions" in connection["extension_warning"]
+    assert connection["extension_version"] in connection["extension_warning"]
     code, refused = await extension_cli(extension, "window_set", "--state", "normal")
     assert code == 6 and refused["error_code"] == "unsupported"
     assert (
