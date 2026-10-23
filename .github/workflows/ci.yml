@@ -163,13 +163,25 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends xvfb xauth x11vnc novnc websockify openbox xdotool xclip
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends xvfb xauth x11-utils x11vnc novnc websockify openbox xdotool xclip
+          command -v Xvfb openbox xprop xdotool xclip
       - name: Run page, extension and full-window workflows on Linux
         if: runner.os == 'Linux'
         env:
           AI_DEV_BROWSER_CHROME: ${{ steps.chrome.outputs.chrome-path }}
           AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.chrome.outputs.chrome-path }}
-        run: xvfb-run -a -s "-screen 0 1280x1000x24" python -m pytest -v --full-trace -o faulthandler_timeout=180 tests/integration/test_remote_view.py tests/integration/test_discovery_socket_pressure.py tests/integration/test_remote_selection_live.py tests/integration/test_remote_vnc.py tests/integration/test_browser_control_live.py tests/integration/test_browser_session_live.py tests/integration/test_browser_files_live.py tests/integration/test_browser_worker_live.py tests/integration/test_existing_worker_live.py tests/integration/test_navigation_startup.py --basetemp remote-results
+        run: |
+          xvfb-run -a -s "-screen 0 1280x1000x24" bash -euo pipefail -c '
+            openbox --sm-disable > /tmp/adb-remote-openbox.log 2>&1 &
+            manager=$!
+            trap "kill $manager 2>/dev/null || true" EXIT
+            for attempt in $(seq 1 50); do
+              if xprop -root _NET_SUPPORTING_WM_CHECK | grep -q "window id"; then break; fi
+              sleep 0.1
+            done
+            xprop -root _NET_SUPPORTING_WM_CHECK | grep -q "window id"
+            python -m pytest -v --full-trace -o faulthandler_timeout=180 tests/integration/test_remote_view.py tests/integration/test_discovery_socket_pressure.py tests/integration/test_remote_selection_live.py tests/integration/test_remote_vnc.py tests/integration/test_browser_control_live.py tests/integration/test_browser_session_live.py tests/integration/test_browser_files_live.py tests/integration/test_browser_worker_live.py tests/integration/test_existing_worker_live.py tests/integration/test_navigation_startup.py --basetemp remote-results
+          '
       - name: Run page and extension workflows on Windows
         if: runner.os == 'Windows'
         env:
@@ -282,7 +294,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends xvfb xauth openbox xdotool
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y --no-install-recommends xvfb xauth x11-utils openbox xdotool
 
       - name: Honor real native debugger consent cancellation
         if: runner.os == 'Linux'
