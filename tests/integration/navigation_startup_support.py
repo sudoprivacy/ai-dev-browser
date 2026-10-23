@@ -41,6 +41,26 @@ async def startup_target_journey(
     browser = process = actor = root = controller = navigation = launch_task = None
     early_id = None
     real_launch = lifecycle.launch_chrome
+    real_create = lifecycle._create_startup_page
+    observers, timeline = [], []
+
+    async def observe_creation(port, guid, requested_url, timeout):
+        target_id = await real_create(port, guid, requested_url, timeout)
+        timeline.append(
+            {"phase": "target-created", "target": target_id, "url": requested_url}
+        )
+        http = aiohttp.ClientSession()
+        observers.append((http, None))
+        peer = CDP(
+            await http.ws_connect(f"ws://127.0.0.1:{port}/devtools/page/{target_id}"),
+            on_event=lambda method, params: timeline.append(
+                {"target": target_id, "method": method, "params": params}
+            ),
+        )
+        observers[-1] = (http, peer)
+        await peer.call("Page.enable")
+        await peer.call("Network.enable")
+        return target_id
 
     async def page(request):
         requests.append(request.path)
@@ -81,6 +101,7 @@ async def startup_target_journey(
         return owned
 
     monkeypatch.setattr(lifecycle, "launch_chrome", launch)
+    monkeypatch.setattr(lifecycle, "_create_startup_page", observe_creation)
     try:
         launch_task = asyncio.create_task(
             asyncio.to_thread(
@@ -107,7 +128,13 @@ async def startup_target_journey(
                     return None
 
             version = await wait_for(identity, bool, timeout=10)
-            root = CDP(await http.ws_connect(version["webSocketDebuggerUrl"]))
+            root = CDP(
+                await http.ws_connect(version["webSocketDebuggerUrl"]),
+                on_event=lambda method, params: timeline.append(
+                    {"source": "browser", "method": method, "params": params}
+                ),
+            )
+            await root.call("Target.setDiscoverTargets", {"discover": True})
             pages = (await root.call("Target.getTargets"))["targetInfos"]
             pages = [item for item in pages if item["type"] == "page"]
             # Arrange a real early Chrome page before high-level startup resumes.
@@ -120,7 +147,12 @@ async def startup_target_journey(
                 ]
             )
             actor = CDP(
-                await http.ws_connect(f"ws://127.0.0.1:{port}/devtools/page/{early_id}")
+                await http.ws_connect(
+                    f"ws://127.0.0.1:{port}/devtools/page/{early_id}"
+                ),
+                on_event=lambda method, params: timeline.append(
+                    {"target": early_id, "method": method, "params": params}
+                ),
             )
             await actor.call("Page.enable")
             release_launch.set()
@@ -150,6 +182,7 @@ async def startup_target_journey(
                 port=port, session_id=browser["session_id"]
             )
             owned = await get_active_tab(controller)
+            timeline.append({"phase": "owned-selected", "target": str(owned.target_id)})
             if not with_url:
                 navigation = asyncio.create_task(page_goto(owned, url))
             await asyncio.wait_for(first_request.wait(), 10)
@@ -210,16 +243,43 @@ async def startup_target_journey(
     finally:
         release_launch.set()
         release_request.set()
-        if navigation and not navigation.done():
-            navigation.cancel()
-            await asyncio.gather(navigation, return_exceptions=True)
-        for peer in (controller, actor, root):
-            if peer:
-                await peer.close()
-        if launch_task and not launch_task.done():
+        if navigation:
+            if not navigation.done():
+                navigation.cancel()
+            outcome = await asyncio.gather(navigation, return_exceptions=True)
+            if isinstance(outcome[0], BaseException):
+                timeline.append({"phase": "navigation-error", "error": str(outcome[0])})
+        if launch_task:
             outcome = await asyncio.gather(launch_task, return_exceptions=True)
             if isinstance(outcome[0], dict):
                 browser = outcome[0]
+        for http, peer in observers:
+            if peer:
+                try:
+                    timeline.append(
+                        {
+                            "phase": "final-document",
+                            "value": await peer.js(
+                                "({url:location.href,ready:document.readyState,entries:performance.getEntriesByType('navigation').map(n=>n.toJSON())})"
+                            ),
+                        }
+                    )
+                except Exception as error:
+                    timeline.append(
+                        {"phase": "final-observation-error", "error": str(error)}
+                    )
+                await peer.close()
+            await http.close()
+        (folder / "startup-target-observations-evidence.json").write_text(
+            json.dumps(
+                {"browser": browser, "http_requests": requests, "timeline": timeline},
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        for peer in (controller, actor, root):
+            if peer:
+                await peer.close()
         if browser and "session_id" in browser:
             stopped = await asyncio.to_thread(
                 browser_stop, session_id=browser["session_id"]
