@@ -42,7 +42,7 @@ async def startup_target_journey(
     early_id = None
     real_launch = lifecycle.launch_chrome
     real_create = lifecycle._create_startup_page
-    observers, timeline = [], []
+    observers, observer_tasks, timeline = [], [], []
 
     async def watch_target(port, target_id):
         http = aiohttp.ClientSession()
@@ -64,7 +64,7 @@ async def startup_target_journey(
         )
         # browser_start uses a temporary worker event loop. Keep the observer
         # on the test loop so it survives that startup coroutine's return.
-        await asyncio.wrap_future(
+        observer_tasks.append(
             asyncio.run_coroutine_threadsafe(watch_target(port, target_id), loop)
         )
         return target_id
@@ -101,6 +101,14 @@ async def startup_target_journey(
     url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}/first"
 
     def launch(**options):
+        options["extra_args"] = [
+            *(options.get("extra_args") or []),
+            f"--log-net-log={folder / 'startup-netlog.json'}",
+            "--trace-startup=loading,navigation",
+            "--trace-startup-duration=10",
+            "--trace-startup-format=json",
+            f"--trace-startup-file={folder / 'startup-trace.json'}",
+        ]
         owned = real_launch(**options)
         loop.call_soon_threadsafe(announced.set_result, (owned, options["port"]))
         if not release_launch.wait(10):
@@ -260,6 +268,16 @@ async def startup_target_journey(
             outcome = await asyncio.gather(launch_task, return_exceptions=True)
             if isinstance(outcome[0], dict):
                 browser = outcome[0]
+        if observer_tasks:
+            observations = await asyncio.gather(
+                *(asyncio.wrap_future(task) for task in observer_tasks),
+                return_exceptions=True,
+            )
+            for outcome in observations:
+                if isinstance(outcome, BaseException):
+                    timeline.append(
+                        {"phase": "observer-setup-error", "error": str(outcome)}
+                    )
         for http, peer in observers:
             if peer:
                 try:
