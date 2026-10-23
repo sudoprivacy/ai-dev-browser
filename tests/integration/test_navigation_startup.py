@@ -3,7 +3,7 @@
 AUTO-GENERATED - DO NOT EDIT
 
 This file was auto-generated from SKILL.md by integration-test-generator.
-Generated: 2026-10-24 04:56:22
+Generated: 2026-10-24 05:23:11
 
 To modify test behavior:
   1. Update SKILL.md with better workflow examples
@@ -15,7 +15,7 @@ Coverage: 5/5 real workflows (100%)
 Identified using AI scenario recognition with complete code generation
 
 Coverage Report:
-  ✅ Start actual Chrome with a held initial response -> startup timeout retains process and owned target -> release response -> reconnect same session and target -> one GET and one trusted submission
+  ✅ Launch owned Chrome -> wait for its actual network context before the timed launch gate -> hold the initial HTTP response -> document timeout retains process and owned target -> release response -> reconnect same session and target -> one GET and one trusted submission
   ✅ Launch actual Chrome -> arrange an early startup page -> finish browser_start -> first owned navigation held by HTTP -> independent early page navigates to blank -> release one request -> correct owned page -> trusted typing and one submission
   ✅ Launch actual Chrome with URL -> independent early page exists -> prepare blank owned page -> hold its single initial HTTP request -> early page finishes to blank -> release response -> startup returns parsed owned destination -> trusted typing and one submission
   ✅ Own Chrome target -> hold first HTTP request -> competing owned driver navigates -> real ERR_ABORTED -> inspect URL and readiness -> verify destination DOM -> helper dispatched only once
@@ -57,7 +57,7 @@ async def test_real_chrome_initial_document_timeout_preserves_owned_page(
     """
     Real scenario: Keep the owned page when the initial HTTP document exceeds the startup budget
 
-    Workflow: Start actual Chrome with a held initial response -> startup timeout retains process and owned target -> release response -> reconnect same session and target -> one GET and one trusted submission
+    Workflow: Launch owned Chrome -> wait for its actual network context before the timed launch gate -> hold the initial HTTP response -> document timeout retains process and owned target -> release response -> reconnect same session and target -> one GET and one trusted submission
 
     User problem: A temporary empty document must not be reported ready or cause startup navigation to be replayed.
 

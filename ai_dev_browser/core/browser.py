@@ -277,7 +277,8 @@ def browser_start(
             Chrome, default). Only consulted for a named profile — an
             ephemeral session never reuses.
         startup_timeout: Seconds to wait for Chrome's debug port, CDP browser
-            identity and initial owned page, or the extension handshake.
+            identity, owned page/network context and initial navigation, or
+            the extension handshake.
             `None` resolves to the
             `AI_DEV_BROWSER_STARTUP_TIMEOUT` env var, else 30s — which
             covers cold-start on slow Windows machines (fresh profile init
@@ -762,7 +763,7 @@ async def _prepare_startup_page(
     Chrome's temporary empty document can already report readyState=complete.
     Its navigation entry has no name and no DOMContentLoaded timestamp.
     """
-    from ai_dev_browser.cdp import page, runtime
+    from ai_dev_browser.cdp import network, page, runtime
     from ._transport import CDPConnection, ProtocolException
 
     connection = CDPConnection(f"ws://127.0.0.1:{port}/devtools/page/{target_id}")
@@ -792,7 +793,13 @@ async def _prepare_startup_page(
     async def prepare():
         await connection.connect()
         await connection.send(page.enable())
-        await wait_document()
+        # A parsed blank page can precede Chrome's profile NetworkContext.
+        # This origin-scoped CookieManager RPC waits for that context without
+        # making an HTTP request. Discard its result; no cookies are modified.
+        await asyncio.gather(
+            wait_document(),
+            connection.send(network.get_cookies(urls=[f"http://127.0.0.1:{port}/"])),
+        )
         if url != "about:blank":
             previous_loader = (
                 await connection.send(page.get_frame_tree())

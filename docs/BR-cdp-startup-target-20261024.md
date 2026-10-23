@@ -41,6 +41,19 @@ with a new loader has left the previous blank document. No request is replayed.
 The startup fixture retains native Chrome navigation traces and network logs;
 it observes target inventory without opening an extra page debugger session.
 
+A later Windows run passed all six new form journeys but still aborted an older
+bootstrap navigation. Initial document readiness alone did not establish that the
+profile's network context had responded. Startup now waits for an origin-scoped,
+read-only CookieManager RPC in parallel with blank-document readiness. The reply
+is discarded. This sends no HTTP request and changes no cookies, so it cannot
+replay the user's URL or depend on external network/proxy access. The short
+document-timeout fixture warms its real network context before opening the launch
+gate; its original three-second deadline and outcome assertions remain unchanged.
+
+Chromium routes this command through the selected target's storage-partition
+CookieManager and answers after its callbacks; see the
+[Chrome 156 implementation](https://chromium.googlesource.com/chromium/src/+/refs/tags/156.0.8078.47/content/browser/devtools/protocol/network_handler.cc#2366).
+
 The locale observation reads the created target explicitly. Reuse, connection,
 extension startup, page navigation and input retain their existing APIs.
 

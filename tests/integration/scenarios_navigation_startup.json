@@ -14,7 +14,7 @@
     {
       "name": "real_chrome_initial_document_timeout_preserves_owned_page",
       "title": "Keep the owned page when the initial HTTP document exceeds the startup budget",
-      "workflow": "Start actual Chrome with a held initial response -> startup timeout retains process and owned target -> release response -> reconnect same session and target -> one GET and one trusted submission",
+      "workflow": "Launch owned Chrome -> wait for its actual network context before the timed launch gate -> hold the initial HTTP response -> document timeout retains process and owned target -> release response -> reconnect same session and target -> one GET and one trusted submission",
       "user_problem": "A temporary empty document must not be reported ready or cause startup navigation to be replayed.",
       "async": true,
       "fixtures": ["tmp_path", "monkeypatch", "startup_mode"],

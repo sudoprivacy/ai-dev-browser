@@ -1,6 +1,8 @@
 """Guard the cold-start error observed on the actual Ubuntu release gate."""
 
 from ai_dev_browser.core import _session, browser
+import asyncio
+from types import SimpleNamespace
 import pytest
 
 
@@ -14,6 +16,56 @@ def test_missing_identity_preserves_launch_message_without_overriding_failure(
     assert result["error_code"] == "transient" and result["retryable"]
     assert result["connected"] is False and result["browser_closed"] is False
     assert result["pid"] == 1234 and result["message"] == "Browser started"
+
+
+async def test_requested_url_waits_for_profile_network_response(monkeypatch):
+    """A stalled startup RPC must not dispatch the caller's URL prematurely."""
+    from ai_dev_browser.core import _transport
+
+    requested, release = asyncio.Event(), asyncio.Event()
+    navigations = []
+
+    class Connection:
+        def __init__(self, endpoint):
+            self.loader = "blank"
+
+        async def connect(self):
+            pass
+
+        async def disconnect(self):
+            pass
+
+        async def send(self, command):
+            request = next(command)
+            method = request["method"]
+            if method == "Network.getCookies":
+                assert request["params"]["urls"] == ["http://127.0.0.1:9355/"]
+                requested.set()
+                await release.wait()
+                return []
+            if method == "Page.getFrameTree":
+                return SimpleNamespace(frame=SimpleNamespace(loader_id=self.loader))
+            if method == "Runtime.evaluate":
+                return SimpleNamespace(value=True), None
+            if method == "Page.navigate":
+                navigations.append(request["params"]["url"])
+                self.loader = "application"
+                return "frame", self.loader, None, False
+            assert method == "Page.enable"
+
+    monkeypatch.setattr(_transport, "CDPConnection", Connection)
+    task = asyncio.create_task(
+        browser._prepare_startup_page(9355, "owned", "https://neutral.test/once", 5)
+    )
+    try:
+        await asyncio.wait_for(requested.wait(), 2)
+        assert navigations == []
+        release.set()
+        await task
+        assert navigations == ["https://neutral.test/once"]
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.parametrize("ambiguous_reply", [False, True])

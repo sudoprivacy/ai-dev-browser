@@ -146,6 +146,10 @@ async def startup_target_journey(
                 ),
             )
             await actor.call("Page.enable")
+            if slow_initial:
+                # Isolate the short document timeout from cold network setup.
+                # The public startup clock begins after this launch gate opens.
+                await actor.call("Network.getCookies", {"urls": [url]})
             release_launch.set()
             if with_url:
                 await asyncio.wait_for(first_request.wait(), 10)
