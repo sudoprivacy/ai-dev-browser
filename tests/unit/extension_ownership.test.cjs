@@ -46,6 +46,48 @@ test('Chrome replacement transfers only proven ownership and reports successor',
   assert.equal(run('autoTabs.has(88) || autoTabs.has(99)'), false);
 });
 
+test('windowless startup creates one owned window/page before announcing readiness', async () => {
+  const { chrome, tabs, windows, run } = await fixture();
+  tabs.clear();
+  windows.clear();
+  const writes = [];
+  chrome.windows.getAll = async () => [...windows.values()];
+  chrome.windows.create = async options => {
+    writes.push({ kind: 'window', options });
+    windows.set(200, { id: 200, focused: false });
+    tabs.set(201, { id: 201, windowId: 200, url: options.url });
+    return windows.get(200);
+  };
+  chrome.tabs.query = async filter => [...tabs.values()].filter(tab => !filter?.windowId || tab.windowId === filter.windowId);
+  await run('ensureDedicatedTab()');
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].kind, 'window');
+  assert.equal(writes[0].options.url, 'about:blank');
+  assert.equal(writes[0].options.focused, false);
+  assert.equal(run('mainTabId'), 201);
+  assert.equal(run('autoTabs.has(201) && attached.has(201)'), true);
+});
+
+test('explicit target creation chooses a normal window and dispatches once', async () => {
+  const { chrome, tabs, windows, run } = await fixture();
+  windows.get(102).focused = true;
+  const writes = [];
+  chrome.windows.getAll = async () => [...windows.values()];
+  chrome.tabs.create = async options => {
+    writes.push(options);
+    const tab = { id: 202, windowId: options.windowId, url: options.url };
+    tabs.set(tab.id, tab);
+    return tab;
+  };
+  const created = await run("browserLevel('Target.createTarget', {url:'https://neutral.test/created'})");
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].windowId, 102);
+  assert.equal(writes[0].active, false);
+  assert.equal(created.targetId, '202');
+  assert.equal(run('autoTabs.has(202) && attached.has(202)'), true);
+  assert.equal(run('autoTabs.has(99)'), false);
+});
+
 for (const route of ['initial', 'late']) {
   test(`launch handshake keeps its owned page until the caller navigates (${route})`, async () => {
     const { chrome, tabs, run } = await fixture();

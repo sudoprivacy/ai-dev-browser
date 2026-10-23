@@ -20,6 +20,8 @@ from ai_dev_browser.core import (
     page_goto,
     page_screenshot,
     type_by_text,
+    type_by_ref,
+    page_wait_element,
     window_set,
 )
 from ai_dev_browser.core.errors import InputUnavailableError
@@ -55,6 +57,61 @@ async def extension_cli(extension, tool, *flags):
             await process.wait()
     assert stdout.strip(), stderr
     return process.returncode, json.loads(stdout)
+
+
+async def windowless_startup_journey(extension, site, root):
+    """Use the real extension-owned window created before CDP's first page."""
+    order = json.loads((root / "windowless-startup-order.json").read_text())
+    assert order["hello_received"] and order["owned_target_before_cdp_creation"]
+    status, connection = await extension_cli(extension, "browser_connect")
+    assert status == 0 and connection["extension_version_matches_bundle"] is True
+    assert connection["extension_warning"] is None
+    assert connection["extension_version"] == order["extension_version"]
+    await extension.call(page_goto, url=site[0])
+    state = await extension.call(window_set, state="normal", focus=True)
+    assert state["input_ready"] and state["visibility"] == "visible", state
+    await extension.call(
+        js_evaluate,
+        expression="window.inputTrust=[];document.querySelector('#name').addEventListener('input',e=>inputTrust.push(e.isTrusted));true",
+    )
+    field = await extension.call(page_wait_element, selector="#name")
+    typed = await extension.call(
+        type_by_ref, ref=field["ref"], text="Windowless startup accepted"
+    )
+    assert typed["verified"] and typed["method"] != "native"
+    trust = (await extension.call(js_evaluate, expression="window.inputTrust"))[
+        "result"
+    ]
+    assert trust and all(trust)
+    assert (await extension.call(click_by_html_id, html_id="submit"))["clicked"]
+    deadline = time.monotonic() + 10
+    while not site[1]:
+        assert time.monotonic() < deadline
+        await asyncio.sleep(0.01)
+    assert site[1] == [
+        {
+            "name": "Windowless startup accepted",
+            "trusted": True,
+            "press": {"buttons": 1, "trusted": True},
+            "cookie": "isolated",
+            "sequence": 1,
+        }
+    ]
+    await extension.call(
+        page_screenshot, path=str(root / "windowless-extension-accepted.png")
+    )
+    (root / "windowless-extension-evidence.json").write_text(
+        json.dumps(
+            {
+                "startup": order,
+                "window": state,
+                "trusted_input": trust,
+                "receipts": site[1],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 async def window_visibility_journey(extension, root, caplog):

@@ -52,6 +52,11 @@ python -m ai_dev_browser.tools.browser_disconnect --session-id <returned-id>
 python -m ai_dev_browser.tools.browser_reconnect --session-id <returned-id>
 ```
 
+Fresh CDP launches prepare a blank owned page before navigating once to the
+requested URL, and return that exact page. If page
+creation is uncertain, Chrome remains running; connect to the reported port and
+inspect its pages before continuing.
+
 For extension startup, first install and enable the bundled bridge in the chosen
 Chrome profile. Select `--chrome-path`, `--user-data-dir`, `--profile-directory`
 and `--headless` explicitly as needed. Startup adds neither a debugging port nor

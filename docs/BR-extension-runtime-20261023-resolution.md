@@ -85,3 +85,33 @@ Scenario source: `tests/integration/scenarios_extension_runtime.json`.
 Local real-profile evidence: `scratch/extension-runtime-20261023`.
 Private identity snapshots stay local; public evidence should contain only the
 sanitized recovery receipt, neutral-form observations and rendered acceptance.
+
+## Follow-up startup and recording checks
+
+Post-merge CI exposed cold Chrome startup races. Fresh CDP startup now creates
+one explicit blank target, waits for its parsed document and a read-only profile
+network-context response, then navigates to the requested URL once. A timeout
+preserves Chrome and any known session/target for inspection without replay.
+The extension's shared tab creation selects an explicit normal window, creating
+one when Chrome starts without any windows. Its bundle version is 0.4.6.
+
+The extension fixture closes only browser_start's recorded disposable bootstrap
+target. Chrome can attribute that page to the extension's main tab; retaining it
+made the original one-owned-tab assertions fail. The main tab must survive the
+cleanup with the same identity. Production child ownership rules are unchanged.
+
+A live regression also delays delivery of actual Chrome layout responses by
+800ms while input and screencast events continue. The previous recorder completed
+one trusted click but produced only three GIF frames, failing the existing pixel
+checks. Health sampling now runs independently of the animation timer. Viewport
+writes remain in one task; target failures, RPC deadlines, final live checks and
+the 550ms click feedback duration retain their existing contracts. The generated
+regression runs on both extension backends in all three real-extension CI jobs.
+
+Acceptance with explicit shell proxy settings exposed a separate local-control
+gap: bridge status/shutdown and the recorder did not share CDP's existing direct
+loopback WebSocket rule. They now reuse the same version-aware helper. Remote
+endpoints retain their existing proxy behavior; websockets 13.1 receives no
+unsupported argument. A generated real-extension journey verifies its rejecting
+outbound proxy, connects through the actual CLI, records trusted click/typing
+and checks the saved GIF's expanding ring without sending local control to it.

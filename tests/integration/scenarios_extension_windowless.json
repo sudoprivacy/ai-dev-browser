@@ -1,0 +1,22 @@
+{
+  "config": {
+    "imports": [
+      "from tests.integration.extension_window_support import windowless_startup_journey",
+      "pytestmark = pytest.mark.extension_windowless"
+    ],
+    "call_style": "function",
+    "required_env_vars": [],
+    "smoke_test_assertions": ["windowless_startup_journey is not None"]
+  },
+  "scenarios": [
+    {
+      "name": "real_extension_windowless_owned_startup",
+      "title": "Create the extension-owned window before the first CDP page",
+      "workflow": "Actual Chrome with no startup window -> real extension hello must already name its owned target -> CDP first page creation proceeds once -> connect and inspect matching runtime -> neutral form on extension-owned target -> trusted typing and exactly one submission",
+      "user_problem": "A connected extension must create its own usable page when Chrome initially has no window.",
+      "async": true,
+      "fixtures": ["live_extension", "remote_site", "tmp_path"],
+      "steps": [{"raw_code": ["await windowless_startup_journey(live_extension, remote_site, tmp_path)"]}]
+    }
+  ]
+}

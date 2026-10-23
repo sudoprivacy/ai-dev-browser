@@ -1,5 +1,6 @@
 """Actual browser journeys and pixel checks used by generated recording tests."""
 
+import asyncio
 import itertools
 import json
 import math
@@ -146,11 +147,6 @@ def decode(saved, output, click=None, viewport=None, anchor=None):
                     distances.append(math.dist((x, y), (cx, cy)))
         if len(distances) >= 8:
             radii.append((index, statistics.median(distances)))
-    assert any(
-        later[1] - earlier[1] > 3
-        for i, earlier in enumerate(radii)
-        for later in radii[i + 1 :]
-    ), ("No expanding click ring at acknowledged click coordinates", (cx, cy), radii)
     (output / "click-ring-evidence.json").write_text(
         json.dumps(
             {
@@ -162,6 +158,11 @@ def decode(saved, output, click=None, viewport=None, anchor=None):
         ),
         encoding="utf-8",
     )
+    assert any(
+        later[1] - earlier[1] > 3
+        for i, earlier in enumerate(radii)
+        for later in radii[i + 1 :]
+    ), ("No expanding click ring at acknowledged click coordinates", (cx, cy), radii)
     samples = sorted(
         {
             0,
@@ -502,6 +503,150 @@ def run_recording_lifecycle(cli, port, folder):
         decode(saved, folder, anchor=anchor)
     finally:
         cli("page_record_stop", "--recording-id", recording["recording_id"])
+
+
+async def run_extension_proxy_demo(extension, folder, monkeypatch):
+    """An outbound proxy must never receive local extension control or capture."""
+    import urllib.error
+    import urllib.request
+
+    from aiohttp import web
+    import pytest
+
+    from ai_dev_browser.core.ext_bridge import bridge_status, shutdown_bridge
+    from .extension_window_support import extension_cli
+
+    requests = []
+
+    async def reject(request):
+        requests.append(request.raw_path)
+        return web.Response(status=502, text="fixture rejects proxy traffic")
+
+    app = web.Application()
+    app.router.add_route("*", "/{path:.*}", reject)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    proxy = web.TCPSite(runner, "127.0.0.1", 0)
+    await proxy.start()
+    address = f"http://127.0.0.1:{proxy._server.sockets[0].getsockname()[1]}"
+    for name in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
+        monkeypatch.setenv(name, address)
+    for name in ("NO_PROXY", "no_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    try:
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({"http": address})
+        )
+        with pytest.raises(urllib.error.HTTPError) as rejected:
+            await asyncio.to_thread(
+                opener.open, "http://proxy-check.invalid/", timeout=2
+            )
+        assert rejected.value.code == 502 and len(requests) == 1
+        requests.clear()
+        status = await bridge_status(extension.port)
+        assert status and status["extension_connected"], {"proxy_requests": requests}
+        code, connected = await extension_cli(extension, "browser_connect")
+        assert code == 0 and connected["connected"], (code, connected)
+        await run_extension_demo(extension, folder)
+        # The live fixture's bridge is intentionally unmanaged. Its explicit
+        # shutdown refusal must also arrive directly, leaving Chrome usable.
+        assert not await shutdown_bridge(extension.port)
+        assert (await bridge_status(extension.port))["extension_connected"]
+        assert not requests, requests
+        (folder / "proxy-control-evidence.json").write_text(
+            json.dumps(
+                {
+                    "outbound_proxy_verified": True,
+                    "local_control_proxy_requests": len(requests),
+                    "cli_connected": True,
+                    "recording_saved": True,
+                    "unmanaged_shutdown_refused": True,
+                }
+            ),
+            encoding="utf-8",
+        )
+    finally:
+        await runner.cleanup()
+
+
+async def run_slow_capture_health(extension, folder, monkeypatch):
+    """Delay delivery of real Chrome health replies without blocking input/events."""
+    from websockets.exceptions import ConnectionClosedOK
+
+    from ai_dev_browser import core
+
+    first, _ = make_page(folder)
+    await extension.call(core.page_goto, url=first)
+    forward = extension.bridge._forward
+    pending = []
+    observed = asyncio.Event()
+    receipts = []
+    armed = False
+
+    class DelayedReply:
+        def __init__(self, ws):
+            self.ws = ws
+
+        async def send(self, raw):
+            response = json.loads(raw)
+            assert "cssLayoutViewport" in response["result"], response
+            receipts.append({"real_layout_reply": True, "delay_seconds": 0.8})
+            observed.set()
+
+            async def deliver():
+                await asyncio.sleep(0.8)
+                try:
+                    await self.ws.send(raw)
+                except ConnectionClosedOK:
+                    # Successful stop closes the recorder with one background
+                    # read potentially pending; preserve abnormal close errors.
+                    pass
+
+            task = asyncio.create_task(deliver())
+            pending.append(task)
+
+    async def delayed_forward(ws, target_id, raw, expected_session=None):
+        if armed and json.loads(raw).get("method") == "Page.getLayoutMetrics":
+            ws = DelayedReply(ws)
+        await forward(ws, target_id, raw, expected_session)
+
+    monkeypatch.setattr(extension.bridge, "_forward", delayed_forward)
+    point = (
+        await extension.call(
+            core.js_evaluate,
+            expression="""(() => {
+        const r = document.querySelector('#open').getBoundingClientRect();
+        return [r.x + r.width / 2, r.y + r.height / 2];
+    })()""",
+        )
+    )["result"]
+    recording = await extension.call(
+        core.page_record_start, out=str(folder / "slow-health.gif")
+    )
+    try:
+        armed = True
+        await asyncio.wait_for(observed.wait(), 5)
+        # Complete a real click while the unrelated read-only health response
+        # is pending. Its 550ms overlay must keep advancing at the normal FPS.
+        await extension.call(core.mouse_click, x=point[0], y=point[1], move=False)
+        state = (
+            await extension.call(
+                core.js_evaluate,
+                expression="({clicks,opened:!document.querySelector('#panel').hidden})",
+            )
+        )["result"]
+        assert state["opened"] and len(state["clicks"]) == 1, state
+        assert state["clicks"][0]["trusted"], state
+        saved = await core.page_record_stop(recording["recording_id"])
+        assert saved["saved"], saved
+        (folder / "slow-health-evidence.json").write_text(
+            json.dumps({"health_replies": receipts, "page": state}), encoding="utf-8"
+        )
+        decode(saved, folder)
+    finally:
+        await core.page_record_stop(recording["recording_id"])
+        if pending:
+            await asyncio.gather(*pending)
 
 
 async def run_failed_movement(port, folder, monkeypatch):

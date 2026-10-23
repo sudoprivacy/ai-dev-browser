@@ -1,6 +1,9 @@
 """Guard the cold-start error observed on the actual Ubuntu release gate."""
 
 from ai_dev_browser.core import _session, browser
+import asyncio
+from types import SimpleNamespace
+import pytest
 
 
 def test_missing_identity_preserves_launch_message_without_overriding_failure(
@@ -15,7 +18,60 @@ def test_missing_identity_preserves_launch_message_without_overriding_failure(
     assert result["pid"] == 1234 and result["message"] == "Browser started"
 
 
-def test_launch_waits_for_identity_and_initial_page_on_the_same_process(monkeypatch):
+async def test_requested_url_waits_for_profile_network_response(monkeypatch):
+    """A stalled startup RPC must not dispatch the caller's URL prematurely."""
+    from ai_dev_browser.core import _transport
+
+    requested, release = asyncio.Event(), asyncio.Event()
+    navigations = []
+
+    class Connection:
+        def __init__(self, endpoint):
+            self.loader = "blank"
+
+        async def connect(self):
+            pass
+
+        async def disconnect(self):
+            pass
+
+        async def send(self, command):
+            request = next(command)
+            method = request["method"]
+            if method == "Network.getCookies":
+                assert request["params"]["urls"] == ["http://127.0.0.1:9355/"]
+                requested.set()
+                await release.wait()
+                return []
+            if method == "Page.getFrameTree":
+                return SimpleNamespace(frame=SimpleNamespace(loader_id=self.loader))
+            if method == "Runtime.evaluate":
+                return SimpleNamespace(value=True), None
+            if method == "Page.navigate":
+                navigations.append(request["params"]["url"])
+                self.loader = "application"
+                return "frame", self.loader, None, False
+            assert method == "Page.enable"
+
+    monkeypatch.setattr(_transport, "CDPConnection", Connection)
+    task = asyncio.create_task(
+        browser._prepare_startup_page(9355, "owned", "https://neutral.test/once", 5)
+    )
+    try:
+        await asyncio.wait_for(requested.wait(), 2)
+        assert navigations == []
+        release.set()
+        await task
+        assert navigations == ["https://neutral.test/once"]
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("ambiguous_reply", [False, True])
+def test_launch_creates_one_page_after_identity_without_replay(
+    monkeypatch, ambiguous_reply
+):
     class Process:
         pid = 1234
         stderr = None
@@ -39,8 +95,26 @@ def test_launch_waits_for_identity_and_initial_page_on_the_same_process(monkeypa
     monkeypatch.setattr(browser, "get_available_port", lambda **kw: 9355)
     monkeypatch.setattr(browser, "is_port_in_use", lambda **kw: True)
     monkeypatch.setattr(browser, "_query_chrome_guid", guid)
-    targets = iter([None, None, "page"])
-    monkeypatch.setattr(browser, "_query_initial_page", lambda port: next(targets))
+    creations = []
+
+    async def create(port, guid, url, timeout):
+        creations.append((port, guid, url))
+        assert timeout > 0
+        if ambiguous_reply:
+            raise TimeoutError("create reply lost")
+        return "page"
+
+    monkeypatch.setattr(browser, "_create_startup_page", create)
+
+    preparations = []
+
+    async def wait_page(port, target_id, url, timeout):
+        assert (port, target_id) == (9355, "page") and timeout > 0
+        preparations.append(url)
+
+    monkeypatch.setattr(browser, "_prepare_startup_page", wait_page)
+    killed = []
+    monkeypatch.setattr(browser, "_kill_process_tree", killed.append)
     monkeypatch.setattr(browser, "_query_chrome_version", lambda port: None)
     monkeypatch.setattr(browser.registry, "register_instance", lambda **kw: None)
     monkeypatch.setattr(browser.registry, "lookup", lambda *args: None)
@@ -55,10 +129,22 @@ def test_launch_waits_for_identity_and_initial_page_on_the_same_process(monkeypa
         },
     )
     monkeypatch.setattr(_session, "write", lambda record: None)
-    result = browser.browser_start(temp=True, headless=True, startup_timeout=3)
+    result = browser.browser_start(
+        temp=True, headless=True, startup_timeout=3, url="https://neutral.test/once"
+    )
+    assert len(launches) == 1 and queries == [9355, 9355]
+    assert launches[0]["start_url"] == ""
+    assert launches[0]["override_default_args"]["--no-startup-window"] == ""
+    assert creations == [(9355, "ready", "about:blank")] and killed == []
+    if ambiguous_reply:
+        assert preparations == []
+        assert result["error_code"] == "transient" and not result["connected"]
+        assert result["pid"] == 1234 and not result["browser_closed"]
+        assert "create reply lost" in result["error"]
+        return
     assert result["connected"] and result["session_id"] == "cdp-ready"
-    assert len(launches) == 1 and queries == [9355, 9355, 9355, 9355]
     assert result["automation_target_id"] == "page"
+    assert preparations == ["https://neutral.test/once"]
 
 
 def test_restart_options_keep_launch_path_separate_from_runtime_clone(monkeypatch):

@@ -1,15 +1,43 @@
 {
   "config": {
     "imports": [
-      "from tests.integration.navigation_startup_support import startup_race_journey"
+      "from tests.integration.navigation_startup_support import startup_race_journey, startup_target_journey"
     ],
     "call_style": "function",
     "required_env_vars": [],
     "smoke_test_assertions": [
-      "startup_race_journey is not None"
+      "startup_race_journey is not None",
+      "startup_target_journey is not None"
     ]
   },
   "scenarios": [
+    {
+      "name": "real_chrome_initial_document_timeout_preserves_owned_page",
+      "title": "Keep the owned page when the initial HTTP document exceeds the startup budget",
+      "workflow": "Launch owned Chrome -> wait for its actual network context before the timed launch gate -> hold the initial HTTP response -> document timeout retains process and owned target -> release response -> reconnect same session and target -> one GET and one trusted submission",
+      "user_problem": "A temporary empty document must not be reported ready or cause startup navigation to be replayed.",
+      "async": true,
+      "fixtures": ["tmp_path", "monkeypatch", "startup_mode"],
+      "steps": [{"raw_code": ["await startup_target_journey(tmp_path, monkeypatch, startup_mode, with_url=True, slow_initial=True)"]}]
+    },
+    {
+      "name": "real_chrome_startup_target_first_navigation",
+      "title": "Keep the first navigation on the owned page while an early startup page finishes",
+      "workflow": "Launch actual Chrome -> arrange an early startup page -> finish browser_start -> first owned navigation held by HTTP -> independent early page navigates to blank -> release one request -> correct owned page -> trusted typing and one submission",
+      "user_problem": "An early Chrome startup page must not cancel or replace the first application navigation.",
+      "async": true,
+      "fixtures": ["tmp_path", "monkeypatch", "startup_mode"],
+      "steps": [{"raw_code": ["await startup_target_journey(tmp_path, monkeypatch, startup_mode)"]}]
+    },
+    {
+      "name": "real_chrome_startup_target_explicit_url",
+      "title": "Load the requested startup URL once on the owned page",
+      "workflow": "Launch actual Chrome with URL -> independent early page exists -> prepare blank owned page -> hold its single initial HTTP request -> early page finishes to blank -> release response -> startup returns parsed owned destination -> trusted typing and one submission",
+      "user_problem": "Chrome startup must keep the requested URL and target identity without replaying navigation.",
+      "async": true,
+      "fixtures": ["tmp_path", "monkeypatch", "startup_mode"],
+      "steps": [{"raw_code": ["await startup_target_journey(tmp_path, monkeypatch, startup_mode, with_url=True)"]}]
+    },
     {
       "name": "real_chrome_startup_navigation_cancellation",
       "title": "Inspect the actual destination after Chrome reports an aborted startup navigation",
