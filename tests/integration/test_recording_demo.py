@@ -3,7 +3,7 @@
 AUTO-GENERATED - DO NOT EDIT
 
 This file was auto-generated from SKILL.md by integration-test-generator.
-Generated: 2026-10-13 05:56:24
+Generated: 2026-10-24 05:54:40
 
 To modify test behavior:
   1. Update SKILL.md with better workflow examples
@@ -11,7 +11,7 @@ To modify test behavior:
 
 Manual edits will be lost when regenerated!
 
-Coverage: 6/6 real workflows (100%)
+Coverage: 7/7 real workflows (100%)
 Identified using AI scenario recognition with complete code generation
 
 Coverage Report:
@@ -21,6 +21,7 @@ Coverage Report:
   ✅ Record -> open another tab -> fill -> return -> fill -> stop -> fill again
   ✅ Open -> record -> movement fault -> click -> inspect trusted DOM event -> stop -> decode GIF
   ✅ Real Chrome -> record -> trusted click with slow mouseup handler -> one opened form -> stop -> decode expanding click ring
+  ✅ Record -> delay actual layout reply -> one trusted click -> save -> decode expanding ring
 
 Uncovered workflows: None
 """
@@ -39,6 +40,7 @@ from tests.integration.recording_demo_support import (
     run_recording_lifecycle,
     run_failed_movement,
     run_delayed_click_demo,
+    run_slow_capture_health,
 )
 
 # Integration guard: allow CI to opt-out with SKIP_INTEGRATION=1
@@ -153,6 +155,24 @@ async def test_recording_demo_delayed_click_ack(
     await run_delayed_click_demo(recording_browser, tmp_path)
 
 
+async def test_recording_demo_real_extension_slow_health(
+    live_extension, tmp_path, monkeypatch
+):
+    """
+    Real scenario: A delayed real Chrome health reply preserves visible click animation
+
+    Workflow: Record -> delay actual layout reply -> one trusted click -> save -> decode expanding ring
+
+    User problem: A slow read-only health probe must not pause the demo animation timer.
+
+    Data flow:
+      1. Delay only real layout response delivery while Chrome input and screencast events continue
+    """
+    # Step 1: Delay only real layout response delivery while Chrome input and screencast events continue
+    monkeypatch.setenv("AI_DEV_BROWSER_RECORDING_DIR", str(tmp_path / "recordings"))
+    await run_slow_capture_health(live_extension, tmp_path, monkeypatch)
+
+
 # Smoke test - can import without errors
 def test_imports_work():
     """Verify all imports are valid"""
@@ -162,3 +182,4 @@ def test_imports_work():
     assert callable(run_recording_lifecycle)
     assert callable(run_failed_movement)
     assert callable(run_delayed_click_demo)
+    assert callable(run_slow_capture_health)

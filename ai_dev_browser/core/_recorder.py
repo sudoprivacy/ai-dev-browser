@@ -273,13 +273,23 @@ async def _record(folder: Path, config: dict, partial: Path) -> dict:
                         source, timestamp, metadata or capture.metadata
                     )
 
+            health_metrics = None
+
+            async def sample_health():
+                nonlocal health_metrics
+                while True:
+                    # A quiet page emits no frames. Check target liveness on
+                    # its own clock: a slow RPC must not stop cursor animation.
+                    health_metrics = await capture.command("Page.getLayoutMetrics")
+                    await asyncio.sleep(0.2)
+
+            tasks.append(asyncio.create_task(sample_health()))
             with partial.open("xb") as output:
                 gif = _Gif(output)
                 data, started = capture.latest
                 await asyncio.to_thread(gif.push, render(data, started), started)
                 last_frame = started
                 last_received = started
-                last_health = 0.0
                 last_state = 0.0
                 while True:
                     if (folder / "abort").exists():
@@ -289,30 +299,29 @@ async def _record(folder: Path, config: dict, partial: Path) -> dict:
                     for task in tasks:
                         if task.done():
                             task.result()
-                    now = time.monotonic()
                     requested_viewport = _read_json(folder / "viewport.json")
                     if requested_viewport != viewport:
                         await capture.command(
                             "Emulation.setDeviceMetricsOverride", requested_viewport
                         )
                         viewport = requested_viewport
-                    if now - started >= config["max_duration"]:
-                        raise RecordingError(
-                            "Recording reached max_duration before stop; no GIF published"
-                        )
-                    if now - last_health >= 0.2:
-                        # Quiet pages legitimately emit no frames. Probe the target
-                        # separately so a detached extension cannot look like idle.
-                        metrics = await capture.command("Page.getLayoutMetrics")
-                        actual = metrics["cssLayoutViewport"]
+                    if health_metrics is not None:
+                        actual = health_metrics["cssLayoutViewport"]
+                        health_metrics = None
                         if (actual["clientWidth"], actual["clientHeight"]) != (
                             viewport["width"],
                             viewport["height"],
                         ):
+                            # Keep viewport writes on this one task, including
+                            # explicit resize requests and navigation recovery.
                             await capture.command(
                                 "Emulation.setDeviceMetricsOverride", viewport
                             )
-                        last_health = now
+                    now = time.monotonic()
+                    if now - started >= config["max_duration"]:
+                        raise RecordingError(
+                            "Recording reached max_duration before stop; no GIF published"
+                        )
                     if now - last_state >= 0.5:
                         _write_json(
                             folder / "state.json",

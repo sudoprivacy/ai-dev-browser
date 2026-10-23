@@ -1,7 +1,7 @@
 {
   "config": {
     "imports": [
-      "from tests.integration.recording_demo_support import run_demo_journey, run_opt_out, run_extension_demo, run_recording_lifecycle, run_failed_movement, run_delayed_click_demo"
+      "from tests.integration.recording_demo_support import run_demo_journey, run_opt_out, run_extension_demo, run_recording_lifecycle, run_failed_movement, run_delayed_click_demo, run_slow_capture_health"
     ],
     "call_style": "function",
     "extract_style": "dict",
@@ -12,7 +12,8 @@
       "callable(run_extension_demo)",
       "callable(run_recording_lifecycle)",
       "callable(run_failed_movement)",
-      "callable(run_delayed_click_demo)"
+      "callable(run_delayed_click_demo)",
+      "callable(run_slow_capture_health)"
     ]
   },
   "scenarios": [
@@ -134,6 +135,27 @@
           "raw_code": [
             "monkeypatch.setenv('AI_DEV_BROWSER_RECORDING_DIR', str(tmp_path / 'recordings'))",
             "await run_delayed_click_demo(recording_browser, tmp_path)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "recording_demo_real_extension_slow_health",
+      "title": "A delayed real Chrome health reply preserves visible click animation",
+      "workflow": "Record -> delay actual layout reply -> one trusted click -> save -> decode expanding ring",
+      "user_problem": "A slow read-only health probe must not pause the demo animation timer.",
+      "fixtures": [
+        "live_extension",
+        "tmp_path",
+        "monkeypatch"
+      ],
+      "async": true,
+      "steps": [
+        {
+          "description": "Delay only real layout response delivery while Chrome input and screencast events continue",
+          "raw_code": [
+            "monkeypatch.setenv(\"AI_DEV_BROWSER_RECORDING_DIR\", str(tmp_path / \"recordings\"))",
+            "await run_slow_capture_health(live_extension, tmp_path, monkeypatch)"
           ]
         }
       ]

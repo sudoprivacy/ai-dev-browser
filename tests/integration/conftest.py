@@ -495,6 +495,40 @@ async def live_extension(request, tmp_path, monkeypatch):
         state = (await extension.call(cdp_send, method="AiDevBrowser.debugState"))[
             "result"
         ]
+        main_tab = state["mainTabId"]
+        # browser_start owns one disposable CDP bootstrap target. Chrome may
+        # report it as a child of the extension's main tab; close exactly that
+        # target instead of leaving a second owned page in every test fixture.
+        browser = await connect_browser(
+            port=chrome["port"], session_id=chrome["session_id"]
+        )
+        try:
+            assert await browser.connection.send(
+                cdp_target.close_target(
+                    cdp_target.TargetID(chrome["automation_target_id"])
+                )
+            )
+        finally:
+            await browser.close()
+        while True:
+            state = (await extension.call(cdp_send, method="AiDevBrowser.debugState"))[
+                "result"
+            ]
+            assert state["mainTabId"] == main_tab, state
+            if state["autoTabs"] == [main_tab] and main_tab in state["attached"]:
+                break
+            assert time.monotonic() - started < startup_budget, state
+            await asyncio.sleep(0.05)
+        (tmp_path / "bootstrap-cleanup-evidence.json").write_text(
+            json.dumps(
+                {
+                    "bootstrap_closed": True,
+                    "main_preserved": True,
+                    "owned_tabs": len(state["autoTabs"]),
+                }
+            ),
+            encoding="utf-8",
+        )
         await extension.call(
             cdp_send,
             method="Target.activateTarget",
