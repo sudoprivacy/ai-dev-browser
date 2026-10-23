@@ -85,6 +85,7 @@ markers = [
     "extension_native: real extension with a native visible Chrome window",
     "extension_occlusion: preserve ordinary native window occlusion in the owned Chrome fixture",
     "extension_previous: load an unmodified released extension to test upgrade diagnostics",
+    "extension_unknown: upgrade a released extension without runtime version reporting",
 ]
 
 # Version is derived from the latest git tag (SSOT).

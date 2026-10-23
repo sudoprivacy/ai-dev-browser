@@ -32,12 +32,30 @@ def extension_version_info(loaded_version: str | None) -> dict:
     bundled = json.loads(
         (extension_dir() / "manifest.json").read_text(encoding="utf-8")
     )["version"]
+    matches = loaded_version == bundled if loaded_version else None
+    warning = None
+    if matches is not True:
+        observed = (
+            f"Loaded extension {loaded_version} differs from SDK bundle {bundled}"
+            if loaded_version
+            else f"Loaded extension version is unknown (SDK bundle {bundled})"
+        )
+        warning = (
+            f"{observed}; compatibility has not been verified. Before page input, "
+            "align the Python package and running extension with an ordinary "
+            "update/reload in chrome://extensions in the intended profile. "
+            f"This SDK's bundle is {extension_dir()}. "
+            "Python updates do not reload Chrome's extension. Then use "
+            "browser_connect --transport extension and inspect session/profile, "
+            "owned target and real visibility before resuming; reload may replace "
+            "the session. Keep Chrome and its existing tabs; do not replay "
+            "earlier submissions."
+        )
     return {
         "extension_version": loaded_version,
         "bundled_extension_version": bundled,
-        "extension_version_matches_bundle": loaded_version == bundled
-        if loaded_version
-        else None,
+        "extension_version_matches_bundle": matches,
+        "extension_warning": warning,
     }
 
 

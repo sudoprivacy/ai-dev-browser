@@ -227,6 +227,8 @@ def browser_start(
     data directory returns conflict; use browser_connect instead. Startup
     changes neither installed extensions nor profile preferences. A failed
     handshake leaves the explicitly launched Chrome running and reports its PID.
+    Read extension_warning before input: an attached extension's unknown or
+    mismatched version needs an ordinary update/reload and a fresh connection.
 
     Proxy consistency (automatic): if `extra_args` carries a `--proxy-server`
     and you don't pass an explicit `timezone`/`geo`, this auto-aligns the
@@ -793,7 +795,7 @@ async def browser_connect(
     headless: bool | str | None = None,
     timeout: float = 4.0,
 ) -> dict:
-    """Use when: attaching to existing CDP or the user's real Chrome/profile via extension; returns connected, session_id and capabilities.
+    """Use when: attaching to existing CDP or real Chrome; returns session identity and extension_warning to check before input.
 
     {mode_guidance}
 
@@ -813,6 +815,9 @@ async def browser_connect(
     `bundled_extension_version`; an unknown version stays null. Updating Python
     does not reload Chrome's extension. Ordinary extension reload can reset
     control: inspect the session and original owned page before further input.
+    A non-null extension_warning means the runtime version is unknown or differs
+    from the bundle: follow its update/reload steps before input. connected=true
+    confirms the connection; actual visibility/readiness comes from window_set.
 
     Args:
         transport: "cdp" (default, existing debug Chrome) or "extension"
@@ -830,6 +835,8 @@ async def browser_connect(
         owner, profile_owner, actual headless (null if unknown), account for
         extension, port for CDP, tabs and tab_count. Includes version/git_commit
         and loaded/bundled extension versions with their observed match status.
+        extension_warning is null when versions match, otherwise actionable
+        compatibility guidance; version matching alone does not prove visibility.
 
     Failure:
         Read error_code and setup_instructions. Missing bridge/extension needs
@@ -1082,6 +1089,8 @@ async def browser_reconnect(session_id: str, timeout: float = 10.0) -> dict:
     closed page state, or repeat a click/submission. The returned identity and
     tabs confirm reconnection; inspect page/server state before continuing an
     action whose previous result was uncertain.
+    Read any extension_warning before input: a reconnected extension may still
+    need an ordinary update/reload and another explicit connection.
 
     Args:
         session_id: Identity from browser_start/browser_connect.

@@ -680,6 +680,10 @@ async def connect_extension(session_id: str | None = None) -> BrowserClient:
     viewport override, and it follows popups/new tabs your automation opens (an
     OAuth account-chooser, a magic-link tab) while never touching your own tabs.
 
+    Before initial workflow input, call browser_connect(transport="extension")
+    and resolve any extension_warning about the actual loaded version. Bind its
+    returned session_id here; an ordinary extension reload can replace the session.
+
     Pair with `get_active_tab(browser, url_contains=...)` to pick the tab, same
     as CDP mode.
 
