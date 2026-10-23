@@ -163,6 +163,17 @@ def _cdp_get_module(domain: str | types.ModuleType):
     return importlib.import_module(domain)
 
 
+def _local_websocket_options(url: str) -> dict:
+    """Keep loopback control direct on proxy-aware websockets versions."""
+    if _is_loopback_host(urlsplit(url).hostname or "") and (
+        "proxy" in inspect.signature(websockets.connect).parameters
+    ):
+        # websockets 15+ discovers environment proxies by default. Older
+        # supported versions have no proxy parameter and connect directly.
+        return {"proxy": None}
+    return {}
+
+
 class CDPConnection:
     """Async WebSocket connection to a CDP endpoint.
 
@@ -189,19 +200,11 @@ class CDPConnection:
         """Open WebSocket and start listener."""
         if self._websocket and not self._websocket.close_code:
             return  # already connected
-        options = {}
-        if _is_loopback_host(urlsplit(self.websocket_url).hostname or "") and (
-            "proxy" in inspect.signature(websockets.connect).parameters
-        ):
-            # websockets 15+ discovers environment proxies by default. Local
-            # Chrome/extension control is direct; older supported versions have
-            # no proxy parameter and already connect directly.
-            options["proxy"] = None
         self._websocket = await websockets.connect(
             self.websocket_url,
             ping_timeout=PING_TIMEOUT,
             max_size=MAX_SIZE,
-            **options,
+            **_local_websocket_options(self.websocket_url),
         )
         self._listener_task = asyncio.ensure_future(self._listener())
         await self._register_handlers()

@@ -3,7 +3,7 @@
 AUTO-GENERATED - DO NOT EDIT
 
 This file was auto-generated from SKILL.md by integration-test-generator.
-Generated: 2026-10-24 05:54:40
+Generated: 2026-10-24 06:04:08
 
 To modify test behavior:
   1. Update SKILL.md with better workflow examples
@@ -11,7 +11,7 @@ To modify test behavior:
 
 Manual edits will be lost when regenerated!
 
-Coverage: 7/7 real workflows (100%)
+Coverage: 8/8 real workflows (100%)
 Identified using AI scenario recognition with complete code generation
 
 Coverage Report:
@@ -22,6 +22,7 @@ Coverage Report:
   ✅ Open -> record -> movement fault -> click -> inspect trusted DOM event -> stop -> decode GIF
   ✅ Real Chrome -> record -> trusted click with slow mouseup handler -> one opened form -> stop -> decode expanding click ring
   ✅ Record -> delay actual layout reply -> one trusted click -> save -> decode expanding ring
+  ✅ Verify outbound proxy -> direct bridge status -> CLI connect -> trusted demo -> save expanding ring -> shutdown refusal
 
 Uncovered workflows: None
 """
@@ -41,6 +42,7 @@ from tests.integration.recording_demo_support import (
     run_failed_movement,
     run_delayed_click_demo,
     run_slow_capture_health,
+    run_extension_proxy_demo,
 )
 
 # Integration guard: allow CI to opt-out with SKIP_INTEGRATION=1
@@ -173,6 +175,24 @@ async def test_recording_demo_real_extension_slow_health(
     await run_slow_capture_health(live_extension, tmp_path, monkeypatch)
 
 
+async def test_recording_demo_real_extension_outbound_proxy(
+    live_extension, tmp_path, monkeypatch
+):
+    """
+    Real scenario: Connect and record a real extension while an outbound proxy rejects local control
+
+    Workflow: Verify outbound proxy -> direct bridge status -> CLI connect -> trusted demo -> save expanding ring -> shutdown refusal
+
+    User problem: Shell proxy settings must not break local extension connections or recording.
+
+    Data flow:
+      1. Run the actual CLI and recorder against Chrome with a verified rejecting HTTP proxy
+    """
+    # Step 1: Run the actual CLI and recorder against Chrome with a verified rejecting HTTP proxy
+    monkeypatch.setenv("AI_DEV_BROWSER_RECORDING_DIR", str(tmp_path / "recordings"))
+    await run_extension_proxy_demo(live_extension, tmp_path, monkeypatch)
+
+
 # Smoke test - can import without errors
 def test_imports_work():
     """Verify all imports are valid"""
@@ -183,3 +203,4 @@ def test_imports_work():
     assert callable(run_failed_movement)
     assert callable(run_delayed_click_demo)
     assert callable(run_slow_capture_health)
+    assert callable(run_extension_proxy_demo)

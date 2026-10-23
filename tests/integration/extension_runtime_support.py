@@ -85,7 +85,7 @@ async def runtime_upgrade_journey(extension, root, caplog):
     try:
         await extension.call(page_goto, url=origin + "/before")
         code, before = await extension_cli(extension, "browser_connect")
-        assert code == 0 and before["connected"]
+        assert code == 0 and before["connected"], (code, before)
         assert before["extension_version"] is None
         assert before["extension_version_matches_bundle"] is None
         assert "unknown" in before["extension_warning"]

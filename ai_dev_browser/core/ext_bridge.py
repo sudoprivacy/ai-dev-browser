@@ -39,6 +39,7 @@ from urllib.parse import parse_qs, urlsplit
 import websockets
 
 from .extension import EXTENSION_BRIDGE_PORT
+from ._transport import _local_websocket_options
 
 logger = logging.getLogger(__name__)
 
@@ -370,7 +371,8 @@ async def bridge_status(
     """Query the daemon's own state (`{extension_connected, account}`) — a status
     frame it answers without relaying to the extension. None if unreachable."""
     try:
-        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+        url = f"ws://127.0.0.1:{port}"
+        async with websockets.connect(url, **_local_websocket_options(url)) as ws:
             await ws.send(json.dumps({"id": 1, "method": "_bridge.status"}))
             resp = json.loads(await asyncio.wait_for(ws.recv(), timeout))
             return resp.get("result")
@@ -383,7 +385,8 @@ async def shutdown_bridge(
 ) -> bool:
     """Close this bridge's sockets through its own protocol, never its host PID."""
     try:
-        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+        url = f"ws://127.0.0.1:{port}"
+        async with websockets.connect(url, **_local_websocket_options(url)) as ws:
             await ws.send(
                 json.dumps(
                     {

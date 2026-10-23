@@ -107,3 +107,11 @@ checks. Health sampling now runs independently of the animation timer. Viewport
 writes remain in one task; target failures, RPC deadlines, final live checks and
 the 550ms click feedback duration retain their existing contracts. The generated
 regression runs on both extension backends in all three real-extension CI jobs.
+
+Acceptance with explicit shell proxy settings exposed a separate local-control
+gap: bridge status/shutdown and the recorder did not share CDP's existing direct
+loopback WebSocket rule. They now reuse the same version-aware helper. Remote
+endpoints retain their existing proxy behavior; websockets 13.1 receives no
+unsupported argument. A generated real-extension journey verifies its rejecting
+outbound proxy, connects through the actual CLI, records trusted click/typing
+and checks the saved GIF's expanding ring without sending local control to it.

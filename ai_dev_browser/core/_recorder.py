@@ -17,6 +17,7 @@ import websockets
 from PIL import GifImagePlugin, Image, ImageChops, ImageOps
 
 from ._demo import Overlay, index_path
+from ._transport import _local_websocket_options
 from .errors import RecordingError
 from .recording import _read_json, _write_json
 
@@ -212,7 +213,11 @@ class _Capture:
 
 async def _record(folder: Path, config: dict, partial: Path) -> dict:
     async with websockets.connect(
-        config["url"], max_size=16 * 1024 * 1024, open_timeout=5, close_timeout=2
+        config["url"],
+        max_size=16 * 1024 * 1024,
+        open_timeout=5,
+        close_timeout=2,
+        **_local_websocket_options(config["url"]),
     ) as ws:
         capture = _Capture(ws)
         receiver = asyncio.create_task(capture.receive())
