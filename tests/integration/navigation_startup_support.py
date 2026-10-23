@@ -44,11 +44,7 @@ async def startup_target_journey(
     real_create = lifecycle._create_startup_page
     observers, timeline = [], []
 
-    async def observe_creation(port, guid, requested_url, timeout):
-        target_id = await real_create(port, guid, requested_url, timeout)
-        timeline.append(
-            {"phase": "target-created", "target": target_id, "url": requested_url}
-        )
+    async def watch_target(port, target_id):
         http = aiohttp.ClientSession()
         observers.append((http, None))
         peer = CDP(
@@ -60,6 +56,17 @@ async def startup_target_journey(
         observers[-1] = (http, peer)
         await peer.call("Page.enable")
         await peer.call("Network.enable")
+
+    async def observe_creation(port, guid, requested_url, timeout):
+        target_id = await real_create(port, guid, requested_url, timeout)
+        timeline.append(
+            {"phase": "target-created", "target": target_id, "url": requested_url}
+        )
+        # browser_start uses a temporary worker event loop. Keep the observer
+        # on the test loop so it survives that startup coroutine's return.
+        await asyncio.wrap_future(
+            asyncio.run_coroutine_threadsafe(watch_target(port, target_id), loop)
+        )
         return target_id
 
     async def page(request):
