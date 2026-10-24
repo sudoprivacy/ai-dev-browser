@@ -209,12 +209,13 @@ jobs:
         run: |
           docker create --init --name "adb-managed-live-$GITHUB_RUN_ID" --memory=1536m --shm-size=256m --pids-limit=384 \
             --mount "type=bind,source=$PWD/tests,target=/opt/browser/tests,readonly" \
+            --mount "type=bind,source=$PWD/pyproject.toml,target=/opt/browser/pyproject.toml,readonly" \
             adb-managed-chrome:ci /bin/sleep infinity
           docker start "adb-managed-live-$GITHUB_RUN_ID"
           docker exec --user root "adb-managed-live-$GITHUB_RUN_ID" /opt/browser/venv/bin/pip install pytest pytest-asyncio
           docker exec "adb-managed-live-$GITHUB_RUN_ID" /opt/browser/venv/bin/python tests/integration/run_managed_extension.py
       - name: Verify read-only streaming and checked native input
-        run: docker exec "adb-managed-live-$GITHUB_RUN_ID" /opt/browser/venv/bin/python -m pytest -v --full-trace -o faulthandler_timeout=180 tests/integration/test_worker_window_stream_live.py --basetemp /tmp/managed-results/window-stream
+        run: docker exec "adb-managed-live-$GITHUB_RUN_ID" /opt/browser/venv/bin/python -m pytest -v --full-trace -o faulthandler_timeout=180 -o cache_dir=/tmp/managed-results/pytest-cache tests/integration/test_worker_window_stream_live.py --basetemp /tmp/managed-results/window-stream
       - name: Collect actual-browser evidence
         if: always()
         run: docker cp "adb-managed-live-$GITHUB_RUN_ID:/tmp/managed-results" "$RUNNER_TEMP/managed-results"
