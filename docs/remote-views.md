@@ -435,3 +435,56 @@ may only cross an editor's drag threshold and leave its first gesture unmoved.
 The real canvas regression checks two consecutive gestures, trusted events and
 exact pan displacement with both CDP and the signed extension. The gesture stays
 inside the existing control lease; its input limits and deadlines are unchanged.
+
+## Authenticated full-window streaming
+
+The worker can expose a read-only RFB stream of its existing isolated X display.
+This is an optional transport for a headful browser, alongside the existing
+JPEG/native-input API. It neither launches another Chrome nor takes control.
+Headless tasks start no X11 or VNC service. Native Desktop displays report this
+capability as unavailable. Linux requires `x11vnc`, `websockify` and the noVNC
+system assets; the shared managed Chrome image includes them.
+
+The application host performs these steps through its authenticated gateway:
+
+1. Attach a unique viewer with `surface: "window"` through `/invoke`.
+2. Submit `kind: "window-stream"`, that viewer ID and the current control/target
+   epochs through the same host API. The reply contains
+   `stream: {protocol: "rfb", isViewOnly: true, password: "..."}`. The ephemeral
+   protocol password must stay out of URLs, logs and persistent storage.
+3. Open the worker's `/window-stream` WebSocket with the host bearer credential
+   and `X-ADB-Browser-Context`: URI-encoded JSON containing `binding`,
+   `controller`, `viewerId`, `controlEpoch` and `targetEpoch`. Proxy it to the
+   already authenticated user and connect a bundled noVNC client. Raw worker
+   addresses, privileged headers and VNC listeners stay private.
+4. Send human operations through the existing authenticated `input` action with
+   `surface: "window"`, under the normal human lease and current epochs.
+
+The host must verify current account/session access before accepting and while
+forwarding an established stream, including quiet viewers. The SDK's internal
+endpoint authenticates the host; it cannot verify the host's end-user identity.
+An AI credential cannot open it. Viewing cannot bind an unclaimed profile or
+change the task, browser target or input lease. A second connection using the
+same viewer ID is rejected; separate viewers have separate IDs.
+
+Read-only mode is enforced by `x11vnc -viewonly -nosel`, including keyboard,
+pointer and clipboard messages from a client that disables its own `viewOnly`
+setting. The noVNC client is a display transport; it does not bypass input
+ordering, the main/child agent barrier or the existing interrupt workflow.
+The worker initializes native input geometry from its host-owned display, so
+streaming does not need a redundant JPEG capture before the first input.
+
+A changed binding or epoch, detached viewer, browser lifecycle transition or
+lost upstream closes the connection. Input is never replayed. Reconnect reads
+the current session and obtains new stream credentials. The last disconnected
+stream closes its owned VNC processes; an unused credentials reservation expires
+with the existing viewer heartbeat. Chrome, cookies and a human lease survive
+view disconnection. Browser shutdown also closes its streams before releasing
+the display.
+
+`test_worker_window_stream_live.py` exercises actual Chrome, X11, x11vnc,
+websockify, noVNC pixels and both CDP/signed extension transports. It verifies
+host authentication, rejected raw input, checked native submission, stale
+connection closure, reconnect and browser/profile/lease preservation. It runs
+in Linux viewer CI and the managed Chrome job. This SDK test does not establish
+a consumer's public authentication, graph performance or phone acceptance.

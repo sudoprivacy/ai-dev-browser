@@ -210,4 +210,7 @@ async def test_vnc_pixels_input_and_owned_cleanup(tmp_path, remote_site):
                 *(c.close() for c in connections), return_exceptions=True
             )
             for browser in browsers:
-                await asyncio.to_thread(browser_stop, port=browser["port"])
+                stopped = await asyncio.to_thread(
+                    browser_stop, session_id=browser["session_id"]
+                )
+                assert stopped.get("stopped") is True, stopped
