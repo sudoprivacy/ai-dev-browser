@@ -1,5 +1,5 @@
-/** A reusable pixel surface. The host owns authentication and control policy. */
-export class PageSurface {
+/** Shared image/canvas input. The host owns authentication and control policy. */
+export class InputSurface {
   constructor(image, send, { drag = false, touchDrag = false } = {}) {
     this.image = image;
     this.send = send;
@@ -82,23 +82,36 @@ export class PageSurface {
     };
   }
 
-  frame(value) {
-    if (!value.data || !Number.isFinite(value.width) || !Number.isFinite(value.height)
-        || value.width <= 0 || value.height <= 0) return;
-    this.width = value.width;
-    this.height = value.height;
-    this.image.src = 'data:image/jpeg;base64,' + value.data;
-    this.image.style.aspectRatio = value.width + '/' + value.height;
+  resize(width, height) {
+    if (!Number.isFinite(width) || !Number.isFinite(height)
+        || width <= 0 || height <= 0 || width > 8192 || height > 8192) return false;
+    if (this.width !== width || this.height !== height) this.pointer = null;
+    this.width = width;
+    this.height = height;
+    this.image.style.aspectRatio = width + '/' + height;
+    return true;
   }
 
   clear() {
     this.width = this.height = 0;
     this.pointer = null;
-    this.image.removeAttribute('src');
   }
 
   dispose() {
     this.events.abort();
     this.clear();
+  }
+}
+
+/** JPEG presentation using the same checked gesture mapper as streamed canvases. */
+export class PageSurface extends InputSurface {
+  frame(value) {
+    if (!value.data || !this.resize(value.width, value.height)) return;
+    this.image.src = 'data:image/jpeg;base64,' + value.data;
+  }
+
+  clear() {
+    super.clear();
+    this.image.removeAttribute('src');
   }
 }

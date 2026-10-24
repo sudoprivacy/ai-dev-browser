@@ -482,6 +482,12 @@ with the existing viewer heartbeat. Chrome, cookies and a human lease survive
 view disconnection. Browser shutdown also closes its streams before releasing
 the display.
 
+`InputSurface` from `remote/page_view.js` maps the same bounded pointer, touch,
+drag and keyboard gestures for an image or a streamed canvas. A streaming host
+binds it to the actual noVNC canvas and calls `resize(width, height)` with the
+decoded framebuffer dimensions. `PageSurface` extends it with JPEG painting.
+Both send through the host's checked input callback; noVNC stays view-only.
+
 `test_worker_window_stream_live.py` exercises actual Chrome, X11, x11vnc,
 websockify, noVNC pixels and both CDP/signed extension transports. It verifies
 host authentication, rejected raw input, checked native submission, stale
