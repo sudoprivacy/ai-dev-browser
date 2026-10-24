@@ -23,6 +23,7 @@ class VncView:
         web_port=6087,
         web_root="/usr/share/novnc",
         timeout=10,
+        view_only=False,
     ):
         if not display or vnc_port == web_port:
             raise ValueError("An isolated display and distinct ports are required")
@@ -34,6 +35,9 @@ class VncView:
         self.display, self.password_file = display, str(password_file)
         self.vnc_port, self.web_port = vnc_port, web_port
         self.web_root, self.timeout = str(web_root), timeout
+        if type(view_only) is not bool:
+            raise ValueError("An explicit boolean viewer input policy is required")
+        self.view_only = view_only
         self.processes = []
 
     def _wait(self, port):
@@ -74,6 +78,9 @@ class VncView:
                         "-forever",
                         "-shared",
                         "-noxdamage",
+                        # Enforce this at the X server adapter. A client can
+                        # change noVNC's viewOnly setting or send raw RFB input.
+                        *(["-viewonly", "-nosel"] if self.view_only else []),
                     ],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,

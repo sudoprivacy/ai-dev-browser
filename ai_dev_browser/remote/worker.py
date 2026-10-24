@@ -29,6 +29,7 @@ from ai_dev_browser.remote.provision import (
 )
 from ai_dev_browser.remote.session import BrowserSession
 from ai_dev_browser.remote.window import WindowView, XDisplay
+from ai_dev_browser.remote.window_stream import WindowStream
 
 from .profile_lease import ProfileLease
 from .existing import ExistingExtension
@@ -82,6 +83,10 @@ class Worker:
         self.window_frame = None
         self.window_frame_time = 0
         self.window_view = SharedViewer(self.open_window, self.close_window)
+        self.window_stream = SharedViewer(
+            self.open_window_stream, self.close_window_stream
+        )
+        self.window_stream_connections = set()
         self.control = BrowserControl()
         self.handoff = None
         self.journal = self.root / "control.json"
@@ -241,6 +246,12 @@ class Worker:
                 "windowView": bool(
                     self.session and self.display and not is_transitioning
                 ),
+                "windowStream": bool(
+                    self.session
+                    and self.display
+                    and not is_transitioning
+                    and WindowStream.available()
+                ),
                 "persistentProfile": True,
             },
             "activeTargetId": live["activeTargetId"],
@@ -256,11 +267,46 @@ class Worker:
     async def open_window(self):
         if not self.display or not self.browser or self.browser["headless"]:
             raise ControlError("browser_window_view_unavailable")
-        return WindowView(display=self.display.display)
+        view = WindowView(display=self.display.display)
+        # RFB streams do not call capture(). Coordinates still use the actual
+        # host-owned X display dimensions, never dimensions supplied by clients.
+        view.width, view.height = self.display.width, self.display.height
+        return view
 
     async def close_window(self, view):
         await view.close()
         self.window_frame = None
+
+    async def open_window_stream(self):
+        if not self.display or not self.browser or self.browser["headless"]:
+            raise ControlError("browser_window_view_unavailable")
+        if not WindowStream.available():
+            raise ControlError("browser_window_stream_unavailable")
+        return await WindowStream(self.display.display).start()
+
+    async def close_window_stream(self, stream):
+        await stream.close()
+
+    def check_window_stream(self, binding, controller, action):
+        """Stream reads never claim a profile, resume AI or change the target."""
+        self.validate_binding(binding)
+        if binding != self.binding:
+            raise ControlError("browser_session_changed")
+        epoch, target_epoch = self.epochs(action)
+        if epoch != self.control.epoch or target_epoch != self.control.target_epoch:
+            raise ControlError("stale_browser_operation")
+        viewer = action.get("viewerId")
+        if not isinstance(viewer, str) or not viewer or len(viewer) > 128:
+            raise ControlError("invalid_browser_viewer")
+        owned = controller + ":" + viewer
+        if (
+            self.lifecycle_changes
+            or not self.session
+            or owned not in self.window_viewers
+        ):
+            raise ControlError("browser_viewer_not_attached")
+        self.viewers[owned] = time.monotonic()
+        return owned
 
     @staticmethod
     def surface(action):
@@ -479,6 +525,7 @@ class Worker:
 
     async def _stop_browser(self):
         for viewer in list(self.window_viewers):
+            await self.window_stream.detach(viewer)
             await self.window_view.detach(viewer)
         if self.session:
             await self.session.close()
@@ -676,11 +723,13 @@ class Worker:
                         await self.window_view.attach(owned)
                     else:
                         self.window_viewers.discard(owned)
+                        await self.window_stream.detach(owned)
                         await self.window_view.detach(owned)
                         await self.session.attach(owned)
                 else:
                     self.viewers.pop(owned, None)
                     self.window_viewers.discard(owned)
+                    await self.window_stream.detach(owned)
                     await self.window_view.detach(owned)
                     await self.session.detach(owned)
         else:
@@ -701,6 +750,15 @@ class Worker:
                     raise ControlError("browser_control_transfer_in_progress")
                 self.save(controller=controller, state="pausing")
                 await self.session.take(controller, epoch, target_epoch)
+            elif kind == "window-stream":
+                async with self.lifecycle:
+                    owned = self.check_window_stream(self.binding, controller, action)
+                    stream = await self.window_stream.attach(owned)
+                    extra["stream"] = {
+                        "protocol": "rfb",
+                        "isViewOnly": True,
+                        "password": stream.password,
+                    }
             elif kind == "frame":
                 owned = controller + ":" + str(action.get("viewerId"))
                 if owned not in self.viewers:
@@ -817,6 +875,7 @@ class Worker:
                     if time.monotonic() - heartbeat > 20:
                         self.viewers.pop(viewer, None)
                         self.window_viewers.discard(viewer)
+                        await self.window_stream.detach(viewer)
                         await self.window_view.detach(viewer)
                         await self.session.detach(viewer)
 
@@ -913,6 +972,33 @@ def application(worker):
         ):
             raise ControlError("browser_file_changed")
         return web.Response(body=data, content_type="application/octet-stream")
+
+    async def window_stream(request):
+        # This endpoint is for an authenticated host proxy, not a public raw
+        # RFB listener. It requires the same verified context as file access.
+        authorize(request, worker.host_token)
+        header = request.headers.get("X-ADB-Browser-Context", "")
+        if len(header) > 4096:
+            raise ControlError("invalid_browser_request")
+        context = json.loads(unquote(header))
+        controller = context["controller"]
+        if not isinstance(controller, str) or not controller.startswith("user-"):
+            raise ControlError("invalid_browser_controller")
+
+        def validate():
+            return worker.check_window_stream(context["binding"], controller, context)
+
+        async with worker.lifecycle:
+            owned = validate()
+            if owned in worker.window_stream_connections:
+                raise ControlError("browser_viewer_already_streaming")
+            stream = await worker.window_stream.attach(owned)
+            worker.window_stream_connections.add(owned)
+        try:
+            return await stream.proxy(request, worker.http, validate)
+        finally:
+            worker.window_stream_connections.discard(owned)
+            await worker.window_stream.detach(owned)
 
     async def agent(request):
         authorize(request, worker.ai_token)
@@ -1055,6 +1141,7 @@ def application(worker):
             web.post("/mcp", mcp),
             web.post("/files/receive", receive_file),
             web.post("/files/read", read_file),
+            web.get("/window-stream", window_stream),
         ]
     )
     extension = worker.extension_directory

@@ -125,8 +125,10 @@ async def test_ordered_native_canvas_drag(remote_site, tmp_path, transport):
                 )
                 observed = await wait_for(
                     lambda: page.js("({pan,events:panEvents})"),
-                    lambda value: value["pan"]
-                    == {"x": -100 * (index + 1), "y": -50 * (index + 1)},
+                    lambda value: (
+                        value["pan"]
+                        == {"x": -100 * (index + 1), "y": -50 * (index + 1)}
+                    ),
                 )
                 outcomes.append(observed)
             events = outcomes[-1]["events"]
@@ -415,10 +417,12 @@ async def test_worker_selection_paste_and_lease(
             try:
                 ready = await wait_for(
                     gesture_state,
-                    lambda observed: observed["selected"] == PHRASE
-                    and any(
-                        e["kind"] == "mouseup" and e["trusted"]
-                        for e in observed["events"]
+                    lambda observed: (
+                        observed["selected"] == PHRASE
+                        and any(
+                            e["kind"] == "mouseup" and e["trusted"]
+                            for e in observed["events"]
+                        )
                     ),
                 )
             finally:
@@ -683,4 +687,7 @@ async def test_scaled_surface_drag_selects_exact_phrase(remote_site, tmp_path, g
         finally:
             await asyncio.gather(*(connection.close() for connection in connections))
             for browser in reversed(browsers):
-                await asyncio.to_thread(browser_stop, session_id=browser["session_id"])
+                stopped = await asyncio.to_thread(
+                    browser_stop, session_id=browser["session_id"]
+                )
+                assert stopped.get("stopped") is True, stopped
