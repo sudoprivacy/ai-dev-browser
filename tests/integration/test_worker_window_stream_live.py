@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import sys
+from importlib.resources import files
 from pathlib import Path
 from urllib.parse import quote
 
@@ -123,6 +124,21 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
                 </script>""".replace("PASSWORD", json.dumps(credentials["password"])),
             )
 
+        async def input_surface(request):
+            return web.FileResponse(files("ai_dev_browser.remote") / "page_view.js")
+
+        async def checked_input(request):
+            reply = await host(
+                {
+                    "kind": "input",
+                    "surface": "window",
+                    "input": await request.json(),
+                    "controlEpoch": context["controlEpoch"],
+                    "targetEpoch": context["targetEpoch"],
+                }
+            )
+            return web.json_response(reply)
+
         async def get_stream():
             credentials.clear()
             reply = await host(
@@ -197,7 +213,14 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
             await asyncio.wait_for(clipboard_ready(), 5)
 
             app = web.Application()
-            app.add_routes([web.get("/", viewer_html), web.get("/view", proxy)])
+            app.add_routes(
+                [
+                    web.get("/", viewer_html),
+                    web.get("/view", proxy),
+                    web.get("/input-surface.js", input_surface),
+                    web.post("/input", checked_input),
+                ]
+            )
             app.router.add_static("/novnc/", "/usr/share/novnc")
             viewer_runner = web.AppRunner(app)
             await viewer_runner.setup()
@@ -314,14 +337,36 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
                 lambda: viewer.js("window.isConnected"), lambda value: value is True, 30
             )
             await wait_for(green_pixels, lambda value: value > 100_000, 30)
-            await host(
-                {
-                    "kind": "input",
-                    "surface": "window",
-                    "input": {"kind": "click", **geometry},
-                    **epochs(held),
-                }
+            # Both image and streamed-canvas viewers use the public gesture
+            # mapper. Only its checked host callback can write to Chrome.
+            await viewer.js("""(async()=>{
+                const {InputSurface}=await import('/input-surface.js');
+                const canvas=document.querySelector('canvas');canvas.tabIndex=0;
+                rfb.viewOnly=true;rfb.focusOnClick=false;
+                window.surface=new InputSurface(canvas,input=>fetch('/input',{
+                    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)}));
+                surface.resize(canvas.width,canvas.height);
+            })()""")
+            rect = await viewer.js("""(()=>{const c=document.querySelector('canvas'),r=c.getBoundingClientRect();
+                return {x:r.x,y:r.y,width:r.width,height:r.height,w:c.width,h:c.height}})()""")
+            point = {
+                "x": rect["x"] + geometry["x"] * rect["width"] / rect["w"],
+                "y": rect["y"] + geometry["y"] * rect["height"] / rect["h"],
+            }
+            await viewer.call(
+                "Input.dispatchMouseEvent", {"type": "mouseMoved", **point}
             )
+            for phase in ("mousePressed", "mouseReleased"):
+                await viewer.call(
+                    "Input.dispatchMouseEvent",
+                    {
+                        "type": phase,
+                        **point,
+                        "button": "left",
+                        "buttons": 1 if phase == "mousePressed" else 0,
+                        "clickCount": 1,
+                    },
+                )
             await wait_for(
                 lambda: page.js("document.querySelector('#receipt').textContent"), bool
             )
