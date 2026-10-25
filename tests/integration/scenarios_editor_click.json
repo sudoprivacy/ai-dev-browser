@@ -1,0 +1,207 @@
+{
+  "config": {
+    "imports": [
+      "from tests.integration.editor_click_support import editor_journey, navigation_journey, rejected_editor_journey, nested_click_journey"
+    ],
+    "call_style": "function",
+    "required_env_vars": [],
+    "smoke_test_assertions": [
+      "callable(editor_journey)",
+      "callable(navigation_journey)",
+      "callable(rejected_editor_journey)",
+      "callable(nested_click_journey)"
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "real_extension_editor_rejection_no_replay",
+      "title": "Stop after the application rejects a full document replacement",
+      "workflow": "Load actual Monaco with a controlled application restoring the original document -> discover proxy -> request replacement plus Enter -> observe full model mismatch -> one editor edit and one application restoration -> no typing fallback or Enter",
+      "user_problem": "Verification failure must not replay a destructive write or submit the wrong document.",
+      "async": true,
+      "fixtures": [
+        "live_extension",
+        "interaction_site",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "await rejected_editor_journey(live_extension, interaction_site, tmp_path)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cdp_editor_rejection_no_replay",
+      "title": "Preserve rejected editor content without replay in CDP",
+      "workflow": "Load real editor with application restoration -> discover -> replace plus Enter -> verify mismatch -> no second write and no Enter",
+      "user_problem": "Both transports must stop on an application-rejected full document edit.",
+      "async": true,
+      "fixtures": [
+        "interaction_cdp",
+        "interaction_site",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "await rejected_editor_journey(interaction_cdp, interaction_site, tmp_path)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "real_extension_monaco_exact_document",
+      "title": "Replace a real Monaco document without retrying its input proxy",
+      "workflow": "Load official Monaco with an existing long document -> discover proxy ref -> fill seven-scope JSON through the real CLI -> verify one full model edit -> fill long JSON through Python -> preserve second editor and ordinary fields",
+      "user_problem": "A proxy textarea must never cause duplicate JSON documents or a false verified result.",
+      "async": true,
+      "fixtures": [
+        "live_extension",
+        "interaction_site",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "await editor_journey(live_extension, interaction_site, tmp_path)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "real_extension_private_editor_refused",
+      "title": "Preserve an editor whose full model is unavailable",
+      "workflow": "Load actual editor with private model API -> discover proxy -> request real CLI replacement and Enter -> nonzero unsupported result -> no input or model change",
+      "user_problem": "Unknown editor models require an explicit unsupported result rather than destructive fallback or accidental submission.",
+      "async": true,
+      "fixtures": [
+        "live_extension",
+        "interaction_site",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "await editor_journey(live_extension, interaction_site, tmp_path, private_api=True)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "real_extension_collapsed_navigation",
+      "title": "Refuse hidden and covered nav targets, then activate the visible item once",
+      "workflow": "Discover collapsed child -> refuse ref/text/id/xpath and actual CLI clicks without input -> refuse overlay -> expand real menu -> one trusted navigation -> one ordinary non-navigation action",
+      "user_problem": "A hidden link must not receive a verified success from unrelated focus changes or synthetic fallback.",
+      "async": true,
+      "fixtures": [
+        "live_extension",
+        "interaction_site",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "await navigation_journey(live_extension, interaction_site, tmp_path)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cdp_monaco_exact_document",
+      "title": "Replace real Monaco JSON using standalone Chrome",
+      "workflow": "Discover the real proxy textarea -> replace existing JSON -> verify entire long model -> preserve independent editor -> verify ordinary input/textarea",
+      "user_problem": "Both transports must share safe verified-fill behavior.",
+      "async": true,
+      "fixtures": [
+        "interaction_cdp",
+        "interaction_site",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "await editor_journey(interaction_cdp, interaction_site, tmp_path)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cdp_private_editor_refused",
+      "title": "Refuse an unverifiable Monaco model in standalone Chrome",
+      "workflow": "Discover real Monaco without a public model API -> request replacement and Enter -> refuse without document changes -> inspect full model and ledger",
+      "user_problem": "Standalone mode must not corrupt editor proxies or submit unverifiable content.",
+      "async": true,
+      "fixtures": [
+        "interaction_cdp",
+        "interaction_site",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "await editor_journey(interaction_cdp, interaction_site, tmp_path, private_api=True)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cdp_collapsed_navigation",
+      "title": "Check actual visible hit targets in standalone Chrome",
+      "workflow": "Discover hidden link -> reject ref/text clicks and overlay without events -> expand menu -> one trusted navigation -> one visible action without navigation",
+      "user_problem": "Hidden geometry and unrelated focus must not produce a verified click receipt.",
+      "async": true,
+      "fixtures": [
+        "interaction_cdp",
+        "interaction_site",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "await navigation_journey(interaction_cdp, interaction_site, tmp_path)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "real_extension_nested_hit_targets",
+      "title": "Preserve trusted clicks in scaled iframes and open/closed shadow roots",
+      "workflow": "Discover actual iframe button -> click ref and observe one trusted event -> discover open and closed shadow buttons -> one trusted event each -> click iframe by html id -> inspect exact event ledger and rendered screenshot",
+      "user_problem": "Shared hit-target validation must handle real nested documents and shadow roots without refusing valid controls or sending input to another target.",
+      "async": true,
+      "fixtures": [
+        "live_extension",
+        "interaction_site",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "await nested_click_journey(live_extension, interaction_site, tmp_path)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cdp_nested_hit_targets",
+      "title": "Preserve trusted clicks in scaled iframes and open/closed shadow roots",
+      "workflow": "Discover actual iframe button -> click ref and observe one trusted event -> discover open and closed shadow buttons -> one trusted event each -> click iframe by html id -> inspect exact event ledger and rendered screenshot",
+      "user_problem": "Shared hit-target validation must handle real nested documents and shadow roots without refusing valid controls or sending input to another target.",
+      "async": true,
+      "fixtures": [
+        "interaction_cdp",
+        "interaction_site",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "await nested_click_journey(interaction_cdp, interaction_site, tmp_path)"
+          ]
+        }
+      ]
+    }
+  ]
+}

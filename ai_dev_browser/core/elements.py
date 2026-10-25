@@ -7,6 +7,7 @@ import json
 from ai_dev_browser.cdp import input_ as cdp_input
 
 from . import human
+from ._actionability import ACTIONABILITY_JS, click_refusal
 from ._element import Element
 from ._ref import make_ref
 from ._tab import Tab
@@ -841,10 +842,10 @@ async def click_by_text(
     `find_by_text` does — if `find_by_text` can see it, this can click it.
 
     Returns `{clicked, verified, method, ref, url_before, url_after,
-    title_after, navigated}` — `verified` (a change was observed) + `navigated`
-    already tell you whether it worked, so **don't** screenshot just to check.
-    Only screenshot for visual state the return can't express (form-validation
-    rendering, captcha pixels for OCR, the final view for the user).
+    title_after, navigated}`. `verified` means a page change was observed after
+    clicking a usable visible hit target. `navigated` reports a URL change;
+    neither asserts an application transaction. Use screenshots for visual
+    state these fields cannot express.
 
     Robust actuation: resolves the nearest SIZED clickable ancestor (role /
     jsaction / onclick / cursor:pointer), so a 0x0 or thin text leaf — a
@@ -852,6 +853,8 @@ async def click_by_text(
     clicked on the container, not the sliver. Then it verifies a change and, if
     none, falls back trusted → synthetic pointer sequence → JS click; `method`
     reports which worked (None if nothing observably changed).
+    Hidden, clipped, disabled or covered targets are refused before input and
+    never enter the fallback ladder. Expand/show the control first.
 
     Matches on the element's *accessible name*, so it handles the two cases a
     raw text search misses: a label split across children
@@ -879,6 +882,9 @@ async def click_by_text(
         after the click (SPA route change or full page load).
 
     Failure:
+        If found but hidden, clipped, disabled or covered, show/expand the
+        control and remove overlays. No input or fallback was sent; switching
+        locators does not make a blocked target usable.
         No element with this accessible name, in the main frame or any
         same-origin iframe, within `timeout`. Check spelling / case (matching is
         case-insensitive substring); try a shorter substring; raise `timeout` if
@@ -1254,6 +1260,12 @@ async def type_by_text(
     `typed:false` instead of a false success. `keystrokes=True` / `human_like`
     bias the first method; both still fall back.
 
+    Monaco uses one full-document edit (`method="editor"`) verified against
+    its complete model. A missing public model API or unsupported rich editor
+    returns `unsupported` before editing; model mismatches stop without retry.
+    Editor fills use a bulk edit regardless of human/keystroke preferences.
+    Enter is sent only after successful verification.
+
     Args:
         tab: Tab instance
         name: Accessible name to page_discover element (placeholder, label, etc.)
@@ -1274,10 +1286,13 @@ async def type_by_text(
         iframe, within `timeout`. If the input has no accessible name at all
         (no label, no placeholder, no aria-label), locate it by html id or xpath
         instead: `find_by_html_id` / `find_by_xpath` → `type_by_ref`.
-        `typed:false` with the element found means every method left it empty —
-        it isn't a real editable (display-only / disabled / canvas widget).
-        Cross-origin iframes are not scanned — type into one with
-        `js_evaluate(frame="<url-substr>", "el.value = ...")`.
+        An editor `unsupported` result means no complete model is available:
+        no edit or Enter was sent. Use its documented full-document API and
+        verify the entire model. A model conflict or unverified fill needs
+        inspection before another action; Enter is withheld and editor writes
+        are never replayed through textarea fallbacks.
+        Cross-origin iframes require explicit frame-aware access. Do not type
+        into an unverified frame or substitute a rich editor proxy setter.
 
     Example:
         type_by_text(name="用户名", text="myusername")
@@ -1315,7 +1330,7 @@ async def type_by_text(
     result = await _fill_verified(tab, element, text, prefer=prefer)
     result["name"] = name
     result["ref"] = located["ref"]
-    if enter:
+    if enter and result.get("verified"):
         pressed = await press_key(tab, "Enter", ref=located["ref"])
         result["entered"] = bool(pressed.get("pressed"))
     return result
@@ -1707,23 +1722,12 @@ _LOCATE_FOR_CLICK_JS = """
     r0.top >= 0 && r0.left >= 0 &&
     r0.bottom <= (ownerWin.innerHeight || 1e9) &&
     r0.right <= (ownerWin.innerWidth || 1e9);
-  try {
-    if (el.scrollIntoViewIfNeeded) el.scrollIntoViewIfNeeded(true);
-    else el.scrollIntoView({block: 'center', inline: 'center'});
-  } catch (e) {}
-  const r = el.getBoundingClientRect();
-  let x = r.left + r.width / 2, y = r.top + r.height / 2;
-  let win = ownerWin;
-  try {
-    while (win && win !== window.top && win.frameElement) {
-      const fr = win.frameElement.getBoundingClientRect();
-      x += fr.left; y += fr.top;
-      win = win.parent;
-    }
-  } catch (e) {}
-  return {x: x, y: y, w: r.width, h: r.height, wasVisible: wasVisible};
+  __ACTIONABILITY__
+  const state=__actionState(el,el,true,__FRAME_LOCAL__);
+  state.wasVisible=wasVisible;
+  return state;
 })()
-"""
+""".replace("__ACTIONABILITY__", ACTIONABILITY_JS)
 
 
 def _xpath_finder_js(xpath: str) -> str:
@@ -1764,7 +1768,10 @@ async def _trusted_click(
     """
     url_before = (await _capture_page_state(tab)).get("url", "")
     hit = await tab.evaluate(
-        _LOCATE_FOR_CLICK_JS.replace("__FINDER__", finder_js), session_id=session_id
+        _LOCATE_FOR_CLICK_JS.replace("__FINDER__", finder_js).replace(
+            "__FRAME_LOCAL__", "true" if session_id else "false"
+        ),
+        session_id=session_id,
     )
     action = {"clicked": False, locator_key: locator_val, "url_before": url_before}
     if not hit:
@@ -1777,17 +1784,17 @@ async def _trusted_click(
             }
         )
         return action
-    if not hit.get("w") or not hit.get("h"):
+    if not hit.get("actionable"):
         action.update(
             {
-                "error": "element found but has zero size (not clickable)",
+                **click_refusal(hit),
                 "navigated": False,
                 "url_after": url_before,
                 "title_after": "",
             }
         )
         return action
-    await tab.mouse_click(hit["x"], hit["y"], session_id=session_id)
+    await tab.mouse_click(hit["point"]["x"], hit["point"]["y"], session_id=session_id)
     action["clicked"] = True
     if not hit.get("wasVisible"):
         # Signal the caller that the target wasn't on-screen — a hint that

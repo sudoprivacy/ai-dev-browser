@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from ai_dev_browser.core.ax import _fill_verified
+from ai_dev_browser.core.ax import _fill_verified, click_by_ref
 from ai_dev_browser.core.errors import InputUnavailableError, SessionError
 from ai_dev_browser.core.extension import (
     extension_version_info,
@@ -34,7 +34,9 @@ async def test_refused_typing_never_clears_focuses_or_uses_a_fallback(prefer, er
 async def test_dispatch_refusal_does_not_advance_to_native_value_setter():
     error = InputUnavailableError("became hidden")
     tab = SimpleNamespace(_prepare_input=AsyncMock(), send=AsyncMock(side_effect=error))
-    element = SimpleNamespace(apply=AsyncMock(), focus=AsyncMock())
+    element = SimpleNamespace(
+        apply=AsyncMock(return_value={"kind": "plain"}), focus=AsyncMock()
+    )
     with pytest.raises(InputUnavailableError) as caught:
         await _fill_verified(tab, element, "keep private", prefer="keys")
     assert caught.value is error
@@ -42,6 +44,19 @@ async def test_dispatch_refusal_does_not_advance_to_native_value_setter():
         "getOwnPropertyDescriptor" not in call.args[0]
         for call in element.apply.await_args_list
     )
+    tab.send.assert_awaited_once()
+
+
+async def test_click_resolution_refusal_stops_before_any_fallback_query():
+    error = SessionError("revoked while resolving the target", "auth_failed")
+    tab = SimpleNamespace(
+        _prepare_input=AsyncMock(),
+        evaluate=AsyncMock(return_value={"url": "https://fixture.invalid/"}),
+        send=AsyncMock(side_effect=error),
+    )
+    with pytest.raises(SessionError) as caught:
+        await click_by_ref(tab, "1#2")
+    assert caught.value is error
     tab.send.assert_awaited_once()
 
 

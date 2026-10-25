@@ -550,3 +550,50 @@ async def live_extension(request, tmp_path, monkeypatch):
         from .live_cleanup import close_live_extension
 
         await close_live_extension(chrome, server, tmp_path)
+
+
+@pytest.fixture(scope="session")
+def monaco_assets(tmp_path_factory):
+    from .editor_click_support import install_monaco
+
+    return install_monaco(tmp_path_factory.mktemp("monaco-assets"))
+
+
+@pytest.fixture
+async def interaction_site(monaco_assets):
+    from .editor_click_support import interaction_site as start_site
+
+    async with start_site(monaco_assets) as url:
+        yield url
+
+
+@pytest.fixture
+async def interaction_cdp():
+    import sys
+    from ai_dev_browser.core import browser_stop
+
+    chrome = await asyncio.to_thread(
+        browser_start,
+        headless=True,
+        temp=True,
+        silent_stderr=True,
+        extra_args=["--no-sandbox"] if sys.platform == "linux" else [],
+    )
+    assert "error" not in chrome, chrome
+    browser = None
+    try:
+        browser = await connect_browser(
+            port=chrome["port"], session_id=chrome["session_id"]
+        )
+        tab = await get_active_tab(browser)
+
+        class Driver:
+            async def call(self, function, **kwargs):
+                return await function(tab, **kwargs)
+
+        yield Driver()
+    finally:
+        if browser:
+            await browser.close()
+        stopped = await asyncio.to_thread(browser_stop, session_id=chrome["session_id"])
+        assert stopped["stopped"], stopped
