@@ -31,8 +31,8 @@ from ai_dev_browser.remote.session import BrowserSession
 from ai_dev_browser.remote.window import WindowView, XDisplay
 from ai_dev_browser.remote.window_stream import WindowStream
 
-from .profile_lease import ProfileLease
 from .existing import ExistingExtension
+from .profile_lease import ProfileLease
 
 
 class Worker:
@@ -236,6 +236,10 @@ class Worker:
             if self.browser
             else "extension",
             "capabilities": {
+                "authorizedPageLaunch": (
+                    self.personal_reference is None
+                    and (self.browser is None or self.browser.get("transport") == "cdp")
+                ),
                 "dragInput": True,
                 "clipboardText": True,
                 "selectionRead": True,
@@ -355,6 +359,13 @@ class Worker:
 
     async def start(self, action, actor):
         async with self.changing_lifecycle():
+            if not isinstance(action.get("isHeadless"), bool) or action.get(
+                "transport", "extension"
+            ) not in {"cdp", "extension"}:
+                raise ControlError("explicit_browser_launch_mode_required")
+            if actor != "ai":
+                await self.control.take(actor)
+                self.save(state="pausing")
             await self._start_browser(action, actor)
 
     async def _start_browser(self, action, actor):
@@ -750,6 +761,25 @@ class Worker:
                     raise ControlError("browser_control_transfer_in_progress")
                 self.save(controller=controller, state="pausing")
                 await self.session.take(controller, epoch, target_epoch)
+            elif kind == "observe":
+                extra["observation"] = await self.session.observe(epoch, target_epoch)
+            elif kind == "open-authorized-page":
+                if (
+                    self.personal_reference is not None
+                    or self.browser["transport"] != "cdp"
+                ):
+                    raise ControlError("browser_authorized_page_not_supported")
+                if set(action) != {
+                    "kind",
+                    "url",
+                    "cookie",
+                    "controlEpoch",
+                    "targetEpoch",
+                }:
+                    raise ControlError("invalid_browser_authorized_page")
+                await self.session.open_authorized_page(
+                    controller, epoch, target_epoch, action["url"], action["cookie"]
+                )
             elif kind == "window-stream":
                 async with self.lifecycle:
                     owned = self.check_window_stream(self.binding, controller, action)

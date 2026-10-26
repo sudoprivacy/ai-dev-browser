@@ -436,6 +436,34 @@ The real canvas regression checks two consecutive gestures, trusted events and
 exact pan displacement with both CDP and the signed extension. The gesture stays
 inside the existing control lease; its input limits and deadlines are unchanged.
 
+## Host-authorized page launch
+
+The host-only `/invoke` API accepts `kind: "open-authorized-page"` with the
+current control/target epochs, an exact `url` and a `cookie` containing `name`,
+`value`, `url`, `path`, `httpOnly: true`, `sameSite: "Strict"` and `expires`.
+The cookie must be short-lived, scoped below the origin root, and installed
+before the first navigation. HTTPS is required except for loopback HTTP. This
+operation is unavailable through the AI credential or public agent tools and
+is supported only by an owned CDP browser, not personal Chrome or extension
+transport. Discover support through `capabilities.authorizedPageLaunch`.
+
+Take the human lease through the existing engine acknowledgement barrier first.
+A first host browser start now also takes that barrier before launching Chrome.
+The launch opens a new target without overwriting the user's previous tab,
+requires an HTML document at the exact requested URL, and returns ordinary
+browser state without echoing credentials. On failure it removes the new
+cookie and target and restores the previous target when available. It does not
+retry navigation. The consuming host must revoke an unsuccessful application
+session and verify the intended content; a completed request alone proves
+neither application authentication nor successful rendering.
+
+The host may use the read-only `kind: "observe"` operation to inspect the current
+target through the existing observation path. Observation does not transfer
+input control. Host credentials, session cookies and privileged actions must
+never be included in a renderer reply, URL, model context or agent tool schema.
+Real-worker tests cover cookie-before-navigation, an unreadable HttpOnly cookie,
+reload, foreign/stale leases, AI refusal and compensation after a JSON error page.
+
 ## Authenticated full-window streaming
 
 The worker can expose a read-only RFB stream of its existing isolated X display.
