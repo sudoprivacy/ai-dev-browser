@@ -10,6 +10,42 @@ from ai_dev_browser.remote.control import ControlError
 from ai_dev_browser.remote.worker import Worker
 
 
+async def test_first_host_start_drains_ai_before_acknowledging_human_control(tmp_path):
+    worker = Worker(tmp_path, "host", "agent", display_mode="native")
+    entered, release = asyncio.Event(), asyncio.Event()
+    launches = []
+
+    async def in_flight():
+        entered.set()
+        await release.wait()
+
+    async def start_browser(action, actor):
+        assert worker.control.state == "human"
+        assert worker.control.controller == actor == "user-controller"
+        launches.append(action)
+
+    worker._start_browser = start_browser
+    operation = asyncio.create_task(worker.control.run("ai", 0, 0, in_flight))
+    await entered.wait()
+    starting = asyncio.create_task(
+        worker.start({"isHeadless": True, "transport": "cdp"}, "user-controller")
+    )
+    await asyncio.sleep(0)
+    assert worker.control.state == "pausing" and not launches
+    release.set()
+    await operation
+    await starting
+    assert len(launches) == 1 and worker.control.state == "human"
+
+
+async def test_invalid_host_start_does_not_change_the_control_lease(tmp_path):
+    worker = Worker(tmp_path, "host", "agent", display_mode="native")
+    before = worker.control.snapshot()
+    with pytest.raises(ControlError, match="explicit_browser_launch_mode_required"):
+        await worker.start({"transport": "cdp"}, "user-controller")
+    assert worker.control.snapshot() == before
+
+
 async def test_concurrent_status_readers_preserve_idle_human_control(tmp_path):
     entered, release = asyncio.Event(), asyncio.Event()
     worker = Worker(tmp_path, "host", "agent", display_mode="native")

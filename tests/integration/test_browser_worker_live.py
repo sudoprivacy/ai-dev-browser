@@ -4,6 +4,7 @@ import asyncio
 import json
 import secrets
 import sys
+import time
 
 import aiohttp
 import pytest
@@ -12,6 +13,151 @@ from aiohttp import web
 from ai_dev_browser.remote.worker import Worker, application
 
 pytest_plugins = ["tests.integration.test_remote_view"]
+
+
+async def test_host_authorized_page_keeps_cookie_private_and_preserves_control(
+    tmp_path,
+):
+    """The actual host route installs the cookie before the first protected read."""
+    credential = secrets.token_hex(32)
+    reads = []
+    app = web.Application()
+
+    async def review(request):
+        reads.append(request.cookies.get("fixture_review"))
+        if reads[-1] != credential:
+            raise web.HTTPForbidden()
+        return web.Response(
+            text="<title>Private review</title><p>Checked model</p>",
+            content_type="text/html",
+        )
+
+    app.router.add_get("/review/fixture/", review)
+
+    async def unavailable(_request):
+        return web.json_response({"error": "VIEW_UNAVAILABLE"}, status=503)
+
+    app.router.add_get("/review/error/", unavailable)
+    review_runner = web.AppRunner(app)
+    await review_runner.setup()
+    review_site = web.TCPSite(review_runner, "127.0.0.1", 0)
+    await review_site.start()
+    url = f"http://127.0.0.1:{review_site._server.sockets[0].getsockname()[1]}/review/fixture/"
+    host_token, ai_token = secrets.token_hex(32), secrets.token_hex(32)
+    worker = Worker(
+        tmp_path,
+        host_token,
+        ai_token,
+        display_mode="native",
+        chrome_args=["--no-sandbox"] if sys.platform == "linux" else [],
+    )
+    runner = web.AppRunner(application(worker))
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    origin = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
+    binding = {"orgId": "local", "userId": "fixture", "sessionId": "review-chat"}
+    controller = "user-fixture-controller"
+    async with aiohttp.ClientSession() as http:
+
+        async def host(action, *, token=host_token, owner=controller, status=200):
+            async with http.post(
+                origin + "/invoke",
+                headers={"Authorization": "Bearer " + token},
+                json={"binding": binding, "controller": owner, "action": action},
+            ) as response:
+                if status == 403:
+                    assert response.status == status
+                    return None
+                body = await response.json()
+                assert response.status == status, body
+                return body
+
+        try:
+            started = (
+                await host({"kind": "start", "isHeadless": True, "transport": "cdp"})
+            )["session"]
+            assert started["capabilities"]["authorizedPageLaunch"]
+            action = {
+                "kind": "open-authorized-page",
+                "url": url,
+                "controlEpoch": started["controlEpoch"],
+                "targetEpoch": started["targetEpoch"],
+                "cookie": {
+                    "name": "fixture_review",
+                    "value": credential,
+                    "url": url,
+                    "path": "/review/fixture/",
+                    "httpOnly": True,
+                    "sameSite": "Strict",
+                    "expires": time.time() + 1800,
+                },
+            }
+            await host(action, token=ai_token, status=403)
+            other = await host(action, owner="user-other", status=409)
+            assert other["error"] == "browser_control_not_owned"
+            assert not reads
+            result = await host(action)
+            current = result["session"]
+            assert reads == [credential]
+            assert current["browserSessionId"] == started["browserSessionId"]
+            assert current["activeTargetId"] != started["activeTargetId"]
+            assert current["state"] == "human" and current["isController"]
+            assert current["targetEpoch"] > started["targetEpoch"]
+            assert credential not in json.dumps(result)
+            assert credential not in (tmp_path / "control.json").read_text()
+            page = await worker.session._connect_page()
+            assert await page.js("document.title") == "Private review"
+            assert credential not in await page.js("document.cookie")
+            stale = await host(action, status=409)
+            assert stale["error"] == "stale_browser_operation"
+            assert reads == [credential]
+            async with http.post(
+                origin + "/agent",
+                headers={"Authorization": "Bearer " + ai_token},
+                json={**action, "targetEpoch": current["targetEpoch"]},
+            ) as response:
+                assert response.status == 409
+                assert (await response.json())[
+                    "error"
+                ] == "invalid_agent_browser_action"
+            failed_url = url.replace("/review/fixture/", "/review/error/")
+            failed = await host(
+                {
+                    **action,
+                    "url": failed_url,
+                    "targetEpoch": current["targetEpoch"],
+                    "cookie": {
+                        **action["cookie"],
+                        "url": failed_url,
+                        "path": "/review/error/",
+                    },
+                },
+                status=409,
+            )
+            assert failed["error"] == "browser_authorized_page_failed"
+            restored = (await host({"kind": "state"}))["session"]
+            assert restored["activeTargetId"] == current["activeTargetId"]
+            page = await worker.session._connect_page()
+            cookies = await page.call("Network.getCookies", {"urls": [failed_url]})
+            assert not cookies["cookies"]
+            reloaded = await host(
+                {
+                    "kind": "reload",
+                    "controlEpoch": restored["controlEpoch"],
+                    "targetEpoch": restored["targetEpoch"],
+                }
+            )
+            assert (
+                reloaded["session"]["browserSessionId"] == current["browserSessionId"]
+            )
+            # Wait for a fixed DOM read, without replaying navigation.
+            await page.wait_navigation({})
+            assert reads == [credential, credential]
+        finally:
+            await worker.close()
+            await runner.cleanup()
+            await review_runner.cleanup()
 
 
 @pytest.mark.parametrize("is_headless", [True, False])

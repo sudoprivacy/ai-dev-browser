@@ -12,7 +12,8 @@ from typing import Any
 
 import aiohttp
 
-from .cdp import CDP
+from .authorized_page import navigation_cookie
+from .cdp import CDP, BrowserViewError
 from .control import BrowserControl, ControlError, SharedViewer
 from .page import PageView
 
@@ -338,6 +339,80 @@ class BrowserSession:
                 raise ControlError("invalid_browser_action")
 
         return await self.control.run(actor, epoch, target_epoch, perform)
+
+    async def open_authorized_page(self, controller, epoch, target_epoch, url, cookie):
+        """Install a host session and open a new owned tab under the human barrier."""
+        params = navigation_cookie(url, cookie)
+
+        async def perform():
+            if self._dialog:
+                raise ControlError("browser_dialog_open")
+            previous = self.target_id
+            browser = await self._connect_browser()
+            created = await browser.call(
+                "Target.createTarget", {"url": "about:blank", "background": True}
+            )
+            page = None
+            try:
+                await self.browser.update_targets()
+                await self._select(created["targetId"])
+                page = await self._connect_page()
+                installed = await page.call("Network.setCookie", params)
+                if not installed.get("success"):
+                    raise ControlError("browser_authorized_page_failed")
+                navigation = await page.call("Page.navigate", {"url": url})
+                if navigation.get("errorText"):
+                    raise ControlError("browser_authorized_page_failed")
+                await page.wait_navigation(navigation)
+                document = (await page.call("Page.getFrameTree"))["frameTree"]["frame"]
+                if (
+                    document.get("url") != url
+                    or document.get("mimeType") != "text/html"
+                ):
+                    raise ControlError("browser_authorized_page_failed")
+                await page.call("Page.bringToFront")
+                self._frame = None
+            except BaseException:
+                # Compensate only this handoff and the target we created. Never
+                # retry navigation or overwrite an existing user tab.
+                if page and not page.disconnected:
+                    try:
+                        await page.call(
+                            "Network.deleteCookies",
+                            {
+                                "name": params["name"],
+                                "url": url,
+                                "path": params["path"],
+                            },
+                        )
+                    except (
+                        BrowserViewError,
+                        aiohttp.ClientError,
+                        ConnectionError,
+                        TimeoutError,
+                    ):
+                        logging.getLogger(__name__).warning(
+                            "Authorized-page cookie cleanup failed"
+                        )
+                try:
+                    await browser.call(
+                        "Target.closeTarget", {"targetId": created["targetId"]}
+                    )
+                    tabs = await self._refresh()
+                    if previous in {tab["id"] for tab in tabs}:
+                        await self._select(previous)
+                except (
+                    BrowserViewError,
+                    aiohttp.ClientError,
+                    ConnectionError,
+                    TimeoutError,
+                ):
+                    logging.getLogger(__name__).warning(
+                        "Authorized-page target cleanup failed"
+                    )
+                raise
+
+        return await self.control.run(controller, epoch, target_epoch, perform)
 
     async def agent_command(
         self, epoch: int, target_epoch: int, method: str, params: dict
