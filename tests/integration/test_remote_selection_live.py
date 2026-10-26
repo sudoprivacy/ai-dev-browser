@@ -33,6 +33,59 @@ RANGE = """(() => {
 })()"""
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Owned X11 display requires Linux")
+async def test_owned_display_survives_probe_disconnect_before_manager(monkeypatch):
+    """Initial readiness clients cannot reset the display before Openbox connects."""
+    original_exec = asyncio.create_subprocess_exec
+    checked = False
+
+    async def start_process(*args, **kwargs):
+        nonlocal checked
+        if args[0] == "openbox":
+            display = kwargs["env"]["DISPLAY"]
+
+            async def probe(*options):
+                process = await original_exec(
+                    "xprop",
+                    "-display",
+                    display,
+                    "-root",
+                    *options,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                output, error = await asyncio.wait_for(process.communicate(), 2)
+                assert process.returncode == 0, error
+                return output
+
+            await probe(
+                "-f",
+                "ADB_OWNED_DISPLAY_PROBE",
+                "8s",
+                "-set",
+                "ADB_OWNED_DISPLAY_PROBE",
+                "owner-lifetime",
+            )
+            # Reproduce the scheduling gap before the manager opens its first
+            # connection. The real X server must retain the root property.
+            await asyncio.sleep(0.05)
+            assert b"owner-lifetime" in await probe("ADB_OWNED_DISPLAY_PROBE")
+            checked = True
+        return await original_exec(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", start_process)
+    display = XDisplay()
+    processes = []
+    try:
+        await display.start()
+        processes = [display.server, display.manager]
+        assert checked
+        assert all(process.returncode is None for process in processes)
+    finally:
+        await display.close()
+    assert all(process.returncode is not None for process in processes)
+
+
 @pytest.mark.skipif(
     sys.platform != "linux", reason="Owned X11 native input requires Linux"
 )
