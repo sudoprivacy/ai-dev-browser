@@ -116,15 +116,23 @@ class BrowserControl:
             raise ControlError("browser_control_not_owned")
         self.state = "observing"
         self.epoch += 1
+        return_epoch = self.epoch
         self.error = None
         try:
             async with self._operations:
+                if (
+                    self.state != "observing"
+                    or self.controller != controller
+                    or self.epoch != return_epoch
+                ):
+                    raise ControlError("browser_control_transfer_interrupted")
                 observation = await observe()
                 self.state = "ai"
                 self.controller = None
         except BaseException:
-            self.state = "human"
-            self.error = "browser_observation_required"
+            if self.state != "error":
+                self.state = "human"
+                self.error = "browser_observation_required"
             raise
         return self.snapshot(), observation
 

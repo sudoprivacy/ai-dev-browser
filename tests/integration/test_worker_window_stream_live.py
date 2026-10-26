@@ -15,6 +15,7 @@ import pytest
 from aiohttp import web
 
 from ai_dev_browser.core.browser import browser_start, browser_stop
+from ai_dev_browser.remote.cdp import BrowserViewError
 from ai_dev_browser.remote.control import ControlError
 from ai_dev_browser.remote.worker import Worker, application
 from tests.integration.test_remote_view import connect_page, wait_for
@@ -26,8 +27,9 @@ pytest_plugins = ["tests.integration.test_remote_view"]
     sys.platform != "linux", reason="An isolated X11 display is required"
 )
 @pytest.mark.parametrize("transport", ["cdp", "extension"])
+@pytest.mark.parametrize("touch_drag", [False, True], ids=["mouse", "touch"])
 async def test_authenticated_window_stream_cannot_bypass_input_lease(
-    tmp_path, remote_site, transport
+    tmp_path, remote_site, transport, touch_drag
 ):
     """Watch without taking control, reject raw writes, then submit through checked input.
 
@@ -64,14 +66,19 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
 
     async with aiohttp.ClientSession() as http:
 
-        async def host(action):
+        async def host(action, expected_error=None):
             async with http.post(
                 origin + "/invoke",
                 headers=headers,
                 json={"binding": binding, "controller": controller, "action": action},
             ) as response:
                 body = await response.json()
-                assert response.status == 200, (response.status, body)
+                assert response.status == (409 if expected_error else 200), (
+                    response.status,
+                    body,
+                )
+                if expected_error:
+                    assert body["error"] == expected_error
                 return body
 
         async def proxy(request):
@@ -343,6 +350,14 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
                 const {InputSurface}=await import('/input-surface.js');
                 const canvas=document.querySelector('canvas');canvas.tabIndex=0;
                 rfb.viewOnly=true;rfb.focusOnClick=false;
+                // Match the shared consumer: noVNC's legacy mousedown capture
+                // also runs in viewOnly mode and can cover later pointer input.
+                canvas.addEventListener('mousedown',e=>e.stopImmediatePropagation(),true);
+                window.viewerPointerEvents=[];
+                for(const kind of ['pointerdown','pointermove','pointerup','pointercancel'])
+                    canvas.addEventListener(kind,e=>viewerPointerEvents.push({
+                        kind,id:e.pointerId,pointerType:e.pointerType,isPrimary:e.isPrimary,
+                        buttons:e.buttons,x:e.clientX,y:e.clientY}),true);
                 window.surface=new InputSurface(canvas,input=>fetch('/input',{
                     method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)}));
                 surface.resize(canvas.width,canvas.height);
@@ -373,6 +388,203 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
             assert len(remote_site[1]) == 1 and remote_site[1][0]["trusted"]
             assert remote_site[1][0]["press"] == {"buttons": 1, "trusted": True}
 
+            # A real streamed canvas must move before the viewer releases its
+            # pointer. This uses the same checked API, not RFB input or JS pan.
+            await host(
+                {
+                    "kind": "navigate",
+                    "url": remote_site[0] + "/native-drag",
+                    **epochs(held),
+                }
+            )
+            await wait_for(
+                lambda: page.js("Boolean(document.querySelector('#stage'))"), bool
+            )
+            geometry = await page.js("""(()=>{const r=stage.getBoundingClientRect();return {
+                x:r.x+r.width*.85,y:r.y+r.height*.85,
+                left:r.x,top:r.y,
+                offsetX:screenX+(outerWidth-innerWidth)/2,
+                offsetY:screenY+outerHeight-innerHeight-(outerWidth-innerWidth)/2}})()""")
+            await viewer.js(
+                """(async()=>{
+                surface.dispose();
+                const {InputSurface}=await import('/input-surface.js');
+                const canvas=document.querySelector('canvas');
+                canvas.style.touchAction='none';
+                window.liveDragPackets=[];
+                window.surface=new InputSurface(canvas,async input=>{
+                    liveDragPackets.push(input);
+                    const response=await fetch('/input',{method:'POST',
+                        headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});
+                    if(!response.ok)throw new Error('Checked input failed: '+response.status);
+                    return response.json();
+                },{drag:true,touchDrag:true,liveDrag:true,viewerId:VIEWER});
+                surface.resize(canvas.width,canvas.height);
+            })()""".replace("VIEWER", json.dumps(viewer_id))
+            )
+            rect = await viewer.js("""(()=>{const c=document.querySelector('canvas'),r=c.getBoundingClientRect();
+                return {x:r.x,y:r.y,width:r.width,height:r.height,w:c.width,h:c.height}})()""")
+            start = {
+                "x": rect["x"]
+                + (geometry["x"] + geometry["offsetX"]) * rect["width"] / rect["w"],
+                "y": rect["y"]
+                + (geometry["y"] + geometry["offsetY"]) * rect["height"] / rect["h"],
+            }
+            sample_x = round(geometry["left"] + geometry["offsetX"] + 200 - 40 + 5)
+            sample_y = round(geometry["top"] + geometry["offsetY"] + 120 - 20 + 30)
+            pixel_expression = f"(()=>{{const c=document.querySelector('canvas');return [...c.getContext('2d').getImageData({sample_x},{sample_y},1,1).data].slice(0,3)}})()"
+            before_pixel = await wait_for(
+                lambda: viewer.js(pixel_expression), lambda rgb: rgb == [23, 33, 43]
+            )
+
+            is_pressed = False
+            if touch_drag:
+                await viewer.call(
+                    "Emulation.setTouchEmulationEnabled",
+                    {"enabled": True, "maxTouchPoints": 2},
+                )
+
+            async def move_pointer(dx, dy, kind="mouseMoved"):
+                nonlocal is_pressed
+                if kind in ("mousePressed", "mouseReleased"):
+                    is_pressed = kind == "mousePressed"
+                point = {
+                    "x": start["x"] + dx * rect["width"] / rect["w"],
+                    "y": start["y"] + dy * rect["height"] / rect["h"],
+                }
+                if touch_drag:
+                    if kind == "mouseMoved" and not is_pressed:
+                        return
+                    phase = {
+                        "mouseMoved": "touchMove",
+                        "mousePressed": "touchStart",
+                        "mouseReleased": "touchEnd",
+                    }[kind]
+                    await viewer.call(
+                        "Input.dispatchTouchEvent",
+                        {
+                            "type": phase,
+                            "touchPoints": [{**point, "id": 1}] if is_pressed else [],
+                        },
+                    )
+                    return
+                await viewer.call(
+                    "Input.dispatchMouseEvent",
+                    {
+                        "type": kind,
+                        **point,
+                        "button": "left",
+                        "buttons": 1 if is_pressed else 0,
+                        **({"clickCount": 1} if kind != "mouseMoved" else {}),
+                    },
+                )
+
+            await move_pointer(0, 0)
+            await move_pointer(0, 0, "mousePressed")
+            motion_started = await viewer.js("performance.now()")
+            for dx, dy in ((-20, -10), (-40, -20)):
+                await move_pointer(dx, dy)
+                await wait_for(
+                    lambda: page.js("({pan,events:panEvents})"),
+                    lambda value, dx=dx, dy=dy: value["pan"] == {"x": dx, "y": dy},
+                )
+                if dx == -20:
+                    packet = await viewer.js("liveDragPackets.at(-1)")
+                    assert packet["phase"] == "move"
+                    await host(
+                        {
+                            "kind": "input",
+                            "surface": "window",
+                            "input": packet,
+                            **epochs(held),
+                        },
+                        expected_error="invalid_browser_drag_sequence",
+                    )
+                    await host(
+                        {
+                            "kind": "input",
+                            "surface": "window",
+                            "input": {
+                                **packet,
+                                "sequence": packet["sequence"] + 1,
+                                "viewerId": "unattached-viewer",
+                            },
+                            **epochs(held),
+                        },
+                        expected_error="browser_viewer_not_attached",
+                    )
+                    if touch_drag:
+                        primary = await viewer.js("surface.pointer.id")
+                        finger = {
+                            "x": start["x"] + dx * rect["width"] / rect["w"],
+                            "y": start["y"] + dy * rect["height"] / rect["h"],
+                            "id": 1,
+                        }
+                        await viewer.call(
+                            "Input.dispatchTouchEvent",
+                            {
+                                "type": "touchStart",
+                                "touchPoints": [
+                                    finger,
+                                    {**finger, "x": finger["x"] + 35, "id": 2},
+                                ],
+                            },
+                        )
+                        await viewer.call(
+                            "Input.dispatchTouchEvent",
+                            # Chromium releases the IDs listed on touchEnd.
+                            # Release only the secondary finger; the primary
+                            # still owns the live remote gesture.
+                            {
+                                "type": "touchEnd",
+                                "touchPoints": [
+                                    {**finger, "x": finger["x"] + 35, "id": 2}
+                                ],
+                            },
+                        )
+                        assert await viewer.js("surface.pointer.id") == primary
+            during = await page.js("({pan,events:panEvents})")
+            assert not any(event["kind"] == "pointerup" for event in during["events"])
+            assert during["events"][-1]["buttons"] == 1
+            visible_pixel = await wait_for(
+                lambda: viewer.js(pixel_expression), lambda rgb: rgb == [102, 187, 153]
+            )
+            assert visible_pixel != before_pixel
+            motion_verified = await viewer.js("performance.now()")
+            responsive = (await asyncio.wait_for(host({"kind": "state"}), 2))["session"]
+            assert responsive["state"] == "human" and responsive["isController"]
+            assert responsive["browserSessionId"] == held["browserSessionId"]
+            (tmp_path / "live-drag-before-release.png").write_bytes(
+                base64.b64decode((await viewer.call("Page.captureScreenshot"))["data"])
+            )
+            await move_pointer(-100, -50)
+            await move_pointer(-100, -50, "mouseReleased")
+            completed = await wait_for(
+                lambda: page.js("({pan,events:panEvents})"),
+                lambda value: (
+                    value["pan"] == {"x": -100, "y": -50}
+                    and sum(event["kind"] == "pointerup" for event in value["events"])
+                    == 1
+                ),
+            )
+            await wait_for(lambda: viewer.js("surface.gesture === null"), bool)
+            assert all(event["trusted"] for event in completed["events"])
+            viewer_pointer_events = await viewer.js("viewerPointerEvents")
+            assert any(
+                event["pointerType"] == ("touch" if touch_drag else "mouse")
+                and event["kind"] == "pointerdown"
+                for event in viewer_pointer_events
+            )
+
+            # Close the real viewer during a second press. Bounded driver
+            # cleanup must release its native button and retain human control.
+            await move_pointer(0, 0)
+            await move_pointer(0, 0, "mousePressed")
+            await move_pointer(-30, -15)
+            await wait_for(
+                lambda: page.js("({pan,events:panEvents})"),
+                lambda value: value["pan"] == {"x": -130, "y": -65},
+            )
             await viewer.close()
             viewer = None
             stopped = await asyncio.to_thread(
@@ -380,21 +592,142 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
             )
             assert stopped.get("stopped") is True, stopped
             viewer_browser = None
+            disconnected = await wait_for(
+                lambda: page.js("({pan,events:panEvents})"),
+                lambda value: (
+                    sum(event["kind"] == "pointerup" for event in value["events"]) == 2
+                ),
+            )
+            assert disconnected["events"][-1]["buttons"] == 0
             await wait_for(
                 lambda: asyncio.sleep(0, result=stream.view.running),
                 lambda running: not running,
             )
             state = await worker.state(controller)
             assert state["state"] == "human" and state["isController"]
+            assert worker.live_drag is None
             assert "profile=isolated" in await page.js("document.cookie")
             assert worker.browser["transport"] == transport and worker.session
+            assert state["controlEpoch"] > held["controlEpoch"]
+            assert state["targetEpoch"] == held["targetEpoch"]
+            # Switching the attached surface cancels a fresh native press.
+            # It preserves the same browser/profile and rejects old coordinates.
+            await host(
+                {
+                    "kind": "input",
+                    "surface": "window",
+                    **epochs(state),
+                    "input": {
+                        "kind": "drag-stream",
+                        "phase": "begin",
+                        "sequence": 0,
+                        "gestureId": secrets.token_hex(16),
+                        "viewerId": viewer_id,
+                        "x": geometry["x"] + geometry["offsetX"],
+                        "y": geometry["y"] + geometry["offsetY"],
+                    },
+                }
+            )
+            changed = (
+                await host({"kind": "attach", "viewerId": viewer_id, "surface": "page"})
+            )["session"]
+            switched = await wait_for(
+                lambda: page.js("({pan,events:panEvents})"),
+                lambda value: (
+                    sum(event["kind"] == "pointerup" for event in value["events"]) == 3
+                ),
+            )
+            assert switched["events"][-1]["buttons"] == 0
+            assert changed["state"] == "human" and changed["isController"]
+            assert changed["controlEpoch"] > state["controlEpoch"]
+            assert changed["browserSessionId"] == state["browserSessionId"]
+            assert (
+                changed["profileId"] == state["profileId"] and worker.live_drag is None
+            )
+            # The normal Stop intent drains held input without becoming stale
+            # on that same cancellation. AI cannot stop a human-held browser.
+            attached = (
+                await host(
+                    {"kind": "attach", "viewerId": viewer_id, "surface": "window"}
+                )
+            )["session"]
+            await host(
+                {
+                    "kind": "input",
+                    "surface": "window",
+                    **epochs(attached),
+                    "input": {
+                        "kind": "drag-stream",
+                        "phase": "begin",
+                        "sequence": 0,
+                        "gestureId": secrets.token_hex(16),
+                        "viewerId": viewer_id,
+                        "x": geometry["x"] + geometry["offsetX"],
+                        "y": geometry["y"] + geometry["offsetY"],
+                    },
+                }
+            )
+            with pytest.raises(ControlError, match="browser_control_held_by_user"):
+                await worker.agent({"kind": "stop", **epochs(attached)})
+            assert worker.live_drag and not worker.live_drag["gesture"].task.done()
+            explicit_stop = (await host({"kind": "stop", **epochs(attached)}))[
+                "session"
+            ]
+            assert explicit_stop["state"] == "stopped" and worker.browser is None
+            assert explicit_stop["profileId"] == attached["profileId"]
+            assert (worker.root / "chrome").is_dir() and worker.live_drag is None
+            (tmp_path / "live-drag.json").write_text(
+                json.dumps(
+                    {
+                        "transport": transport,
+                        "pointerType": "touch" if touch_drag else "mouse",
+                        "viewerPointerEvents": viewer_pointer_events,
+                        "secondaryTouchIgnored": touch_drag,
+                        "nativeMotionBeforeRelease": during,
+                        "decodedPixelBefore": before_pixel,
+                        "decodedPixelWhileHeld": visible_pixel,
+                        "motionToVerifiedPixelsUpperBoundMs": round(
+                            motion_verified - motion_started, 2
+                        ),
+                        "statusResponsiveDuringGesture": True,
+                        "duplicatePacketAndForeignViewerRejected": True,
+                        "completed": completed,
+                        "viewerDisconnected": disconnected,
+                        "humanLeasePreserved": True,
+                        "browserPreserved": True,
+                        "surfaceSwitchReleasedInputAndFencedCoordinates": True,
+                        "explicitStopDrainedGestureAndPreservedProfile": True,
+                    },
+                    indent=2,
+                )
+            )
+        except Exception:
+            if viewer:
+                try:
+                    audit = await viewer.js("""(()=>{const c=document.querySelector('canvas'),r=c?.getBoundingClientRect();return {
+                        pointerEvents:window.viewerPointerEvents||[],packets:window.liveDragPackets||[],
+                        pointer:window.surface?.pointer,
+                        canvas:r?{x:r.x,y:r.y,w:r.width,h:r.height}:null,
+                        activeElement:document.activeElement?.tagName,
+                        captureElements:[...document.querySelectorAll('[id*=capture],[class*=capture]')].map(e=>({id:e.id,tag:e.tagName,class:e.className}))}})()""")
+                    (tmp_path / "viewer-input-failure.json").write_text(
+                        json.dumps(audit, indent=2)
+                    )
+                    (tmp_path / "viewer-input-failure.png").write_bytes(
+                        base64.b64decode(
+                            (await viewer.call("Page.captureScreenshot"))["data"]
+                        )
+                    )
+                except (BrowserViewError, aiohttp.ClientError, ConnectionError):
+                    pass
+            raise
         finally:
             if clipboard and clipboard.returncode is None:
                 clipboard.terminate()
                 await clipboard.wait()
             if viewer:
                 await viewer.close()
-            if viewer_browser:
+            if viewer_browser and "session_id" in viewer_browser:
                 stopped = await asyncio.to_thread(
                     browser_stop, session_id=viewer_browser["session_id"]
                 )

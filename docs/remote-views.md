@@ -68,6 +68,36 @@ one bounded `input` operation; it is sent on pointer release, so this is not a
 continuous drag stream. The host's existing input barrier drains the gesture
 before changing control or targets. The adapter never retries it.
 
+### Live dragging in a streamed window
+
+For a window using independently streamed pixels, a worker advertising
+`capabilities.liveDragInput` supports acknowledged motion before pointer release.
+Opt in explicitly with `{drag: true, liveDrag: true, viewerId}` on `InputSurface`.
+The viewer ID must be the same ID attached to that window. Its send callback
+must return a promise that resolves only after the checked input API succeeds
+and rejects on failure. Hosts retain their normal input error reporting.
+Keep the legacy bounded gesture for JPEG views: their frame capture shares the
+input barrier and cannot display intermediate motion during a live press.
+
+The mapper coalesces unsent positions and waits for each acknowledgement. It
+sends one `drag-stream` gesture ID with increasing `sequence` values and
+`begin`, `move`, `end` or `cancel` phases through the normal window input API.
+Each packet includes the attached `viewerId` and current control/target epochs.
+The worker binds the entire gesture to that controller, viewer and target,
+keeping one input operation locked from the native press through release.
+Status reads use its last observed target while pressed; they do not refresh
+or select another target between packets. Pixel transport remains read-only.
+
+Stream disconnection, detach, surface changes and cancellation release the native button. An abandoned gesture is
+released after five seconds without a packet, with a thirty-second total
+gesture limit. These are input cleanup bounds: they never return control to AI
+or change the human owner. A failed release puts control in an error state and
+advances the epoch to fence queued coordinates. Input is never replayed after a
+failed packet. Cancelled and abandoned gestures advance the epoch to reject
+queued coordinates. Switching input modes or resizing a surface cancels its gesture.
+Mouse and touch-drag modes use the same protocol; default touch scrolling stays
+unchanged. Physical phone and consumer application acceptance remain separate.
+
 Workers advertising `selectionRead` accept the human-only input
 `{kind: 'input', input: {kind: 'copy-selection'}, controlEpoch, targetEpoch}`.
 It uses the existing authenticated input gateway and barrier. Its `selection` result contains

@@ -10,6 +10,7 @@ import hmac
 import json
 import os
 import pathlib
+import re
 import secrets
 import time
 from contextlib import asynccontextmanager
@@ -23,6 +24,8 @@ from ai_dev_browser.core.connection import connect_browser, connect_extension
 from ai_dev_browser.remote.cdp import BrowserViewError
 from ai_dev_browser.remote.control import BrowserControl, ControlError, SharedViewer
 from ai_dev_browser.remote.files import BrowserFiles
+from ai_dev_browser.remote.gesture import LiveDrag
+from ai_dev_browser.remote.page import drag_points
 from ai_dev_browser.remote.provision import (
     configure_managed_extension_file_access,
     prepare_managed_extension_profile,
@@ -87,6 +90,7 @@ class Worker:
             self.open_window_stream, self.close_window_stream
         )
         self.window_stream_connections = set()
+        self.live_drag = None
         self.control = BrowserControl()
         self.handoff = None
         self.journal = self.root / "control.json"
@@ -205,6 +209,22 @@ class Worker:
                 "tabs": [],
             }
             return self._state_reply(live, controller, is_transitioning=True)
+        if self.live_drag and not self.live_drag["gesture"].task.done():
+            # A drag owns the operation lock until release. Status reads use
+            # its already observed target; they must not deadlock its next
+            # acknowledged packet or refresh/select another target mid-press.
+            snapshot = self.control.snapshot()
+            return {
+                **self.live_drag["state"],
+                **{
+                    key: snapshot[key]
+                    for key in ("state", "controlEpoch", "targetEpoch", "error")
+                },
+                "isController": bool(
+                    controller and snapshot["controller"] == controller
+                ),
+                "isHumanControlHeld": snapshot["controller"] is not None,
+            }
         async with self.lifecycle:
             return await self._current_state(controller)
 
@@ -241,6 +261,9 @@ class Worker:
                     and (self.browser is None or self.browser.get("transport") == "cdp")
                 ),
                 "dragInput": True,
+                "liveDragInput": bool(
+                    self.session and self.display and not is_transitioning
+                ),
                 "clipboardText": True,
                 "selectionRead": True,
                 "lifecycle": self.personal_reference is None,
@@ -356,6 +379,112 @@ class Worker:
 
         await self.control.run(controller, epoch, target_epoch, perform)
         await self.session.follow_foreground(controller, epoch, target_epoch)
+
+    async def input_live_drag(self, controller, epoch, target_epoch, event):
+        if not isinstance(event, dict) or set(event) != {
+            "kind",
+            "phase",
+            "gestureId",
+            "sequence",
+            "viewerId",
+            "x",
+            "y",
+        }:
+            raise ControlError("invalid_browser_drag_packet")
+        phase, identity, sequence = (
+            event["phase"],
+            event["gestureId"],
+            event["sequence"],
+        )
+        if (
+            phase not in ("begin", "move", "end", "cancel")
+            or not isinstance(identity, str)
+            or not re.fullmatch(r"[a-zA-Z0-9_-]{16,64}", identity)
+            or type(sequence) is not int
+            or not 0 <= sequence <= 4096
+            or not isinstance(event["viewerId"], str)
+            or not event["viewerId"]
+        ):
+            raise ControlError("invalid_browser_drag_packet")
+        owned = controller + ":" + event["viewerId"]
+        if (
+            owned not in self.window_viewers
+            or not self.session
+            or self.lifecycle_changes
+        ):
+            raise ControlError("browser_viewer_not_attached")
+        view = await self.window_view.attach(owned)
+        points = drag_points(
+            {"points": [{"x": event["x"], "y": event["y"]}] * 2},
+            view.width,
+            view.height,
+        )
+        if points is None:
+            raise ControlError("invalid_browser_input")
+        if phase == "begin":
+            if sequence != 0:
+                raise ControlError("invalid_browser_drag_sequence")
+            if self.live_drag:
+                if not self.live_drag["gesture"].task.done():
+                    raise ControlError("browser_drag_in_progress")
+                await self.live_drag["gesture"].close()
+                self.live_drag = None
+            state = await self.state(controller)
+            gesture = LiveDrag(
+                self.control,
+                controller,
+                epoch,
+                target_epoch,
+                view,
+                points[0],
+                on_finish=self.save,
+            )
+            self.live_drag = {
+                "gesture": gesture,
+                "state": state,
+                "id": identity,
+                "viewer": owned,
+                "sequence": 0,
+                "controller": controller,
+                "epoch": epoch,
+                "targetEpoch": target_epoch,
+            }
+            await gesture.start()
+        else:
+            context = self.live_drag
+            if not context or (
+                context["id"],
+                context["viewer"],
+                context["controller"],
+                context["epoch"],
+                context["targetEpoch"],
+            ) != (identity, owned, controller, epoch, target_epoch):
+                raise ControlError("browser_drag_changed")
+            if sequence != context["sequence"] + 1:
+                raise ControlError("invalid_browser_drag_sequence")
+            # Consume a sequence before awaiting its native acknowledgement.
+            # A disconnected caller cannot replay a packet already sent.
+            context["sequence"] = sequence
+            await context["gesture"].send(phase, points[0])
+            if phase in ("end", "cancel"):
+                self.live_drag = None
+                if (
+                    self.control.state == "human"
+                    and self.control.controller == controller
+                ):
+                    await self.session.follow_foreground(
+                        controller, self.control.epoch, self.control.target_epoch
+                    )
+        self.viewers[owned] = time.monotonic()
+        self.window_frame = None
+        return {"session": await self.state(controller)}
+
+    async def close_live_drag(self, viewer=None):
+        context = self.live_drag
+        if context and (viewer is None or context["viewer"] == viewer):
+            await context["gesture"].close()
+            if self.live_drag is context:
+                self.live_drag = None
 
     async def start(self, action, actor):
         async with self.changing_lifecycle():
@@ -535,6 +664,7 @@ class Worker:
         self.save()
 
     async def _stop_browser(self):
+        await self.close_live_drag()
         for viewer in list(self.window_viewers):
             await self.window_stream.detach(viewer)
             await self.window_view.detach(viewer)
@@ -574,6 +704,19 @@ class Worker:
             ) not in ("extension", "cdp"):
                 raise ControlError("explicit_browser_launch_mode_required")
         epoch, target_epoch = self.epochs(action)
+        if self.live_drag and not self.live_drag["gesture"].task.done():
+            # Accept the original lifecycle intent, then drain its own input.
+            # The cancellation fences coordinates without invalidating that
+            # same Stop/Restart intent or accepting another ownership change.
+            self.control._authorize(actor, epoch, target_epoch, False)
+            await self.close_live_drag()
+            if self.control.target_epoch != target_epoch or self.control.epoch not in (
+                epoch,
+                epoch + 1,
+            ):
+                raise ControlError("stale_browser_operation")
+            epoch = self.control.epoch
+            self.control._authorize(actor, epoch, target_epoch, False)
         async with self.changing_lifecycle():
 
             async def perform():
@@ -733,6 +876,7 @@ class Worker:
                         await self.session.detach(owned)
                         await self.window_view.attach(owned)
                     else:
+                        await self.close_live_drag(owned)
                         self.window_viewers.discard(owned)
                         await self.window_stream.detach(owned)
                         await self.window_view.detach(owned)
@@ -740,6 +884,7 @@ class Worker:
                 else:
                     self.viewers.pop(owned, None)
                     self.window_viewers.discard(owned)
+                    await self.close_live_drag(owned)
                     await self.window_stream.detach(owned)
                     await self.window_view.detach(owned)
                     await self.session.detach(owned)
@@ -812,6 +957,13 @@ class Worker:
                     controller, epoch, target_epoch
                 )
             elif kind == "input" and self.surface(action) == "window":
+                if (
+                    isinstance(action.get("input"), dict)
+                    and action["input"].get("kind") == "drag-stream"
+                ):
+                    return await self.input_live_drag(
+                        controller, epoch, target_epoch, action["input"]
+                    )
                 await self.input_window(
                     controller, epoch, target_epoch, action["input"]
                 )
@@ -905,6 +1057,7 @@ class Worker:
                     if time.monotonic() - heartbeat > 20:
                         self.viewers.pop(viewer, None)
                         self.window_viewers.discard(viewer)
+                        await self.close_live_drag(viewer)
                         await self.window_stream.detach(viewer)
                         await self.window_view.detach(viewer)
                         await self.session.detach(viewer)
@@ -1028,6 +1181,7 @@ def application(worker):
             return await stream.proxy(request, worker.http, validate)
         finally:
             worker.window_stream_connections.discard(owned)
+            await worker.close_live_drag(owned)
             await worker.window_stream.detach(owned)
 
     async def agent(request):

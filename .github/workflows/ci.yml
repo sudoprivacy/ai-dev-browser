@@ -214,7 +214,9 @@ jobs:
         run: docker build -f deploy/managed-chrome/Dockerfile --secret "id=extension_key,src=$RUNNER_TEMP/extension-fixture.pem" --build-arg "SOURCE_REVISION=$GITHUB_SHA" -t adb-managed-chrome:ci .
       - name: Run real signed extension, handoff and viewer workflows
         run: |
-          docker create --init --name "adb-managed-live-$GITHUB_RUN_ID" --memory=1536m --shm-size=256m --pids-limit=384 \
+          # Use the one-core profile from local real-browser acceptance.
+          # Keep the established memory/PID limits and test deadlines.
+          docker create --init --name "adb-managed-live-$GITHUB_RUN_ID" --cpus=1 --cpuset-cpus=0 --memory=1536m --shm-size=256m --pids-limit=384 \
             --mount "type=bind,source=$PWD/tests,target=/opt/browser/tests,readonly" \
             --mount "type=bind,source=$PWD/pyproject.toml,target=/opt/browser/pyproject.toml,readonly" \
             adb-managed-chrome:ci /bin/sleep infinity

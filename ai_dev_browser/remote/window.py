@@ -31,12 +31,15 @@ class XDisplay:
         self.width, self.height = width, height
         self.server = self.manager = None
         self.display = None
+        self._manager_reader = None
+        self._manager_output = b""
 
     async def start(self):
         if self.server:
             if self.server.returncode is not None:
                 raise RuntimeError("Owned display disconnected")
             return self.display
+        self._manager_output = b""
         try:
             self.server = await asyncio.create_subprocess_exec(
                 "Xvfb",
@@ -47,6 +50,10 @@ class XDisplay:
                 f"{self.width}x{self.height}x24",
                 "-nolisten",
                 "tcp",
+                # Readiness probes may be the first and last X client before
+                # Openbox connects. Keep this owned server generation alive
+                # across that gap; close() owns its complete lifetime.
+                "-noreset",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -62,9 +69,16 @@ class XDisplay:
                 "openbox",
                 "--sm-disable",
                 env={**os.environ, "DISPLAY": self.display},
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
             )
+
+            async def drain_manager():
+                while chunk := await self.manager.stdout.read(1024):
+                    self._manager_output = (self._manager_output + chunk)[-4096:]
+
+            self._manager_reader = asyncio.create_task(drain_manager())
+            probe_result = "not probed"
             deadline = asyncio.get_running_loop().time() + 10
             while self.manager.returncode is None:
                 probe = await asyncio.create_subprocess_exec(
@@ -74,10 +88,11 @@ class XDisplay:
                     "-root",
                     "_NET_SUPPORTING_WM_CHECK",
                     stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
                 )
                 try:
-                    output, _ = await asyncio.wait_for(probe.communicate(), 2)
+                    output, error = await asyncio.wait_for(probe.communicate(), 2)
+                    probe_result = repr((probe.returncode, output[-512:], error[-512:]))
                 finally:
                     if probe.returncode is None:
                         probe.kill()
@@ -87,7 +102,14 @@ class XDisplay:
                 if asyncio.get_running_loop().time() >= deadline:
                     break
                 await asyncio.sleep(0.05)
-            raise RuntimeError("Owned window manager did not start")
+            if self.manager.returncode is not None:
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(asyncio.shield(self._manager_reader), 0.5)
+            raise RuntimeError(
+                f"Owned window manager did not start: display={self.display}, "
+                f"server_exit={self.server.returncode}, manager_exit={self.manager.returncode}, "
+                f"probe={probe_result}, output={self._manager_output.decode(errors='replace')}"
+            )
         except BaseException:
             await self.close()
             raise
@@ -101,6 +123,9 @@ class XDisplay:
                 except TimeoutError:
                     process.kill()
                     await process.wait()
+        if self._manager_reader:
+            await self._manager_reader
+            self._manager_reader = None
         self.server = self.manager = self.display = None
 
 
@@ -236,6 +261,23 @@ class WindowView:
         process, self._clipboard = self._clipboard, None
         reader, self._clipboard_reader = self._clipboard_reader, None
         await self._close_clipboard(process, reader)
+
+    async def press(self, point):
+        await self._run(
+            "mousemove",
+            str(round(point["x"])),
+            str(round(point["y"])),
+            "mousedown",
+            "1",
+            "sleep",
+            "0.05",
+        )
+
+    async def move(self, point):
+        await self._run("mousemove", str(round(point["x"])), str(round(point["y"])))
+
+    async def release(self):
+        await self._run("mouseup", "1")
 
     async def input(self, event):
         if not isinstance(event, dict):
