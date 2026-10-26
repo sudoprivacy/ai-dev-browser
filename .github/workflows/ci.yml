@@ -225,6 +225,8 @@ jobs:
           docker exec "adb-managed-live-$GITHUB_RUN_ID" /opt/browser/venv/bin/python tests/integration/run_managed_extension.py
       - name: Verify read-only streaming and checked native input
         run: docker exec "adb-managed-live-$GITHUB_RUN_ID" /opt/browser/venv/bin/python -m pytest -v --full-trace -o faulthandler_timeout=180 -o cache_dir=/tmp/managed-results/pytest-cache tests/integration/test_worker_window_stream_live.py --basetemp /tmp/managed-results/window-stream
+      - name: Verify host-only authorized review navigation
+        run: docker exec "adb-managed-live-$GITHUB_RUN_ID" /opt/browser/venv/bin/python -m pytest -v --full-trace -o faulthandler_timeout=180 -o cache_dir=/tmp/managed-results/pytest-cache tests/integration/test_browser_worker_live.py -k host_authorized_page --basetemp /tmp/managed-results/authorized-page
       - name: Collect actual-browser evidence
         if: always()
         run: docker cp "adb-managed-live-$GITHUB_RUN_ID:/tmp/managed-results" "$RUNNER_TEMP/managed-results"

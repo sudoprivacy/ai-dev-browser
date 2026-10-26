@@ -474,8 +474,9 @@ current control/target epochs, an exact `url` and a `cookie` containing `name`,
 The cookie must be short-lived, scoped below the origin root, and installed
 before the first navigation. HTTPS is required except for loopback HTTP. This
 operation is unavailable through the AI credential or public agent tools and
-is supported only by an owned CDP browser, not personal Chrome or extension
-transport. Discover support through `capabilities.authorizedPageLaunch`.
+is supported by owned CDP browsers and owned managed extension browsers.
+Personal Chrome attachments remain outside this capability. Discover support
+through `capabilities.authorizedPageLaunch`.
 
 Take the human lease through the existing engine acknowledgement barrier first.
 A first host browser start now also takes that barrier before launching Chrome.
@@ -492,7 +493,9 @@ target through the existing observation path. Observation does not transfer
 input control. Host credentials, session cookies and privileged actions must
 never be included in a renderer reply, URL, model context or agent tool schema.
 Real-worker tests cover cookie-before-navigation, an unreadable HttpOnly cookie,
-reload, foreign/stale leases, AI refusal and compensation after a JSON error page.
+reload, foreign/stale leases, AI refusal and compensation after a JSON error page
+on both supported transports. The personal-profile journey also rejects this
+operation without creating a target or changing its selected tab or epochs.
 
 ## Authenticated full-window streaming
 

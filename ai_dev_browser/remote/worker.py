@@ -258,7 +258,10 @@ class Worker:
             "capabilities": {
                 "authorizedPageLaunch": (
                     self.personal_reference is None
-                    and (self.browser is None or self.browser.get("transport") == "cdp")
+                    and (
+                        self.browser is None
+                        or self.browser.get("transport") in {"cdp", "extension"}
+                    )
                 ),
                 "dragInput": True,
                 "liveDragInput": bool(
@@ -909,10 +912,9 @@ class Worker:
             elif kind == "observe":
                 extra["observation"] = await self.session.observe(epoch, target_epoch)
             elif kind == "open-authorized-page":
-                if (
-                    self.personal_reference is not None
-                    or self.browser["transport"] != "cdp"
-                ):
+                if self.personal_reference is not None or self.browser[
+                    "transport"
+                ] not in {"cdp", "extension"}:
                     raise ControlError("browser_authorized_page_not_supported")
                 if set(action) != {
                     "kind",
