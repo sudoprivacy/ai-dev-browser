@@ -12,6 +12,7 @@ import secrets
 import socket
 import subprocess
 import sys
+import time
 
 import aiohttp
 from aiohttp import web
@@ -172,6 +173,29 @@ async def test_existing_profile_worker_handoff_and_disconnect(
             assert state["browserSessionId"] == selected["sessionId"]
             assert state["profileId"] == "personal-" + selected["profileId"]
             assert state["personalExtension"] == {**selected, "isHeadless": None}
+            assert not state["capabilities"]["authorizedPageLaunch"]
+            rejected_review = await first(
+                {
+                    "kind": "open-authorized-page",
+                    "url": url + "review/",
+                    "cookie": {
+                        "name": "fixture_review",
+                        "value": secrets.token_hex(32),
+                        "url": url + "review/",
+                        "path": "/review/",
+                        "httpOnly": True,
+                        "sameSite": "Strict",
+                        "expires": time.time() + 1800,
+                    },
+                    **epochs(attached),
+                },
+                expected=409,
+            )
+            assert rejected_review["error"] == "browser_authorized_page_not_supported"
+            unchanged = (await first({"kind": "state"}))["session"]
+            assert unchanged["activeTargetId"] == state["activeTargetId"]
+            assert unchanged["targetEpoch"] == state["targetEpoch"]
+            assert unchanged["tabs"] == state["tabs"]
             assert state["isHeadless"] is None, (
                 "Unknown personal Chrome launch mode must not be invented"
             )

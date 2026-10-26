@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from pathlib import Path
 import secrets
 import sys
 import time
@@ -15,10 +16,15 @@ from ai_dev_browser.remote.worker import Worker, application
 pytest_plugins = ["tests.integration.test_remote_view"]
 
 
+@pytest.mark.parametrize("transport", ["cdp", "extension"])
 async def test_host_authorized_page_keeps_cookie_private_and_preserves_control(
     tmp_path,
+    transport,
 ):
     """The actual host route installs the cookie before the first protected read."""
+    extension = Path("/opt/browser/extension")
+    if transport == "extension" and not (extension / "identity.json").is_file():
+        pytest.skip("Signed managed extension policy fixture required")
     credential = secrets.token_hex(32)
     reads = []
     app = web.Application()
@@ -49,11 +55,12 @@ async def test_host_authorized_page_keeps_cookie_private_and_preserves_control(
         host_token,
         ai_token,
         display_mode="native",
+        extension_directory=extension if transport == "extension" else None,
         chrome_args=["--no-sandbox"] if sys.platform == "linux" else [],
     )
     runner = web.AppRunner(application(worker))
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
+    site = web.TCPSite(runner, "127.0.0.1", 8080 if transport == "extension" else 0)
     await site.start()
     origin = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
     binding = {"orgId": "local", "userId": "fixture", "sessionId": "review-chat"}
@@ -75,7 +82,9 @@ async def test_host_authorized_page_keeps_cookie_private_and_preserves_control(
 
         try:
             started = (
-                await host({"kind": "start", "isHeadless": True, "transport": "cdp"})
+                await host(
+                    {"kind": "start", "isHeadless": True, "transport": transport}
+                )
             )["session"]
             assert started["capabilities"]["authorizedPageLaunch"]
             action = {
