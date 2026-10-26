@@ -1,14 +1,17 @@
 """AI-friendly page snapshot using accessibility tree."""
 
+import asyncio
 import re
 
 from ai_dev_browser.cdp import accessibility
 from ai_dev_browser.cdp import dom
 from ai_dev_browser.cdp import page
 
-from ._element import filter_recurse_all
+from ._actionability import element_actionability
+from ._element import Element, filter_recurse_all
 from ._ref import make_ref, node_id_of
 from ._tab import Tab
+from .errors import SessionError
 
 
 # DOM-based discovery. The AX-tree snapshot only sees elements the browser
@@ -460,6 +463,14 @@ async def page_discover(
     `click_by_ref` / `type_by_ref` / `focus_by_ref` and each `x`/`y`
     into `mouse_click`. Use `len(result)` if you need the count.
 
+    Each resolved node also reports `visible` and `actionable` for a pointer
+    hit, plus `actionability_reason` when unavailable. A layout box alone does
+    not prove clickability: clipped menu children and covered controls can
+    still have boxes. These observations do not scroll or expand controls;
+    click tools recheck at action time. Unknown observations remain null.
+    Use pointer coordinates only when `actionable` is true; expand/show a
+    blocked control before acting on it.
+
     Pass `text` to filter by label — cheapest and most precise on a huge
     page (an ERP grid can have thousands of nodes; the filter runs before the
     costly geometry pass). Skip this tool entirely when you already know a
@@ -572,4 +583,36 @@ async def page_discover(
             if not existing.get("name") and de.get("name"):
                 existing["name"] = de["name"]
 
+    # Layout alone cannot distinguish a clipped menu child or an overlay.
+    # Share the click preflight, without scrolling or modifying the page.
+    limit = asyncio.Semaphore(8)
+
+    async def observe(entry):
+        node_id = node_id_of(entry.get("ref", ""))
+        if not node_id:
+            return
+        element = None
+        async with limit:
+            try:
+                element = await Element.from_backend_node(tab, node_id)
+                state = await element_actionability(element)
+                entry.update(visible=state["visible"], actionable=state["actionable"])
+                if state.get("reason"):
+                    entry["actionability_reason"] = state["reason"]
+            except SessionError:
+                raise
+            except Exception:
+                entry.update(
+                    visible=None, actionable=None, actionability_reason="unavailable"
+                )
+            finally:
+                if element:
+                    try:
+                        await element.release()
+                    except SessionError:
+                        raise
+                    except Exception:
+                        pass
+
+    await asyncio.gather(*(observe(entry) for entry in elements))
     return elements

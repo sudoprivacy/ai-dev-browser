@@ -33,12 +33,14 @@ _HTML = """<!doctype html><meta charset=utf-8><body>
 <div style="position:relative;height:40px;width:320px;margin-top:8px">
   <button id="covered" style="position:absolute;inset:0"
     onclick="document.getElementById('cres').textContent='covered-clicked'">Send it another way</button>
-  <div id="cover" style="position:absolute;inset:0;z-index:5"></div>
+  <button id="cover" style="position:absolute;inset:0;z-index:5" onclick="this.remove()">Close overlay</button>
 </div>
 <div id="inert" style="width:200px;height:30px">Inert label</div>
 <div id="result">none</div>
 <div id="cres">no</div>
 <script>
+  window.clickEvents=[];
+  document.addEventListener('click',e=>clickEvents.push({id:e.target.id,trusted:e.isTrusted}),true);
   // Handler on the CONTAINER's pointerdown — a text-leaf coordinate click that
   // resolves to the leaf's thin box would miss it.
   document.getElementById('opt').addEventListener('pointerdown', function () {
@@ -86,14 +88,22 @@ async def test_click_resolves_container_and_fires_pointerdown_handler(tab):
 
 
 @pytest.mark.asyncio
-async def test_click_falls_back_to_synthetic_when_trusted_is_blocked(tab):
-    # The trusted click at the button's centre lands on the overlay; the fallback
-    # dispatches events directly on the resolved element.
+async def test_covered_target_waits_for_a_real_overlay_dismissal(tab):
     res = await click_by_text(tab, "Send it another way")
     cres = await tab.evaluate("document.getElementById('cres').textContent")
-    assert cres == "covered-clicked", "fallback must reach the covered handler"
-    assert res.get("verified") is True, res
-    assert res.get("method") in ("synthetic", "js_click"), res
+    assert cres == "no", "A covered control must not receive synthetic fallback"
+    assert not res["clicked"] and not res["verified"] and not res["input_sent"], res
+    assert await tab.evaluate("clickEvents") == []
+    assert (await click_by_text(tab, "Close overlay"))["verified"]
+    accepted = await click_by_text(tab, "Send it another way")
+    assert accepted["verified"] and accepted["method"] == "trusted", accepted
+    assert (
+        await tab.evaluate("document.getElementById('cres').textContent")
+        == "covered-clicked"
+    )
+    assert await tab.evaluate("clickEvents.filter(e=>e.id==='covered')") == [
+        {"id": "covered", "trusted": True}
+    ]
 
 
 @pytest.mark.asyncio

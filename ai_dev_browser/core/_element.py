@@ -118,6 +118,19 @@ class Element:
         self._tree = tree
         self._remote_object: runtime.RemoteObject | None = None
 
+    @classmethod
+    async def from_backend_node(cls, tab: Tab, node_id: int) -> Element:
+        node = await tab.send(
+            dom.describe_node(backend_node_id=dom.BackendNodeId(node_id), depth=0)
+        )
+        return cls(node, tab)
+
+    async def release(self):
+        """Release a temporary JS handle without removing the DOM node."""
+        if self._remote_object and self._remote_object.object_id:
+            await self._tab.send(runtime.release_object(self._remote_object.object_id))
+            self._remote_object = None
+
     @property
     def node(self) -> dom.Node:
         return self._node

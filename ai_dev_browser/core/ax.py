@@ -8,6 +8,7 @@ from ai_dev_browser.cdp import dom, page
 from ai_dev_browser.cdp import input_ as cdp_input
 
 from . import human
+from ._actionability import ACTIONABILITY_JS, click_refusal
 from ._element import Element
 from ._ref import node_id_of, parse_ref
 from ._tab import Tab
@@ -42,13 +43,9 @@ async def get_element_by_ref(tab: Tab, ref: str) -> Element:
         raise ValueError(f"Invalid ref format (no node_id): {ref}")
 
     try:
-        node_info = await tab.send(
-            dom.describe_node(backend_node_id=dom.BackendNodeId(node_id), depth=0)
-        )
+        return await Element.from_backend_node(tab, node_id)
     except Exception as e:
         raise ValueError(f"Element not found for ref {ref}: {e}") from e
-
-    return Element(node_info, tab)
 
 
 async def _get_frame_id_by_prefix(tab: Tab, prefix: str) -> str | None:
@@ -109,16 +106,35 @@ function __pick(el) {
 }
 """
 
-_TARGET_JS = (
-    "(el) => { "
-    + _PICK_CLICKABLE
-    + " var t = __pick(el); if (!t) return {found:false};"
-    " try { if (t.scrollIntoViewIfNeeded) t.scrollIntoViewIfNeeded(true);"
-    " else t.scrollIntoView({block:'center', inline:'center'}); } catch (e) {}"
-    " var r = t.getBoundingClientRect();"
-    " return {found:true, x:r.x, y:r.y, w:r.width, h:r.height,"
-    " tag:t.tagName.toLowerCase()}; }"
-)
+
+async def _click_target(element, human_like, ancestor=True):
+    """Validate the shared human offset before passing a point to the actuator."""
+
+    def script(preferred=None):
+        picked = "__pick(el)" if ancestor else "el"
+        return (
+            "(el)=>{"
+            + _PICK_CLICKABLE
+            + ACTIONABILITY_JS
+            + "return __actionState(el,"
+            + picked
+            + ",true,false,"
+            + json.dumps(preferred)
+            + ");}"
+        )
+
+    target = await element.apply(script())
+    if target.get("actionable") and human_like:
+        dx, dy = human.calculate_click_offset(
+            target["w"],
+            target["h"],
+            ratio=None if human._config.click_offset_enabled else 0,
+        )
+        target = await element.apply(
+            script([0.5 + dx / target["w"], 0.5 + dy / target["h"]])
+        )
+    return target
+
 
 # The dispatch-based rungs fire on the LOCATED element itself (coerced to an
 # element if a text node was resolved), NOT __pick's clickable ancestor: the
@@ -277,18 +293,16 @@ async def _click_by_node_id(
                 return robust_result
             # else: no clickable target resolved — fall through to box-model click
 
-        # Get box model for the node
-        box = await tab.send(dom.get_box_model(backend_node_id=backend_node_id))
-        if not box or not box.content:
-            return {"clicked": False, "error": "Could not get element box model"}
-
-        # Get center of content box (content quad has 8 values: 4 x,y pairs)
-        quad = box.content
-        x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4
-        y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4
+        element = await Element.from_backend_node(tab, node_id)
+        target = await _click_target(element, human_like, ancestor=False)
+        if not target.get("actionable"):
+            return {**click_refusal(target), "node_id": node_id}
+        x, y = target["point"]["x"], target["point"]["y"]
 
         if human_like:
-            await human.click_box(tab, (x, y), box.width, box.height)
+            await human.click_box(
+                tab, (x, y), target["w"], target["h"], use_offset=False
+            )
         else:
             await tab.send(
                 cdp_input.dispatch_mouse_event(
@@ -322,22 +336,27 @@ async def _robust_click(
     ladder of methods. None ONLY if the element can't be resolved at all (caller
     then tries a plain box-model click).
 
-    Once an element is located this NEVER gives up on a `clicked:False`: a
-    located, sized element always gets a full trusted click (it's the target
-    even with no role/jsaction/onclick — many handlers are addEventListener'd
-    with no identifiable attribute), and a 0x0 element still gets the synthetic
-    + JS-click rungs (which need no coordinates). `verified` reports whether a
-    change was observed; `method` is the rung that worked (None if none did)."""
+    A located element must have a visible, reachable hit point before any rung.
+    A sized target does not need role/jsaction/onclick attributes: handlers may
+    be addEventListener'd. Hidden or covered targets are refused without input.
+    `verified` reports an observed change; `method` identifies the rung."""
     try:
         node_info = await tab.send(
             dom.describe_node(backend_node_id=backend_node_id, depth=0)
         )
         element = Element(node_info, tab)
+    except SessionError:
+        raise
     except Exception:
         return None  # can't resolve the element — caller falls back
 
-    target = await element.apply(_TARGET_JS)
-    target = target if isinstance(target, dict) else {}
+    target = await _click_target(element, human_like)
+    if not target.get("actionable"):
+        return {
+            **click_refusal(target),
+            "node_id": node_id,
+            "target": target.get("tag"),
+        }
     have_coords = bool(target.get("found") and target.get("w") and target.get("h"))
     before = await tab.evaluate(_SIG_JS)
 
@@ -348,14 +367,18 @@ async def _robust_click(
     # click via the dispatch-based rungs, which don't touch CDP mouse input.
     # 1) trusted CDP click at the target's centre — the full trusted pointer+
     #    mouse sequence Chrome generates from a real press/release. Only when we
-    #    have a real box; a 0x0 target skips straight to dispatch-based rungs.
+    #    have a verified visible hit point; unusable targets returned above.
     if have_coords:
-        cx = target["x"] + target["w"] / 2
-        cy = target["y"] + target["h"] / 2
+        cx = target["point"]["x"]
+        cy = target["point"]["y"]
         if await _rung_landed(
             tab,
             before,
-            lambda: human.click_box(tab, (cx, cy), target["w"], target["h"]),
+            lambda: human.click_box(
+                tab, (cx, cy), target["w"], target["h"], use_offset=False
+            )
+            if human_like
+            else tab.mouse_click(cx, cy),
         ):
             method = "trusted"
     # 2) full synthetic pointer+mouse sequence dispatched on the element.
@@ -575,14 +598,17 @@ async def click_by_ref(
     Atomic click + navigation feedback.
 
     Returns `{clicked, verified, method, ref, role, name, url_before,
-    url_after, title_after, navigated}` — `verified` (a change was observed) +
-    `navigated` already tell you whether it worked, so **don't** screenshot just
-    to check. Only screenshot for visual state the return can't express.
+    url_after, title_after, navigated}`. `verified` means a page change was
+    observed after a click on a usable visible hit target; `navigated` reports
+    a URL change separately. Neither asserts an application transaction.
+    Screenshot when you need visual state these fields cannot express.
 
     Robust actuation (shared with `click_by_text`): resolves the nearest SIZED
     clickable ancestor so a 0x0 / thin text leaf is clicked on its handler-
     bearing container, then verifies and falls back trusted → synthetic pointer
     sequence → JS click (`method` reports which; None if nothing changed).
+    Hidden, clipped, disabled or covered targets are refused before input and
+    never enter the fallback ladder. Expand/show the control first.
 
     If you know the element's html id / xpath / unique text, skip
     `page_discover` and go directly to `click_by_html_id` /
@@ -609,6 +635,9 @@ async def click_by_ref(
         (SPA route change or full page load).
 
     Failure:
+        A missing visible hit target returns `clicked:false`, `verified:false`,
+        `input_sent:false`, `retryable:false`. Expand or show the control and
+        remove overlays before another click; changing locator cannot fix it.
         Ref is stale (page navigated or element was removed between
         the `page_discover` / `find_by_text` call that returned it
         and this click). Re-run `page_discover` or `find_by_text` to
@@ -944,6 +973,25 @@ async def _fill_verified(
     if the field stayed empty). Always targets value===text (clears first), so
     verification is meaningful."""
     from ._demo import session
+    from ._editable import editor_state
+
+    prepare_input = getattr(tab, "_prepare_input", None)
+    if prepare_input:
+        await prepare_input()
+    editor = await editor_state(element)
+    if editor.get("kind") != "plain":
+        if not editor.get("supported"):
+            return {
+                "typed": False,
+                "verified": False,
+                "method": None,
+                "methods_tried": [],
+                "input_sent": False,
+                "error_code": "unsupported",
+                "retryable": False,
+                "error": "The editor's editable full document is unavailable. Its textarea is an input proxy; no replacement or Enter was sent. Use the editor's documented full-document API and verify its model before submitting.",
+            }
+        return await _fill_editor(tab, element, text, editor)
 
     if prefer is None and session(tab):
         prefer = "human"
@@ -995,6 +1043,31 @@ async def _fill_verified(
     }
 
 
+async def _fill_editor(tab: Tab, element: Element, text: str, before: dict) -> dict:
+    """Replace a pinned Monaco model once; never retry its proxy textarea."""
+    from ._editable import replace_editor_document
+
+    await tab._prepare_input()
+    after = await replace_editor_document(element, text, before)
+    applied = bool(after.get("applied"))
+    matched = bool(applied and after.get("matches"))
+    result = {
+        "typed": applied,
+        "verified": matched,
+        "verification": "editor_model",
+        "method": "editor" if matched else None,
+        "methods_tried": ["editor"] if applied else [],
+        "input_sent": applied,
+    }
+    if not matched:
+        result.update(
+            error_code="conflict",
+            retryable=False,
+            error="The editor document changed or did not match after one replacement. Inspect its full model; no retry or Enter was sent.",
+        )
+    return result
+
+
 async def type_by_ref(
     tab: Tab,
     ref: str,
@@ -1031,6 +1104,13 @@ async def type_by_ref(
     - `human_like=True` types with human timing first — for anti-bot pages.
     Both still fall back if the preferred method doesn't land.
 
+    Monaco proxies use one full-document editor edit (`method="editor"`) and
+    compare the complete, pinned model. If its public model API is unavailable,
+    or a rich editor has no supported document adapter, return `unsupported`
+    before editing. Editor mismatches never retry against the proxy textarea.
+    Editor fills use one bulk edit regardless of human/keystroke preferences.
+    `enter=True` sends Enter only after successful verification.
+
     Args:
         tab: Tab instance
         ref: Element ref from page_discover() (e.g., "5#214")
@@ -1044,13 +1124,16 @@ async def type_by_ref(
 
     Returns:
         dict with `typed` (the value actually landed), `verified` (value===text),
-        `method` (`insertText`/`keys`/`native`, or None if nothing landed),
+        `method` (`insertText`/`keys`/`native`/`editor`, or None if nothing landed),
         `methods_tried`, `ref`, `text`; `entered` when `enter=True`.
 
     Failure:
-        `typed:false` / `verified:false` means every method left the field empty
-        — it's not a normal editable (a display-only element behind an overlay,
-        a disabled input, a canvas widget). Re-check the ref points at the real
+        `unsupported` on an editor means its full document cannot be verified;
+        no edit or Enter was sent. Use its documented full-document API through
+        js_evaluate and verify the complete model before submitting. A model
+        conflict or `verified:false` after editing requires inspection, not a
+        repeated insertion. Enter is withheld on every unverified fill.
+        For ordinary fields, re-check the ref points at the real
         `<input>/<textarea>/[contenteditable]`; for a masked/overlay field find
         the true input via `page_discover` / `find_by_html_id`.
 
@@ -1071,7 +1154,7 @@ async def type_by_ref(
     result = await _fill_verified(tab, element, text, prefer=prefer)
     result["ref"] = ref
     result["text"] = text
-    if enter:
+    if enter and result.get("verified"):
         # Re-focus the same ref before Enter so the key lands on this field
         # even if a framework moved focus during the fill.
         pressed = await press_key(tab, "Enter", ref=ref)
