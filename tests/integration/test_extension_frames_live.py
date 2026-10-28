@@ -156,6 +156,25 @@ async def verify_owned_frames(browser, port, proof):
         otherTabUnchanged=True,
     )
 
+    next_url = f"http://child.test:{port}/child?document=next"
+    await first.evaluate(
+        "(()=>{const frame=document.querySelector('#review');window.childLoaded=false;"
+        "frame.addEventListener('load',()=>{window.childLoaded=true},{once:true});"
+        f"frame.src={json.dumps(next_url)};return true}})()"
+    )
+    await wait_value(
+        lambda: first.evaluate("window.childLoaded", return_by_value=True), True
+    )
+    assert await owned_frame_id(first) == frame_id
+    assert (await js_evaluate(first, "location.search", frame=frame_id))[
+        "result"
+    ] == "?document=next"
+    assert (await js_evaluate(first, "heading.textContent", frame=next_url))[
+        "result"
+    ] == "Child first"
+    proof["sameFrameNavigationMetadataRefreshed"] = True
+    session = await first.frame_session(frame_id)
+
     await first.evaluate("document.querySelector('#review').remove()")
 
     async def detached():
