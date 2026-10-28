@@ -16,9 +16,51 @@ import pytest
 import websockets
 
 from ai_dev_browser.cdp import runtime, target as cdp_target
-from ai_dev_browser.core._transport import CDPConnection, ProtocolException
+from ai_dev_browser.core._transport import MAX_SIZE, CDPConnection, ProtocolException
 from ai_dev_browser.core.connection import BrowserClient, get_active_tab
 from ai_dev_browser.core.ext_bridge import run_bridge
+
+
+async def test_bridge_preserves_large_replies_and_dom_events():
+    """Real WS frames carry review metadata above the default server limit."""
+    server, bridge = await run_bridge(0)
+    port = server.sockets[0].getsockname()[1]
+    payload = "x" * (5 * 1024 * 1024)
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as extension:
+            await extension.send(json.dumps({"_hello": True}))
+
+            async def announced():
+                while bridge.extension is None:
+                    await asyncio.sleep(0.01)
+
+            await asyncio.wait_for(announced(), 3)
+            async with websockets.connect(
+                f"ws://127.0.0.1:{port}/devtools/page/11", max_size=MAX_SIZE
+            ) as driver:
+                await driver.send(json.dumps({"id": 1, "method": "Runtime.evaluate"}))
+                request = json.loads(await asyncio.wait_for(extension.recv(), 3))
+                await extension.send(
+                    json.dumps({"_gid": request["_gid"], "result": {"value": payload}})
+                )
+                reply = json.loads(await asyncio.wait_for(driver.recv(), 3))
+                assert reply == {"id": 1, "result": {"value": payload}}
+                await extension.send(
+                    json.dumps(
+                        {
+                            "_event_tab": "11",
+                            "method": "DOM.attributeModified",
+                            "params": {"nodeId": 2, "name": "srcdoc", "value": payload},
+                        }
+                    )
+                )
+                event = json.loads(await asyncio.wait_for(driver.recv(), 3))
+                assert event["method"] == "DOM.attributeModified"
+                assert event["params"]["value"] == payload
+                assert bridge.extension is not None
+    finally:
+        server.close()
+        await server.wait_closed()
 
 
 @pytest.mark.asyncio

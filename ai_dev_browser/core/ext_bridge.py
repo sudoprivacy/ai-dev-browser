@@ -39,7 +39,7 @@ from urllib.parse import parse_qs, urlsplit
 import websockets
 
 from .extension import EXTENSION_BRIDGE_PORT
-from ._transport import _local_websocket_options
+from ._transport import MAX_SIZE, _local_websocket_options
 
 logger = logging.getLogger(__name__)
 
@@ -158,8 +158,15 @@ class _Bridge:
                 elif "_hello" in m:
                     self.account = m.get("account")
                     self.identity.update({key: m.get(key) for key in self.identity})
-        except websockets.exceptions.ConnectionClosed:
-            pass  # extension disconnected — normal
+        except websockets.exceptions.ConnectionClosed as error:
+            received = getattr(getattr(error, "rcvd", None), "code", None)
+            sent = getattr(getattr(error, "sent", None), "code", None)
+            logger.log(
+                logging.INFO if sent in (1000, 1001) else logging.WARNING,
+                "Extension bridge socket closed: received_code=%s sent_code=%s",
+                received,
+                sent,
+            )
         finally:
             if self.extension is ws:
                 self.extension = None
@@ -487,6 +494,9 @@ async def run_bridge(port: int = EXTENSION_BRIDGE_PORT):
         "127.0.0.1",
         port,
         process_request=_launch_page,
+        # DOM events may contain a review iframe's entire srcdoc attribute.
+        # Match the bounded native CDP client instead of the 1 MiB WS default.
+        max_size=MAX_SIZE,
     )
     bridge.server = server
     logger.info("extension bridge listening on 127.0.0.1:%d", port)

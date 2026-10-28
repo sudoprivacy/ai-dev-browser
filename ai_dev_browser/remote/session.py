@@ -13,7 +13,7 @@ from typing import Any
 
 import aiohttp
 
-from ai_dev_browser.core._transport import ProtocolException
+from ai_dev_browser.core._transport import MAX_SIZE, ProtocolException
 
 from .authorized_page import navigation_cookie
 from .cdp import CDP, BrowserViewError
@@ -125,7 +125,9 @@ class BrowserSession:
             )
             if tab is None:
                 raise ControlError("browser_target_closed")
-            ws = await self.http.ws_connect(tab._connection.websocket_url)
+            ws = await self.http.ws_connect(
+                tab._connection.websocket_url, max_msg_size=MAX_SIZE
+            )
             self._page = CDP(ws, self._event)
             await self._page.call("Page.enable")
         # A lost input socket is not silently reconnected/replayed.
@@ -143,7 +145,9 @@ class BrowserSession:
 
     async def _connect_browser(self):
         if self._browser is None:
-            ws = await self.http.ws_connect(self.browser.connection.websocket_url)
+            ws = await self.http.ws_connect(
+                self.browser.connection.websocket_url, max_msg_size=MAX_SIZE
+            )
             self._browser = CDP(ws)
         return self._browser
 
@@ -521,7 +525,9 @@ class BrowserSession:
             elif not self._dialog:
                 focused = []
                 for tab in self.browser.tabs:
-                    ws = await self.http.ws_connect(tab._connection.websocket_url)
+                    ws = await self.http.ws_connect(
+                        tab._connection.websocket_url, max_msg_size=MAX_SIZE
+                    )
                     page = CDP(ws)
                     try:
                         result = await page.call(

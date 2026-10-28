@@ -389,6 +389,12 @@ Browser/Target methods remain outside the command allowlist. Missing, foreign,
 ambiguous or malformed selectors return `invalid_browser_frame`; protocol
 errors keep their generic public code and private host diagnostics.
 
+Bridge and worker CDP sockets use the same bounded message size as the native
+SDK transport. DOM events can include a review iframe's entire `srcdoc`
+attribute, even when a query returns only a node ID. These events and large
+replies must preserve the connection rather than disconnecting other viewers
+or agents. The live workflow exercises a 5 MiB DOM attribute event and reply.
+
 Frame lookup and execution stay within the existing control barrier. Main and
 child agents share the same human lease and control/target epochs. Switching
 tabs invalidates queued operations; human control rejects frame reads and

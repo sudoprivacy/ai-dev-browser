@@ -161,6 +161,24 @@ async def test_worker_mcp_child_frames_keep_target_and_control(
                 == "nested-first"
             )
             first_frame = await owned_frame_id(first)
+            # Real review pages put a large source document in an iframe
+            # attribute. Native DOM events include the attribute even when a
+            # command's result is tiny; every socket must retain its connection.
+            assert (
+                await read(
+                    state,
+                    "(()=>{document.querySelector('#review').setAttribute('data-review-fixture','x'.repeat(5*1024*1024));return true})()",
+                )
+                is True
+            )
+            assert await read(state, expression, first_frame) == "Child first"
+            proof["largeParentDomEventPreserved"] = True
+            large = await read(state, "'x'.repeat(5*1024*1024)")
+            assert isinstance(large, str)
+            assert len(large) == 5 * 1024 * 1024
+            assert large.count("x") == len(large)
+            del large
+            proof["largeCommandReplyPreserved"] = True
             await read(state, "document.querySelector('#value').focus()", first_frame)
             text = "MCP \u4e2d\u6587"
             await command(state, "Input.insertText", {"text": text}, first_frame)
