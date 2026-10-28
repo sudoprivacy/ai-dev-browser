@@ -4,6 +4,59 @@ import math
 import time
 
 
+class PageDrag:
+    """Trusted pointer on one caller-owned page, used by the shared LiveDrag.
+
+    The worker holds the input barrier for the entire gesture. Retain this
+    exact connection through release so a tab switch cannot redirect input.
+    """
+
+    def __init__(self, page, width, height):
+        self.page, self.width, self.height = page, width, height
+        self.point = None
+
+    async def press(self, point):
+        self.point = point
+        await self.page.call("Page.bringToFront", timeout=5)
+        await self.page.call(
+            "Input.dispatchMouseEvent", {"type": "mouseMoved", **point}, timeout=5
+        )
+        await self.page.call(
+            "Input.dispatchMouseEvent",
+            {
+                "type": "mousePressed",
+                **point,
+                "button": "left",
+                "buttons": 1,
+                "clickCount": 1,
+            },
+            timeout=5,
+        )
+
+    async def move(self, point):
+        self.point = point
+        await self.page.call(
+            "Input.dispatchMouseEvent",
+            {"type": "mouseMoved", **point, "button": "left", "buttons": 1},
+            timeout=5,
+        )
+
+    async def release(self):
+        if self.point is not None:
+            await self.page.call(
+                "Input.dispatchMouseEvent",
+                {
+                    "type": "mouseReleased",
+                    **self.point,
+                    "button": "left",
+                    "buttons": 0,
+                    "clickCount": 1,
+                },
+                timeout=2,
+            )
+            self.point = None
+
+
 class PageView:
     """Render and operate an explicitly selected page on a caller-owned CDP.
 
