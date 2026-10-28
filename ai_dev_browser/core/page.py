@@ -87,8 +87,11 @@ async def js_evaluate(tab: Tab, expression: str, frame: str | None = None) -> di
             during the eval is captured separately.
         frame: Optional cross-origin iframe to run inside — a substring of
             the frame's URL (e.g. `"chinatax.gov"`) or its CDP target id.
-            Omit for the top page. A no-match lists the page's real
-            cross-origin frames so you can retry with a correct substring.
+            Matches are limited to descendants of the selected tab. An exact
+            target id takes precedence; ambiguous URL substrings fail with a
+            request for a more specific selector. Omit for the top page. A
+            no-match lists this page's real cross-origin frames. Extension
+            child-frame routing requires Chrome 125 or newer.
 
     Returns:
         dict with:

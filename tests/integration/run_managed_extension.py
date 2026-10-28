@@ -39,6 +39,7 @@ def main():
                 "asyncio_default_fixture_loop_scope=function",
                 "-o",
                 "cache_dir=/tmp/managed-pytest-cache",
+                "tests/integration/test_extension_frames_live.py",
                 "tests/integration/test_browser_session_live.py",
                 "tests/integration/test_remote_window_live.py",
                 "tests/integration/test_browser_files_live.py",

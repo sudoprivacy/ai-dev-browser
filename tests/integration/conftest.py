@@ -430,6 +430,14 @@ async def live_extension(request, tmp_path, monkeypatch):
             extra_args=[
                 f"--load-extension={copied_extension}",
                 f"--disable-extensions-except={copied_extension}",
+                *(
+                    [
+                        "--host-resolver-rules=MAP *.test 127.0.0.1",
+                        "--proxy-server=direct://",
+                    ]
+                    if request.node.get_closest_marker("extension_frames")
+                    else []
+                ),
                 "--enable-logging=file",
                 f"--log-file={tmp_path / 'extension-chrome.log'}",
                 # The owned visual fixture runs beside the user's foreground
