@@ -53,6 +53,15 @@ dialogs and supported keys. `PageSurface` is a rendering/input adapter, not a
 complete tab bar, toolbar, WebSocket authorization protocol or React panel.
 Hosts whose worker advertises `capabilities.dragInput` can opt into mouse/pen
 selection with `new PageSurface(imageElement, sendAuthorizedInput, {drag: true})`.
+When `capabilities.liveDragSurfaces` includes `"page"`, also pass
+`{liveDrag: true, viewerId}` using that attached page viewer's ID. The checked
+input callback must return the API acknowledgement promise. Page gestures use
+the same bounded, sequenced `drag-stream` packets and input barrier as window
+gestures. Pixels remain observable while the button is held; closing the viewer
+releases the button and fences stale coordinates without returning control to AI.
+Headless CDP and managed extension browsers need no X11/VNC service for this.
+Older workers without the surface capability keep the bounded `drag` fallback;
+the legacy `liveDragInput` flag alone does not advertise page streaming.
 Touch gestures scroll by default. A host can offer an explicit "Select text or
 drag" gesture mode with `{drag: true, touchDrag: true}`. A cancelled touch sends
 no partial drag; switching away from a surface must dispose it before accepting

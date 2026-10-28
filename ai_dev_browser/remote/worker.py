@@ -91,6 +91,7 @@ class Worker:
         )
         self.window_stream_connections = set()
         self.live_drag = None
+        self.drag_packets = asyncio.Lock()
         self.control = BrowserControl()
         self.handoff = None
         self.journal = self.root / "control.json"
@@ -267,6 +268,11 @@ class Worker:
                 "liveDragInput": bool(
                     self.session and self.display and not is_transitioning
                 ),
+                "liveDragSurfaces": (
+                    (["page", "window"] if self.display else ["page"])
+                    if self.session and not is_transitioning
+                    else []
+                ),
                 "clipboardText": True,
                 "selectionRead": True,
                 "lifecycle": self.personal_reference is None,
@@ -383,7 +389,21 @@ class Worker:
         await self.control.run(controller, epoch, target_epoch, perform)
         await self.session.follow_foreground(controller, epoch, target_epoch)
 
-    async def input_live_drag(self, controller, epoch, target_epoch, event):
+    async def input_live_drag(
+        self, controller, epoch, target_epoch, event, *, surface="window"
+    ):
+        # Reject concurrent packets rather than queueing positions that may
+        # outlive their sender. Preparation also belongs to this guard.
+        if self.drag_packets.locked():
+            raise ControlError("browser_drag_packet_in_progress")
+        async with self.drag_packets:
+            return await self._input_live_drag(
+                controller, epoch, target_epoch, event, surface=surface
+            )
+
+    async def _input_live_drag(
+        self, controller, epoch, target_epoch, event, *, surface
+    ):
         if not isinstance(event, dict) or set(event) != {
             "kind",
             "phase",
@@ -411,12 +431,34 @@ class Worker:
             raise ControlError("invalid_browser_drag_packet")
         owned = controller + ":" + event["viewerId"]
         if (
-            owned not in self.window_viewers
+            owned not in (self.window_viewers if surface == "window" else self.viewers)
             or not self.session
             or self.lifecycle_changes
         ):
             raise ControlError("browser_viewer_not_attached")
-        view = await self.window_view.attach(owned)
+        self.control._authorize(controller, epoch, target_epoch, False)
+        if phase == "begin":
+            if self.live_drag and not self.live_drag["gesture"].task.done():
+                raise ControlError("browser_drag_in_progress")
+            view = (
+                await self.window_view.attach(owned)
+                if surface == "window"
+                else await self.session.drag_view(
+                    owned, controller, epoch, target_epoch
+                )
+            )
+        else:
+            context = self.live_drag
+            if not context or (
+                context["id"],
+                context["viewer"],
+                context["controller"],
+                context["epoch"],
+                context["targetEpoch"],
+                context["surface"],
+            ) != (identity, owned, controller, epoch, target_epoch, surface):
+                raise ControlError("browser_drag_changed")
+            view = context["view"]
         points = drag_points(
             {"points": [{"x": event["x"], "y": event["y"]}] * 2},
             view.width,
@@ -433,6 +475,12 @@ class Worker:
                 await self.live_drag["gesture"].close()
                 self.live_drag = None
             state = await self.state(controller)
+            if owned not in self.viewers or (
+                owned not in self.window_viewers
+                if surface == "window"
+                else owned not in self.session._viewers
+            ):
+                raise ControlError("browser_viewer_not_attached")
             gesture = LiveDrag(
                 self.control,
                 controller,
@@ -451,18 +499,11 @@ class Worker:
                 "controller": controller,
                 "epoch": epoch,
                 "targetEpoch": target_epoch,
+                "surface": surface,
+                "view": view,
             }
             await gesture.start()
         else:
-            context = self.live_drag
-            if not context or (
-                context["id"],
-                context["viewer"],
-                context["controller"],
-                context["epoch"],
-                context["targetEpoch"],
-            ) != (identity, owned, controller, epoch, target_epoch):
-                raise ControlError("browser_drag_changed")
             if sequence != context["sequence"] + 1:
                 raise ControlError("invalid_browser_drag_sequence")
             # Consume a sequence before awaiting its native acknowledgement.
@@ -479,6 +520,7 @@ class Worker:
                         controller, self.control.epoch, self.control.target_epoch
                     )
         self.viewers[owned] = time.monotonic()
+        self.session.invalidate_frame()
         self.window_frame = None
         return {"session": await self.state(controller)}
 
@@ -875,6 +917,7 @@ class Worker:
                 if kind == "attach":
                     self.viewers[owned] = time.monotonic()
                     if self.surface(action) == "window":
+                        await self.close_live_drag(owned)
                         self.window_viewers.add(owned)
                         await self.session.detach(owned)
                         await self.window_view.attach(owned)
@@ -947,7 +990,14 @@ class Worker:
                     )
                 else:
                     extra["frame"] = {
-                        **await self.session.frame(owned, epoch, target_epoch),
+                        **await self.session.frame(
+                            owned,
+                            epoch,
+                            target_epoch,
+                            during_drag=bool(
+                                self.live_drag and self.live_drag["surface"] == "page"
+                            ),
+                        ),
                         "surface": "page",
                     }
             elif (
@@ -958,14 +1008,19 @@ class Worker:
                 extra["selection"] = await self.session.selection(
                     controller, epoch, target_epoch
                 )
+            elif (
+                kind == "input"
+                and isinstance(action.get("input"), dict)
+                and action["input"].get("kind") == "drag-stream"
+            ):
+                return await self.input_live_drag(
+                    controller,
+                    epoch,
+                    target_epoch,
+                    action["input"],
+                    surface=self.surface(action),
+                )
             elif kind == "input" and self.surface(action) == "window":
-                if (
-                    isinstance(action.get("input"), dict)
-                    and action["input"].get("kind") == "drag-stream"
-                ):
-                    return await self.input_live_drag(
-                        controller, epoch, target_epoch, action["input"]
-                    )
                 await self.input_window(
                     controller, epoch, target_epoch, action["input"]
                 )

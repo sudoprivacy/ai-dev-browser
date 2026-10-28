@@ -5,6 +5,7 @@ and viewer IDs and keeps raw browser endpoints private. This module owns only
 its connections and viewers; disconnecting it never stops Chrome.
 """
 
+import asyncio
 import logging
 import time
 import uuid
@@ -15,7 +16,7 @@ import aiohttp
 from .authorized_page import navigation_cookie
 from .cdp import CDP, BrowserViewError
 from .control import BrowserControl, ControlError, SharedViewer
-from .page import PageView
+from .page import PageDrag, PageView
 
 
 class BrowserSession:
@@ -35,6 +36,8 @@ class BrowserSession:
         self._viewers: set[str] = set()
         self._frame: dict[str, Any] | None = None
         self._frame_time = 0.0
+        self._frame_lock = asyncio.Lock()
+        self._frame_generation = 0
         self._view = SharedViewer(self._create_view, self._close_view)
 
     async def _create_view(self):
@@ -175,35 +178,74 @@ class BrowserSession:
             observation=True,
         )
 
-    async def frame(self, viewer: str, epoch: int, target_epoch: int):
+    def invalidate_frame(self):
+        self._frame_generation += 1
+        self._frame = None
+
+    async def drag_view(self, viewer: str, controller, epoch, target_epoch):
+        async def prepare():
+            if viewer not in self._viewers:
+                raise ControlError("browser_viewer_not_attached")
+            if self._dialog:
+                raise ControlError("browser_dialog_open")
+            page = await self._connect_page()
+            width, height = await self._dimensions(page)
+            return PageDrag(page, width, height)
+
+        return await self.control.run(controller, epoch, target_epoch, prepare)
+
+    async def frame(
+        self, viewer: str, epoch: int, target_epoch: int, *, during_drag=False
+    ):
         async def capture():
             if viewer not in self._viewers:
                 raise ControlError("browser_viewer_not_attached")
             view = await self._view.attach(viewer)
-            page = await self._connect_page()
+            # Live page input already owns this connection and the write
+            # barrier. Only pixel/layout reads may run alongside that press.
+            page = self._page if during_drag else await self._connect_page()
+            if page is None or page.disconnected:
+                raise ControlError("browser_disconnected")
             if (
                 self._frame is None
                 or time.monotonic() - self._frame_time >= 0.25
                 or self._frame["controlEpoch"] != self.control.epoch
                 or self._frame["targetEpoch"] != self.control.target_epoch
             ):
+                generation = self._frame_generation
                 width, height = await self._dimensions(page)
                 data = await view.capture(page, dialog=self._dialog)
                 if not data:
                     raise ControlError("browser_dialog_requires_response")
-                self._frame = {
+                frame = {
                     "data": data,
                     "width": width,
                     "height": height,
-                    "controlEpoch": self.control.epoch,
-                    "targetEpoch": self.control.target_epoch,
+                    "controlEpoch": epoch,
+                    "targetEpoch": target_epoch,
                 }
-                self._frame_time = time.monotonic()
+                self.control._authorize("ai", epoch, target_epoch, True)
+                if viewer not in self._viewers:
+                    raise ControlError("browser_viewer_not_attached")
+                if generation == self._frame_generation:
+                    self._frame = frame
+                    self._frame_time = time.monotonic()
+                return frame
             return self._frame
 
-        return await self.control.run(
-            "ai", epoch, target_epoch, capture, observation=True
-        )
+        async with self._frame_lock:
+            if during_drag:
+                # Avoid blocking visual feedback behind the held button.
+                # This path cannot evaluate JS, select tabs or perform input.
+                # Reject a read that crossed a target/lease change, and never
+                # stamp its old pixels with the new operation version.
+                self.control._authorize("ai", epoch, target_epoch, True)
+                frame = await capture()
+                self.control._authorize("ai", epoch, target_epoch, True)
+                return frame
+            return await self.control.run(
+                "ai", epoch, target_epoch, capture, observation=True
+            )
 
     async def _observe(self):
         tabs = await self._refresh()
