@@ -43,6 +43,9 @@ ID. URL matching is limited to descendants of the selected tab. A URL substring
 that matches several descendants fails explicitly; exact IDs take precedence.
 Detaching a frame, replacing the page or revoking debugger consent discards
 stale frame sessions. Reconnect to the existing browser to rediscover its frames.
+Selected-tab discovery refreshes Chrome's live child metadata: an initial
+attachment can report an empty URL before the document commits. A loaded frame
+must remain discoverable without relying on that initial cached URL.
 
 This applies to both an explicitly connected personal Chrome and a host-managed
 Chrome with the signed extension installed by policy. It does not install an

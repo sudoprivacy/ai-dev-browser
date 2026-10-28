@@ -61,6 +61,37 @@ for (const history of [[], [{event:'revoked', tabId:11, time:123456789, reason:'
   });
 }
 
+test('selected-tab frame discovery refreshes a provisional empty URL after document load', async () => {
+  const { chrome, run } = await fixture();
+  let currentUrl = '';
+  chrome.debugger.sendCommand = async (debuggee, method) => method === 'Target.getTargetInfo'
+    ? { targetInfo: { targetId: 'child', type: 'iframe', url: currentUrl } } : {};
+  run("globalThis.navigator={userAgent:'Chrome/156.0.0.0'};claim(11)");
+  await chrome.debugger.onEvent.handlers[0]({ tabId: 11 }, 'Target.attachedToTarget',
+    { sessionId: 'child-session', targetInfo: { targetId: 'child', type: 'iframe', url: '', parentFrameId: 'root' } });
+  assert.equal(run("frameSessions.get(11).get('child-session').info.url"), '');
+  currentUrl = 'https://child.test/loaded';
+  const result = await run("browserLevel('Target.getTargets',{},'11')");
+  assert.equal(result.targetInfos.find(info => info.targetId === 'child').url, currentUrl);
+});
+
+test('revocation during frame metadata refresh refuses the pending discovery result', async () => {
+  const { chrome, run } = await fixture();
+  chrome.debugger.sendCommand = async () => ({});
+  run("globalThis.navigator={userAgent:'Chrome/156.0.0.0'};claim(11)");
+  await chrome.debugger.onEvent.handlers[0]({ tabId: 11 }, 'Target.attachedToTarget',
+    { sessionId: 'child-session', targetInfo: { targetId: 'child', type: 'iframe', url: '', parentFrameId: 'root' } });
+  let release, requested;
+  const started = new Promise(resolve => { requested = resolve; });
+  chrome.debugger.sendCommand = async () => new Promise(resolve => { release = resolve; requested(); });
+  const pending = run("browserLevel('Target.getTargets',{},'11')");
+  await Promise.race([started, pending.then(() => { throw new Error('Frame metadata was not refreshed'); })]);
+  run("forget(11,'revoked')");
+  release({ targetInfo: { targetId: 'child', type: 'iframe', url: 'https://child.test/late' } });
+  await assert.rejects(pending, error => error.ownership?.state === 'revoked');
+  assert.equal(run('frameSessions.has(11)'), false);
+});
+
 test('child sessions route only within their owning tab and die with its consent', async () => {
   const { chrome, run } = await fixture();
   const commands = [];

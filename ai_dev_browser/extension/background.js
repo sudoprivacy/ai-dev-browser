@@ -433,7 +433,27 @@ async function targetInfos(selectedTab = null) {
       info.openerId = String(t.openerTabId);
     }
     infos.push(info);
-    for (const frame of frameSessions.get(tabId)?.values() || []) {
+    for (const [sessionId, frame] of [...(frameSessions.get(tabId) || [])]) {
+      if (selectedTab != null) {
+        // Initial attachment can precede navigation commit and report an empty
+        // URL. Read the live child metadata for selected-tab frame discovery.
+        // The browser-wide index is used for tab polling, so avoid refreshing
+        // every iframe in every background tab during that ordinary poll.
+        let current;
+        try {
+          current = await chrome.debugger.sendCommand({ tabId, sessionId }, "Target.getTargetInfo", {});
+        } catch (error) {
+          requireOwned(tabId);
+          if (frameSessions.get(tabId)?.get(sessionId) !== frame) continue;
+          throw error;
+        }
+        requireOwned(tabId);
+        if (frameSessions.get(tabId)?.get(sessionId) !== frame) continue;
+        if (current?.targetInfo) {
+          if (current.targetInfo.targetId !== frame.info.targetId) throw new Error("Child target identity changed during discovery");
+          Object.assign(frame.info, current.targetInfo);
+        }
+      }
       infos.push({ ...frame.info, attached: true, canAccessOpener: false });
     }
   }
