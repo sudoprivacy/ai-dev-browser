@@ -1052,6 +1052,11 @@ class Worker:
             return {"session": current, "observation": observation}
         if kind == "command":
             method, params = action.get("method"), action.get("params", {})
+            frame = action.get("frame")
+            if frame is not None and (
+                not isinstance(frame, str) or not frame or len(frame) > 8192
+            ):
+                raise ControlError("invalid_browser_frame")
             # Page commands stay on the selected target. Browser/Target/remote
             # endpoint commands are owned by the session lifecycle instead.
             if (
@@ -1087,7 +1092,7 @@ class Worker:
             ):
                 raise ControlError("invalid_browser_command")
             result = await self.session.agent_command(
-                epoch, target_epoch, method, params
+                epoch, target_epoch, method, params, frame=frame
             )
         elif kind in {
             "input",

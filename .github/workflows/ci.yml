@@ -187,14 +187,14 @@ jobs:
               sleep 0.1
             done
             xprop -root _NET_SUPPORTING_WM_CHECK | grep -q "window id"
-            python -m pytest -v --full-trace -o faulthandler_timeout=180 tests/integration/test_extension_frames_live.py tests/integration/test_remote_view.py tests/integration/test_worker_page_drag_live.py tests/integration/test_discovery_socket_pressure.py tests/integration/test_remote_selection_live.py tests/integration/test_remote_vnc.py tests/integration/test_worker_window_stream_live.py tests/integration/test_browser_control_live.py tests/integration/test_browser_session_live.py tests/integration/test_browser_files_live.py tests/integration/test_browser_worker_live.py tests/integration/test_existing_worker_live.py tests/integration/test_navigation_startup.py --basetemp remote-results
+            python -m pytest -v --full-trace -o faulthandler_timeout=180 tests/integration/test_worker_frames_live.py tests/integration/test_extension_frames_live.py tests/integration/test_remote_view.py tests/integration/test_worker_page_drag_live.py tests/integration/test_discovery_socket_pressure.py tests/integration/test_remote_selection_live.py tests/integration/test_remote_vnc.py tests/integration/test_worker_window_stream_live.py tests/integration/test_browser_control_live.py tests/integration/test_browser_session_live.py tests/integration/test_browser_files_live.py tests/integration/test_browser_worker_live.py tests/integration/test_existing_worker_live.py tests/integration/test_navigation_startup.py --basetemp remote-results
           '
       - name: Run page and extension workflows on Windows
         if: runner.os == 'Windows'
         env:
           AI_DEV_BROWSER_CHROME: ${{ steps.chrome.outputs.chrome-path }}
           AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.chrome.outputs.chrome-path }}
-        run: python -m pytest -v --full-trace -o faulthandler_timeout=180 tests/integration/test_extension_frames_live.py tests/integration/test_remote_view.py tests/integration/test_worker_page_drag_live.py tests/integration/test_discovery_socket_pressure.py tests/integration/test_remote_selection_live.py tests/integration/test_browser_control_live.py tests/integration/test_browser_session_live.py tests/integration/test_browser_files_live.py tests/integration/test_browser_worker_live.py tests/integration/test_existing_worker_live.py tests/integration/test_navigation_startup.py --basetemp remote-results
+        run: python -m pytest -v --full-trace -o faulthandler_timeout=180 tests/integration/test_worker_frames_live.py tests/integration/test_extension_frames_live.py tests/integration/test_remote_view.py tests/integration/test_worker_page_drag_live.py tests/integration/test_discovery_socket_pressure.py tests/integration/test_remote_selection_live.py tests/integration/test_browser_control_live.py tests/integration/test_browser_session_live.py tests/integration/test_browser_files_live.py tests/integration/test_browser_worker_live.py tests/integration/test_existing_worker_live.py tests/integration/test_navigation_startup.py --basetemp remote-results
       - name: Retain real viewer evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -225,6 +225,8 @@ jobs:
           docker exec "adb-managed-live-$GITHUB_RUN_ID" /opt/browser/venv/bin/python tests/integration/run_managed_extension.py
       - name: Verify read-only streaming and checked native input
         run: docker exec "adb-managed-live-$GITHUB_RUN_ID" /opt/browser/venv/bin/python -m pytest -v --full-trace -o faulthandler_timeout=180 -o cache_dir=/tmp/managed-results/pytest-cache tests/integration/test_worker_window_stream_live.py tests/integration/test_worker_page_drag_live.py --basetemp /tmp/managed-results/window-stream
+      - name: Verify authenticated MCP commands in real child frames
+        run: docker exec "adb-managed-live-$GITHUB_RUN_ID" /opt/browser/venv/bin/python -m pytest -v --full-trace -o faulthandler_timeout=180 -o cache_dir=/tmp/managed-results/pytest-cache tests/integration/test_worker_frames_live.py --basetemp /tmp/managed-results/mcp-frames
       - name: Verify host-only authorized review navigation
         run: docker exec "adb-managed-live-$GITHUB_RUN_ID" /opt/browser/venv/bin/python -m pytest -v --full-trace -o faulthandler_timeout=180 -o cache_dir=/tmp/managed-results/pytest-cache tests/integration/test_browser_worker_live.py -k host_authorized_page --basetemp /tmp/managed-results/authorized-page
       - name: Collect actual-browser evidence

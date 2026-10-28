@@ -38,11 +38,12 @@ GUIDANCE = """Mode choice:
 
     For human login or verification, explain what is needed through the agent's
     native question/options or normal conversation. When the host provides
-    shared browser controls, ask the user to Take control, complete the step in
-    that same browser/profile, and Return to AI when ready. A chat reply or
-    option alone does not establish ownership. The host must acknowledge its
-    tool pause/control barrier; prompts cannot replace it. Wait while human
-    control is held and observe the current page before continuing. Never ask
+    shared browser controls, use its normal interrupt/continue flow so the user
+    completes the step in that same browser/profile. Separate browser handoff
+    buttons are not required. A chat reply or option alone does not establish
+    ownership. The host must acknowledge its tool pause/control barrier;
+    prompts cannot replace it. Wait while human control is held and observe
+    the current page after the host confirms explicit continuation. Never ask
     for passwords, cookies or verification codes in chat or switch browsers to
     bypass a human lease. Without host handoff controls, coordinate explicitly
     with the user and do not claim that tools have been paused automatically.

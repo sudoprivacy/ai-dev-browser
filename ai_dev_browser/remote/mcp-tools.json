@@ -1,7 +1,7 @@
 [
   {
     "name": "browser_launch",
-    "description": "Start the browser shared with the user. Choose headless/headful from the task; headless runs no display service and can still provide the host's page viewer. Cloud extension is preferred for compatibility and persistent login. Existing browsers retain their launch mode; a different mode returns browser_restart_required. Use browser_restart to explicitly change it. When login or human input is needed, use your agent's native question/options or ordinary conversation to ask the user to choose Take control in the host's shared panel or viewer. The user signs in directly in that same browser/profile; never request passwords, cookies or verification codes in chat. A chat reply or native option alone does not transfer control. Wait for the host's explicit Return to AI and then freshly observe. Never bypass human control.",
+    "description": "Start the browser shared with the user. Choose headless/headful from the task; headless runs no display service and can still provide the host's page viewer. Cloud extension is preferred for compatibility and persistent login. Existing browsers retain their launch mode; a different mode returns browser_restart_required. Use browser_restart to explicitly change it. When login or human input is needed, explain the step through your agent's native question/options or ordinary conversation and use the host's normal interrupt/continue flow. Separate browser handoff buttons are not required. The user signs in directly in that same browser/profile; never request passwords, cookies or verification codes in chat. A chat reply or native option alone does not transfer control. Wait until the host confirms AI control after explicit continuation, then freshly observe. Never bypass human control.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -37,7 +37,7 @@
   },
   {
     "name": "browser_action",
-    "description": "Operate the same tab as the user's viewer. All main/child agent calls share a server control lease. If human control is held, wait for an explicit return and freshly observe; do not use shell, another connection or another browser. Actions: navigate(url), input(input: click{x,y}, text{text}, key{key}, wheel{x,y,dy}), reload/back/forward/new-tab/select-tab/close-tab(targetId). command(method,paramsJson) supports page CDP methods including Runtime.evaluate; paramsJson is a JSON string, e.g. {\"expression\":\"document.title\",\"returnByValue\":true}. Evaluation is always gated. No input is replayed. Unused fields are ignored for the chosen kind. upload-files(chooserId,fileIds) attaches host-staged opaque upload IDs to the current native file chooser. browser_observe exposes fileChooser and completed downloads. If a local file is needed, ask the user to take control and select it in the shared viewer; never invent a VM path or bypass the file chooser.",
+    "description": "Operate the same tab as the user's viewer. All main/child agent calls share a server control lease. If human control is held, wait for host-confirmed AI control after explicit continuation and freshly observe; do not use shell, another connection or another browser. Actions: navigate(url), input(input: click{x,y}, text{text}, key{key}, wheel{x,y,dy}), reload/back/forward/new-tab/select-tab/close-tab(targetId). command(method,paramsJson,frame?) supports page CDP methods including Runtime.evaluate; paramsJson is a JSON string, e.g. {\"expression\":\"document.title\",\"returnByValue\":true}. Optional frame selects a cross-origin descendant of the current tab by exact frameId or an unambiguous URL substring. Evaluation, including frame commands, is always gated. No input is replayed. Unused fields are ignored for the chosen kind. upload-files(chooserId,fileIds) attaches host-staged opaque upload IDs to the current native file chooser. browser_observe exposes fileChooser and completed downloads. If a local file is needed, ask the user to take control and select it in the shared viewer; never invent a VM path or bypass the file chooser.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -109,6 +109,12 @@
         },
         "method": {
           "type": "string"
+        },
+        "frame": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "description": "For kind=command only: a cross-origin child frame of the selected tab, identified by its exact DOM iframe frameId or an unambiguous URL substring. Omit for the top page. Nested frames are supported; extension frames require Chrome 125+. Human control and both operation epochs still apply. A missing, foreign or ambiguous frame fails; observe again rather than repeating an uncertain input."
         },
         "chooserId": {
           "type": "string",
