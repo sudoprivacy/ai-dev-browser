@@ -21,6 +21,130 @@ from ai_dev_browser.core.connection import BrowserClient, get_active_tab
 from ai_dev_browser.core.ext_bridge import run_bridge
 
 
+@pytest.mark.asyncio
+async def test_bridge_preserves_child_sessions_without_cross_tab_events():
+    server, bridge = await run_bridge(0)
+    port = server.sockets[0].getsockname()[1]
+    seen = []
+
+    async def extension():
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            await ws.send(json.dumps({"_hello": True, "session_id": "frame-fixture"}))
+            pending = []
+            async for raw in ws:
+                command = json.loads(raw)
+                seen.append(command)
+                if command["params"].get("expression") == "disconnect":
+                    await ws.close()
+                    return
+                if len(seen) <= 2:
+                    pending.append(command)
+                    if len(pending) < 2:
+                        continue
+                    for item in reversed(pending):
+                        await ws.send(
+                            json.dumps(
+                                {
+                                    "_gid": item["_gid"],
+                                    "result": {"child": item["sessionId"]},
+                                }
+                            )
+                        )
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "_event_tab": "11",
+                                "sessionId": "child-a",
+                                "method": "Runtime.consoleAPICalled",
+                                "params": {"marker": "only-first-tab"},
+                            }
+                        )
+                    )
+                else:
+                    await ws.send(
+                        json.dumps(
+                            {"_gid": command["_gid"], "result": {"barrier": True}}
+                        )
+                    )
+
+    task = asyncio.create_task(extension())
+    try:
+        async with asyncio.timeout(5):
+            while bridge.extension is None:
+                await asyncio.sleep(0.01)
+        async with (
+            websockets.connect(f"ws://127.0.0.1:{port}/devtools/page/11") as first,
+            websockets.connect(f"ws://127.0.0.1:{port}/devtools/page/22") as second,
+        ):
+            for driver, session in ((first, "child-a"), (second, "child-b")):
+                await driver.send(
+                    json.dumps(
+                        {
+                            "id": 7,
+                            "sessionId": session,
+                            "method": "Runtime.evaluate",
+                            "params": {"expression": "read"},
+                        }
+                    )
+                )
+            assert json.loads(await first.recv()) == {
+                "id": 7,
+                "sessionId": "child-a",
+                "result": {"child": "child-a"},
+            }
+            assert json.loads(await second.recv()) == {
+                "id": 7,
+                "sessionId": "child-b",
+                "result": {"child": "child-b"},
+            }
+            event = json.loads(await first.recv())
+            assert event == {
+                "method": "Runtime.consoleAPICalled",
+                "params": {"marker": "only-first-tab"},
+                "sessionId": "child-a",
+            }
+            # The ordered acknowledgement follows event dispatch. The other
+            # tab must receive its response without an intervening child event.
+            await second.send(
+                json.dumps(
+                    {
+                        "id": 8,
+                        "method": "Runtime.evaluate",
+                        "params": {"expression": "barrier"},
+                    }
+                )
+            )
+            assert json.loads(await second.recv()) == {
+                "id": 8,
+                "result": {"barrier": True},
+            }
+            assert {(item["tab"], item["sessionId"]) for item in seen[:2]} == {
+                ("11", "child-a"),
+                ("22", "child-b"),
+            }
+            await first.send(
+                json.dumps(
+                    {
+                        "id": 9,
+                        "sessionId": "child-a",
+                        "method": "Runtime.evaluate",
+                        "params": {"expression": "disconnect"},
+                    }
+                )
+            )
+            failure = json.loads(await first.recv())
+            assert failure == {
+                "id": 9,
+                "sessionId": "child-a",
+                "error": {"message": "extension disconnected"},
+            }
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        server.close()
+        await server.wait_closed()
+
+
 async def _fake_extension(port: int, ready: asyncio.Event, seen: list):
     """Mock extension: hello first, then answer gid-wrapped commands, recording
     (method, tab) so tests can assert routing."""

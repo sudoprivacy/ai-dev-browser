@@ -105,6 +105,9 @@ class Tab:
         # Cache of {frame target id -> CDP flat-session id} for cross-origin
         # iframe routing; populated lazily by frame_session().
         self._frame_sessions: dict[str, str] = {}
+        self._connection.add_handler(
+            cdp_target.DetachedFromTarget, self._frame_detached
+        )
         # Last cursor position, so an interpolated move starts from where the
         # pointer actually is instead of sweeping the page from (0,0) — which
         # would fire hover/mouseover/tooltip handlers all along the path.
@@ -160,6 +163,7 @@ class Tab:
             self._initialized = False
 
         if not self._initialized:
+            self._frame_sessions.clear()
             for domain_mod, enable_cmd in ((page, page.enable()), (dom, dom.enable())):
                 try:
                     await self._connection.send(enable_cmd, _is_update=True)
@@ -407,6 +411,60 @@ class Tab:
     # Cross-origin frame (OOPIF) routing
     # =========================================================================
 
+    def _frame_detached(self, event):
+        for frame_id, session in list(self._frame_sessions.items()):
+            if session == event.session_id:
+                self._frame_sessions.pop(frame_id, None)
+
+    async def _owned_iframes(self, targets):
+        tree = await self.send(page.get_frame_tree())
+        owned = set()
+
+        def visit(node):
+            owned.add(str(node.frame.id_))
+            for child in node.child_frames or []:
+                visit(child)
+
+        visit(tree)
+
+        # OOPIFs may be absent from the parent's frame tree. Their parent frame
+        # identities establish ancestry without a global URL match.
+        def include_descendants():
+            changed = True
+            while changed:
+                changed = False
+                for candidate in targets:
+                    parent = getattr(candidate, "parent_frame_id", None)
+                    if (
+                        parent is not None
+                        and str(parent) in owned
+                        and str(candidate.target_id) not in owned
+                    ):
+                        owned.add(str(candidate.target_id))
+                        changed = True
+
+        include_descendants()
+        for candidate in targets:
+            if (
+                str(candidate.target_id) in owned
+                or getattr(candidate, "parent_frame_id", None) is not None
+            ):
+                continue
+            # Older native targets omit ancestry. DOM.getFrameOwner is scoped
+            # to this tab and refuses a frame belonging to another tab.
+            try:
+                await self.send(dom.get_frame_owner(page.FrameId(candidate.target_id)))
+            except ProtocolException as error:
+                reason = str(error).lower()
+                if "frame" in reason and (
+                    "not found" in reason or "no frame" in reason
+                ):
+                    continue
+                raise
+            owned.add(str(candidate.target_id))
+        include_descendants()
+        return [candidate for candidate in targets if str(candidate.target_id) in owned]
+
     async def frame_session(self, frame: str) -> str:
         """Resolve a cross-origin child frame to a CDP flat-session id.
 
@@ -428,18 +486,24 @@ class Tab:
         match = None
         for attempt in range(10):  # ~1.5s
             targets = await self.send(cdp_target.get_targets())
-            iframes = [t for t in targets if getattr(t, "type_", None) == "iframe"]
-            match = next(
-                (t for t in iframes if t.target_id == frame or frame in (t.url or "")),
-                None,
+            iframes = await self._owned_iframes(
+                [t for t in targets if getattr(t, "type_", None) == "iframe"]
             )
+            matches = [t for t in iframes if str(t.target_id) == frame]
+            if not matches:
+                matches = [t for t in iframes if frame in (t.url or "")]
+            if len(matches) > 1:
+                raise ValueError(
+                    "Ambiguous iframe on the selected tab; use its exact target id or a more specific URL"
+                )
+            match = matches[0] if matches else None
             if match is not None:
                 break
             await asyncio.sleep(0.15)
         if match is None:
             available = [t.url for t in iframes if t.url] or ["(none)"]
             raise ValueError(
-                f"no cross-origin iframe target matching {frame!r}. "
+                f"no cross-origin iframe target matching {frame!r} on the selected tab. "
                 f"cross-origin iframes on this page: {available} "
                 "(pass any substring; same-origin iframes don't need --frame)"
             )

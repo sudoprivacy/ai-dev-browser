@@ -33,6 +33,7 @@ const PROTOCOL = "1.3";
 const BADGE_COLOR = "#5b49e6"; // sudoprivacy purple
 
 let ws = null;
+let announcedSocket = null;
 let connecting = false;
 let profileId = null; // persistent profile identity, not an account/email guess
 let sessionId = null; // survives a worker/bridge restart, not a Chrome restart
@@ -47,9 +48,57 @@ const revokedTabs = new Set(); // a user's cancellation survives worker restart
 const tabStates = new Map(); // terminal states, with Chrome-proven successors
 const ownershipLog = []; // bounded, redacted diagnostic history
 const attachingTabs = new Map();
+// Native flat child sessions remain scoped to the tab that authorized them.
+const frameSessions = new Map(); // tabId -> Map(native sessionId -> frame)
 let restored = false;
 
 const dbg = (tid) => ({ tabId: Number(tid) });
+
+function supportsFrameSessions() {
+  const version = typeof navigator === "undefined" ? null : navigator.userAgent.match(/(?:HeadlessChrome|Chrome)\/(\d+)/);
+  return version !== null && Number(version[1]) >= 125;
+}
+
+const frameAttachOptions = { autoAttach: true, waitForDebuggerOnStart: false,
+  flatten: true, filter: [{ type: "iframe", exclude: false }] };
+
+function frameEvent(tabId, method, params, sessionId = null) {
+  // The bridge identifies a socket from its first frame. Child events may
+  // arrive while restored tabs are attached, before the hello is sent.
+  if (!ws || ws.readyState !== 1 || announcedSocket !== ws) return;
+  ws.send(JSON.stringify({ _event_tab: String(tabId), method, params,
+    ...(sessionId === null ? {} : { sessionId }) }));
+}
+
+function ownedFrameSession(tab, sessionId) {
+  if (typeof sessionId !== "string" || !sessionId) throw new Error("A live child session is required");
+  const roots = tab == null ? [...frameSessions.keys()] : [Number(tab)];
+  for (const tabId of roots) {
+    const frame = frameSessions.get(tabId)?.get(sessionId);
+    if (frame) { requireOwned(tabId); return { tabId, ...frame }; }
+  }
+  throw new Error("Child session is not owned by this automation tab");
+}
+
+function forgetFrames(tabId, sessionId = null) {
+  const frames = frameSessions.get(tabId);
+  if (!frames) return;
+  const removed = new Set(sessionId === null ? frames.keys() : [sessionId]);
+  let changed;
+  do {
+    changed = false;
+    for (const [id, frame] of frames) if (removed.has(frame.parentSessionId) && !removed.has(id)) {
+      removed.add(id); changed = true;
+    }
+  } while (changed);
+  for (const id of removed) {
+    const frame = frames.get(id);
+    if (!frame) continue;
+    frames.delete(id);
+    frameEvent(tabId, "Target.detachedFromTarget", { sessionId: id, targetId: frame.info.targetId });
+  }
+  if (!frames.size) frameSessions.delete(tabId);
+}
 
 function safeUrl(value) {
   try { const url = new URL(value); return /^https?:$/.test(url.protocol) ? url.origin + url.pathname : url.protocol; }
@@ -176,6 +225,10 @@ async function attachTab(tabId) {
         throw ownershipError(tabId);
       }
       attached.add(tabId);
+      if (supportsFrameSessions()) {
+        await chrome.debugger.sendCommand(dbg(tabId), "Target.setAutoAttach", frameAttachOptions);
+        requireOwned(tabId);
+      }
       markTab(tabId);
     }
     syncKeepalive();
@@ -199,6 +252,7 @@ async function followTab(tabId) {
 
 function forget(tabId, state = "closed", detail = {}) {
   const wasOwned = autoTabs.has(tabId);
+  forgetFrames(tabId);
   autoTabs.delete(tabId);
   attached.delete(tabId);
   if (state === "revoked") revokedTabs.add(tabId);
@@ -272,12 +326,16 @@ function launchMarker(tab) {
 
 async function announce() {
   if (!ws || ws.readyState !== 1) return;
-  ws.send(JSON.stringify({
-    _hello: true, account: await profileAccount(), profile_id: profileId,
+  const socket = ws;
+  const account = await profileAccount();
+  if (ws !== socket || socket.readyState !== 1) return;
+  socket.send(JSON.stringify({
+    _hello: true, account, profile_id: profileId,
     session_id: sessionId, launch_token: launchToken,
     automation_target_id: mainTabId == null ? null : String(mainTabId), browser_version: navigator.userAgent,
     extension_version: chrome.runtime.getManifest().version,
   }));
+  announcedSocket = socket;
 }
 
 function windowBounds(window) {
@@ -345,7 +403,7 @@ function toCdpCookie(c) {
   return out;
 }
 
-async function targetInfos() {
+async function targetInfos(selectedTab = null) {
   if (await managedProfile()) {
     for (const tab of await chrome.tabs.query({})) if (!revokedTabs.has(tab.id)) autoTabs.add(tab.id);
   }
@@ -353,6 +411,7 @@ async function targetInfos() {
   // expose only automation tabs, preserving the user's unrelated tabs.
   const infos = [];
   for (const tabId of [...autoTabs]) {
+    if (selectedTab != null && String(tabId) !== String(selectedTab)) continue;
     let t;
     try { t = await chrome.tabs.get(tabId); }
     catch { forget(tabId); continue; }
@@ -365,6 +424,9 @@ async function targetInfos() {
       info.openerId = String(t.openerTabId);
     }
     infos.push(info);
+    for (const frame of frameSessions.get(tabId)?.values() || []) {
+      infos.push({ ...frame.info, attached: true, canAccessOpener: false });
+    }
   }
   return infos;
 }
@@ -426,13 +488,30 @@ if (chrome.storage.onChanged) chrome.storage.onChanged.addListener((changes, are
 // Browser-level CDP a per-tab chrome.debugger can't answer — served via the
 // sanctioned extension APIs. Returns undefined for anything not shimmed, so the
 // caller falls through to chrome.debugger.
-async function browserLevel(method, params, tab) {
+async function browserLevel(method, params, tab, childSessionId = null) {
   switch (method) {
     case "Target.setDiscoverTargets":
     case "Target.setAutoAttach":
       return {};
     case "Target.getTargets":
-      return { targetInfos: await targetInfos() };
+      return { targetInfos: await targetInfos(tab) };
+    case "Target.attachToTarget": {
+      if (params.flatten !== true) throw new Error("Child targets require flat sessions");
+      const roots = tab == null ? [...frameSessions.keys()] : [Number(tab)];
+      for (const tabId of roots) {
+        requireOwned(tabId);
+        for (const [id, frame] of frameSessions.get(tabId) || []) {
+          if (frame.info.targetId === params.targetId) return { sessionId: id };
+        }
+      }
+      throw new Error("No owned child frame matches this target");
+    }
+    case "Target.detachFromTarget": {
+      const frame = ownedFrameSession(tab, params.sessionId);
+      const result = await chrome.debugger.sendCommand(dbg(frame.tabId), method, params);
+      forgetFrames(frame.tabId, params.sessionId);
+      return result;
+    }
     case "AiDevBrowser.getActiveTarget": {
       await targetInfos();
       const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -440,8 +519,8 @@ async function browserLevel(method, params, tab) {
       return { targetId: active ? String(active.id) : null };
     }
     case "Target.getTargetInfo": {
-      const id = (params && params.targetId) || tab;
-      const all = await targetInfos();
+      const id = (params && params.targetId) || (childSessionId == null ? tab : ownedFrameSession(tab, childSessionId).info.targetId);
+      const all = await targetInfos(tab);
       const found = all.find((t) => t.targetId === String(id));
       if (!found) throw ownershipError(id);
       return { targetInfo: found };
@@ -525,15 +604,19 @@ async function browserLevel(method, params, tab) {
   }
 }
 
-async function handleCommand(gid, tab, method, params) {
+async function handleCommand(gid, tab, method, params, childSessionId = null) {
   try {
-    let result = await browserLevel(method, params || {}, tab);
+    if (childSessionId !== null) tab = String(ownedFrameSession(tab, childSessionId).tabId);
+    let result = await browserLevel(method, params || {}, tab, childSessionId);
     if (result === undefined) {
       if (tab == null) throw new Error(`no target for ${method}`);
       if (recoveringTabs.has(Number(tab))) await recoveringTabs.get(Number(tab));
       requireOwned(Number(tab));
       await attachTab(Number(tab)); // ensure the tab is attached before driving it
-      result = await chrome.debugger.sendCommand(dbg(tab), method, params || {});
+      requireOwned(Number(tab));
+      if (childSessionId !== null) ownedFrameSession(tab, childSessionId);
+      result = await chrome.debugger.sendCommand({ ...dbg(tab),
+        ...(childSessionId === null ? {} : { sessionId: childSessionId }) }, method, params || {});
     }
     ws.send(JSON.stringify({ _gid: gid, result: result ?? {} }));
   } catch (e) {
@@ -566,7 +649,7 @@ async function connect() {
     let m;
     try { m = JSON.parse(ev.data); } catch { return; }
     if (m._gid == null || !m.method) return;
-    handleCommand(m._gid, m.tab, m.method, m.params);
+      handleCommand(m._gid, m.tab, m.method, m.params, m.sessionId ?? null);
   };
 
   ws.onclose = () => { connecting = false; ws = null; setTimeout(connect, 1500); };
@@ -630,11 +713,12 @@ function onDetached(src, reason) {
   if (!restored) { boot().then(() => onDetached(src, reason)); return; }
   const tabId = src.tabId;
   if (tabId == null || !autoTabs.has(tabId)) return;
+  forgetFrames(tabId);
   trace("detached", tabId, { reason });
   // Cancellation wins even while target_closed recovery is awaiting Chrome.
   if (reason !== "target_closed") {
     forget(tabId, "revoked", { reason });
-    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ _event_tab: String(tabId), method: "Inspector.detached", params: { reason } }));
+    frameEvent(tabId, "Inspector.detached", { reason });
     return;
   }
   if (recoveringTabs.has(tabId)) return;
@@ -652,9 +736,7 @@ function onDetached(src, reason) {
         } catch { /* Reattachment failed: release below. */ }
       }
     }
-    if (ws && ws.readyState === 1 && autoTabs.has(tabId)) {
-      ws.send(JSON.stringify({ _event_tab: String(tabId), method: "Inspector.detached", params: { reason, tabPresent } }));
-    }
+    if (autoTabs.has(tabId)) frameEvent(tabId, "Inspector.detached", { reason, tabPresent });
     if (!revokedTabs.has(tabId)) forget(tabId, tabPresent ? "unavailable" : "closed", { reason });
   })();
   recoveringTabs.set(tabId, recovery);
@@ -665,10 +747,44 @@ chrome.debugger.onDetach.addListener(onDetached);
 // extension -> adb: relay CDP events, tagged with the tab they came from. The
 // bridge delivers each to the drivers holding that tab's connections, so a
 // followed-but-idle tab's events never pollute another tab's stream.
-chrome.debugger.onEvent.addListener((src, method, params) => {
-  if (!ws || ws.readyState !== 1 || src.tabId == null) return;
+chrome.debugger.onEvent.addListener(async (src, method, params) => {
+  if (src.tabId == null) return;
   if (!autoTabs.has(src.tabId)) return;
-  ws.send(JSON.stringify({ _event_tab: String(src.tabId), method, params }));
+  if (src.sessionId && !frameSessions.get(src.tabId)?.has(src.sessionId)) return;
+  if (method === "Target.attachedToTarget") {
+    if (!supportsFrameSessions() || params.targetInfo?.type !== "iframe") return;
+    const tabId = src.tabId;
+    const info = { ...params.targetInfo };
+    if (!info.parentFrameId) {
+      if (src.sessionId) info.parentFrameId = frameSessions.get(tabId).get(src.sessionId).info.targetId;
+      else {
+        const tree = await chrome.debugger.sendCommand(dbg(tabId), "Page.getFrameTree", {});
+        info.parentFrameId = tree.frameTree.frame.id;
+      }
+    }
+    if (!autoTabs.has(tabId) || revokedTabs.has(tabId)) return;
+    if (!frameSessions.has(tabId)) frameSessions.set(tabId, new Map());
+    const frame = { info, parentSessionId: src.sessionId || null };
+    frameSessions.get(tabId).set(params.sessionId, frame);
+    try {
+      const current = await chrome.debugger.sendCommand({ tabId, sessionId: params.sessionId }, "Target.getTargetInfo", {});
+      if (!autoTabs.has(tabId) || frameSessions.get(tabId)?.get(params.sessionId) !== frame) return;
+      if (current?.targetInfo) Object.assign(info, current.targetInfo);
+      await chrome.debugger.sendCommand({ tabId, sessionId: params.sessionId }, "Target.setAutoAttach", frameAttachOptions);
+    } catch (error) { console.warn("Child-frame auto-attach failed", error); }
+    if (!autoTabs.has(tabId) || frameSessions.get(tabId)?.get(params.sessionId) !== frame) return;
+  } else if (method === "Target.detachedFromTarget") {
+    forgetFrames(src.tabId, params.sessionId);
+    return;
+  } else if (method === "Target.targetInfoChanged") {
+    for (const frame of frameSessions.get(src.tabId)?.values() || []) {
+      if (frame.info.targetId === params.targetInfo?.targetId) Object.assign(frame.info, params.targetInfo);
+    }
+  } else if (method === "Page.frameNavigated" && src.sessionId) {
+    const frame = frameSessions.get(src.tabId).get(src.sessionId);
+    if (params.frame?.id === frame.info.targetId) frame.info.url = params.frame.url;
+  }
+  frameEvent(src.tabId, method, params, src.sessionId || null);
 });
 
 // Auto-reconnect: an MV3 worker is killed after ~30s idle, so a plain timer
