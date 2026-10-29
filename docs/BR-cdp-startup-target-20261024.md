@@ -120,3 +120,24 @@ HTTP response was released. After the readiness change, both scenarios confirm
 the timeout, unchanged process/session/target, one initial GET and one trusted
 submission after reconnect. The nine startup checks and eight lifecycle/retry
 contracts passed together (17 passed, zero skips).
+
+## Startup probe ordering, 30 October
+
+The Windows full regression job on Chrome 156.0.8078.48 retained a cold-start
+failure: `Network.getCookies` timed out before an embedded-scroll fixture could
+enter its functional checks. The new browser and target remained available for
+inspection. The other nine jobs passed; this failure is retained separately.
+
+Startup previously issued the committed-document check and profile-network RPC
+concurrently. It now confirms the owned initial document first, then requests
+the same read-only, origin-scoped network response. The requested navigation
+still happens once, after both checks. Existing startup and command deadlines
+are unchanged. The deterministic ordering test fails against the concurrent
+implementation and passes after sequencing. The affected scroll fixture also
+cleans up its own exact session when startup reports an incomplete handshake.
+
+The seven handshake unit checks and 20 actual Windows Chrome checks passed,
+including all nine unchanged generated startup checks and the complete embedded
+scroll suite. These local checks used sandboxed Chrome 156.0.8078.73. A fresh
+full CI run remains required to qualify the original runner environment; this
+does not establish the particular Chrome-internal cause of its lost response.

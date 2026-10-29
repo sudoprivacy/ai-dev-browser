@@ -794,13 +794,13 @@ async def _prepare_startup_page(
     async def prepare():
         await connection.connect()
         await connection.send(page.enable())
+        # Commit the owned initial document before binding a CookieManager RPC
+        # to its frame. The temporary frame can be replaced during startup.
+        await wait_document()
         # A parsed blank page can precede Chrome's profile NetworkContext.
         # This origin-scoped CookieManager RPC waits for that context without
         # making an HTTP request. Discard its result; no cookies are modified.
-        await asyncio.gather(
-            wait_document(),
-            connection.send(network.get_cookies(urls=[f"http://127.0.0.1:{port}/"])),
-        )
+        await connection.send(network.get_cookies(urls=[f"http://127.0.0.1:{port}/"]))
         if url != "about:blank":
             previous_loader = (
                 await connection.send(page.get_frame_tree())

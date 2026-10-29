@@ -68,6 +68,55 @@ async def test_requested_url_waits_for_profile_network_response(monkeypatch):
         await asyncio.gather(task, return_exceptions=True)
 
 
+async def test_profile_network_probe_waits_for_the_committed_startup_document(
+    monkeypatch,
+):
+    """Do not bind a CookieManager RPC to Chrome's temporary initial frame."""
+    from ai_dev_browser.core import _transport
+
+    requested_document, release_document = asyncio.Event(), asyncio.Event()
+    requested_network = asyncio.Event()
+    disconnected = []
+
+    class Connection:
+        def __init__(self, endpoint):
+            pass
+
+        async def connect(self):
+            pass
+
+        async def disconnect(self):
+            disconnected.append(True)
+
+        async def send(self, command):
+            request = next(command)
+            if request["method"] == "Page.getFrameTree":
+                requested_document.set()
+                await release_document.wait()
+                return SimpleNamespace(frame=SimpleNamespace(loader_id="committed"))
+            if request["method"] == "Runtime.evaluate":
+                return SimpleNamespace(value=True), None
+            if request["method"] == "Network.getCookies":
+                requested_network.set()
+                return []
+            assert request["method"] == "Page.enable"
+
+    monkeypatch.setattr(_transport, "CDPConnection", Connection)
+    task = asyncio.create_task(
+        browser._prepare_startup_page(9355, "owned", "about:blank", 5)
+    )
+    try:
+        await asyncio.wait_for(requested_document.wait(), 2)
+        assert not requested_network.is_set()
+        release_document.set()
+        await task
+        assert requested_network.is_set()
+        assert disconnected == [True]
+    finally:
+        release_document.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 @pytest.mark.parametrize("ambiguous_reply", [False, True])
 def test_launch_creates_one_page_after_identity_without_replay(
     monkeypatch, ambiguous_reply

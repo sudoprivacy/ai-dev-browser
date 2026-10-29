@@ -72,10 +72,10 @@ async def tab():
     room to change. Deliberately >5x viewport so a 25% scroll is a
     detectable delta."""
     result = browser_start(headless=True, temp=True, reuse="none")
-    assert "error" not in result, f"browser_start failed: {result}"
-    port = result["port"]
     browser_client = None
     try:
+        assert "error" not in result, f"browser_start failed: {result}"
+        port = result["port"]
         browser_client = await connect_browser(port=port)
         the_tab = await get_active_tab(browser_client)
         html = (
@@ -94,8 +94,9 @@ async def tab():
         if browser_client is not None:
             with contextlib.suppress(Exception):
                 await browser_client.close()
-        with contextlib.suppress(Exception):
-            browser_stop(port=port)
+        if result.get("session_id") and result.get("owner") == "adb":
+            with contextlib.suppress(Exception):
+                browser_stop(session_id=result["session_id"])
 
 
 async def _get_scroll_y(tab) -> float:
