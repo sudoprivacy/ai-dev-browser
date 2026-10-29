@@ -19,6 +19,9 @@ exist. It reports `bridge_connected` separately from `page_available`. Missing
 pages return `connected=false`; revoked pages retain `auth_failed`, ownership
 details, a non-retryable refusal and concrete human recovery instructions.
 `browser_reconnect` and bound page tools use the same ownership check.
+Connect also compares its initial snapshot with the actual session encoded in
+the driver's WebSocket URL. A session change during the handshake is refused
+even if the other browser happens to use the same numeric tab ID.
 
 Terminal states retain their event time in Unix milliseconds. Legacy states
 use a matching retained history event when available, otherwise null. Closing
@@ -54,7 +57,7 @@ identity or creating another page. No protocol reauthorization tool was added.
 - Native screenshots were opened and inspected: Cancel before revocation,
   fresh visible blank page, and the authenticated result showing zero approvals
   and zero submissions. These are isolated fixtures, not the user's settings.
-- All 313 Python unit tests and 16 extension state/race tests passed.
+- All 315 Python unit tests and 16 extension state/race tests passed.
 - Existing lifecycle, installed-profile, OAuth/navigation ownership and CLI
   compatibility workflows: 19 passed together; one Windows headful case had
   its folder picker cancelled during setup and passed on an isolated rerun.

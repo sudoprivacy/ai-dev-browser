@@ -5,6 +5,7 @@ import os
 import re
 import time
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from typing import Literal
 
@@ -1024,6 +1025,7 @@ async def browser_connect(
             )
         from .ext_bridge import ensure_bridge_running, wait_for_extension
         from .connection import connect_extension, _require_extension_page
+        from .errors import SessionError
 
         connection_deadline = time.monotonic() + timeout
         if not ensure_bridge_running(timeout=timeout):
@@ -1110,6 +1112,17 @@ async def browser_connect(
         browser = None
         try:
             browser = await connect_extension()
+            # The low-level connection reads a fresh handshake. Its WebSocket
+            # query binds the driver's lifetime to the session;
+            # tab IDs alone cannot prove identity across profiles/authorizations.
+            connected_session = parse_qs(
+                urlsplit(browser.connection.websocket_url).query
+            ).get("session", [None])[0]
+            if connected_session != status["session_id"]:
+                raise SessionError(
+                    "Extension authorization changed during connection; inspect current state and connect explicitly",
+                    "session_changed",
+                )
             tabs = [
                 {"tab_id": str(t._target.target_id), "url": t._target.url or ""}
                 for t in browser.tabs
@@ -1122,8 +1135,6 @@ async def browser_connect(
                 browser, expected.get("automation_target_id") if expected else main
             )
             if expected and expected.get("automation_target_id") != main:
-                from .errors import SessionError
-
                 raise SessionError(
                     "Original automation page changed; inspect current state",
                     "target_closed",
