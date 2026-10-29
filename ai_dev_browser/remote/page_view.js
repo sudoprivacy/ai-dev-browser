@@ -72,7 +72,9 @@ export class InputSurface {
     const cancel = () => { this.finishDrag('cancel'); this.pointer = null; };
     on('pointercancel', event => { if (this.pointer?.id === event.pointerId) cancel(); });
     on('lostpointercapture', event => { if (this.pointer?.id === event.pointerId) cancel(); });
-    on('blur', cancel);
+    // Moving focus after pointer-up must not cancel its queued completion.
+    // An unfinished press still releases when the surface loses focus.
+    on('blur', () => { if (this.pointer) cancel(); });
     on('wheel', event => {
       event.preventDefault();
       if (this.gesture) return;
@@ -94,9 +96,19 @@ export class InputSurface {
   }
 
   beginDrag(point) {
+    let resolveIdle, rejectIdle;
+    const idle = new Promise((resolve, reject) => { resolveIdle = resolve; rejectIdle = reject; });
+    // Hosts may wait before reading selection. The normal input error path
+    // still reports a failure when no read barrier is currently observing it.
+    idle.catch(() => {});
     this.gesture = { id: crypto.randomUUID(), sequence: 0, pending: false,
-      begin: point, latest: null, finish: null, last: point };
+      begin: point, latest: null, finish: null, last: point, idle, resolveIdle, rejectIdle };
     this.pumpDrag();
+  }
+
+  /** Wait for issued live input; this neither replays input nor grants a lease. */
+  whenIdle() {
+    return this.gesture?.idle || Promise.resolve();
   }
 
   finishDrag(phase, point) {
@@ -123,13 +135,17 @@ export class InputSurface {
     Promise.resolve().then(() => this.send(packet)).then(() => {
       if (this.gesture !== gesture) return;
       gesture.pending = false;
-      if (phase === 'end' || phase === 'cancel') this.gesture = null;
+      if (phase === 'end' || phase === 'cancel') {
+        this.gesture = null;
+        gesture.resolveIdle();
+      }
       else this.pumpDrag();
-    }).catch(() => {
+    }).catch(error => {
       // Never replay failed input. Server cleanup releases an abandoned press;
       // the host reports its normal input error and retains the human lease.
       if (this.gesture === gesture) this.gesture = null;
       this.pointer = null;
+      gesture.rejectIdle(error);
     });
   }
 
