@@ -423,8 +423,22 @@ then reconnect with `browser_connect --transport extension`.
 not reload Chrome's extension. Reload can reset control; inspect the session and
 its owned page before resuming input.
 `extension_warning` is non-null when the loaded version is unknown or differs
-from the bundle. Follow its steps before input; `connected=true` confirms a
-connection. Version matching and actual page visibility are separate checks.
+from the bundle. Follow its steps before input. In extension mode,
+`connected=true` requires the dedicated automation page to exist;
+`bridge_connected` reports bridge liveness and `page_available` reports that page.
+Version matching and actual page visibility are separate checks.
+
+If `auth_failed` reports `details.state=revoked`, reconnect cannot restore
+debugger consent. The stored `reason` and `time` (Unix milliseconds, null when
+unknown) describe a historical event; they do not establish cancellation of
+the current request. Ask the human to click **AI Dev Browser** in Chrome's
+Extensions menu/toolbar in the intended profile. With extension 0.4.7 or newer,
+this authorizes a fresh visible blank page and a new session; previous pages
+stay open and revoked targets stay revoked. Then call
+`browser_connect --transport extension` and use its new `session_id`.
+The default Chrome shortcut is Ctrl+Shift+Y (Command+Shift+Y on macOS), when
+available; it can be configured at `chrome://extensions/shortcuts`.
+Clicking the action during a healthy session reveals the existing page.
 
 For a hidden extension page, `window_set --state normal --focus` requests real
 window restoration and reports observed `visibility`, `focused`, and

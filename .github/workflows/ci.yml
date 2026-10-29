@@ -278,7 +278,7 @@ jobs:
       - name: Run the real extension on both WebSocket server implementations
         env:
           AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.chrome.outputs.chrome-path }}
-        run: uv run --no-sync python -m pytest -v --full-trace -o faulthandler_timeout=180 tests/integration/test_cli_extension_workflows.py tests/integration/test_recording_workflows.py tests/integration/test_recording_demo.py tests/integration/test_browser_lifecycle.py tests/integration/test_remote_view.py tests/integration/test_extension_ownership.py tests/integration/test_cli_steering.py tests/integration/test_extension_windowless.py tests/integration/test_editor_click.py -k "real_extension or outbound_proxy" --basetemp extension-results
+        run: uv run --no-sync python -m pytest -v --full-trace -o faulthandler_timeout=180 tests/integration/test_cli_extension_workflows.py tests/integration/test_recording_workflows.py tests/integration/test_recording_demo.py tests/integration/test_browser_lifecycle.py tests/integration/test_remote_view.py tests/integration/test_extension_ownership.py tests/integration/test_cli_steering.py tests/integration/test_extension_windowless.py tests/integration/test_editor_click.py tests/integration/test_extension_readiness.py -k "real_extension or outbound_proxy" --basetemp extension-results
 
       - name: Install the unchanged released extension fixture
         run: uv pip install --target previous-extension-fixture --no-deps ai-dev-browser==0.57.7
@@ -336,9 +336,11 @@ jobs:
             extension-results/**/demo-frame-*.png
             extension-results/**/extension-evidence.json
             extension-results/**/*-evidence.json
+            extension-results/**/live-cli.json
             extension-results/**/extension-lifecycle.png
             extension-results/**/installed-extension.png
             extension-results/**/extension-startup-evidence.json
+            extension-results/**/chrome-startup-evidence.json
             extension-results/**/windowless-startup-order.json
             extension-results/**/windowless-extension-accepted.png
             extension-results/**/extension-chrome.log
@@ -353,10 +355,17 @@ jobs:
             native-window-results/**/extension-cleanup-evidence.json
             native-window-results/**/extension-cleanup-stacks.txt
             previous-extension-results/**/previous-extension-evidence.json
+            previous-extension-results/**/chrome-startup-evidence.json
+            previous-extension-results/**/extension-*.json
+            previous-extension-results/**/extension-chrome.log
+            previous-extension-results/**/host-resources-*.json
+            previous-extension-results/**/extension-cleanup-stacks.txt
             runtime-upgrade-results/**/runtime-upgrade-evidence.json
             runtime-upgrade-results/**/runtime-upgrade-accepted.png
             runtime-upgrade-results/**/extension-*.json
             runtime-upgrade-results/**/extension-chrome.log
+            runtime-upgrade-results/**/chrome-startup-evidence.json
+            runtime-upgrade-results/**/host-resources-*.json
 
   # ─────────────────────────────────────────────────────────────────────
   # CI-integration dogfood: prove the documented "consumer's CI" recipe

@@ -91,7 +91,12 @@ class OwnershipProtocolError(ProtocolException, SessionError):
             "AiDevBrowser.debugState provides the current state. A replaced target may "
             "report a Chrome-proven successorTargetId; explicitly select its page "
             "after inspecting current state. Revoked debugger consent requires "
-            "the user's permission; reconnect does not restore it. Do not replay "
+            "the user's permission; reconnect does not restore it. The stored reason "
+            "and time describe a historical event, not necessarily this request. "
+            "To authorize a fresh visible blank page in the same profile, ask the human "
+            "to click the AI Dev Browser extension toolbar action (Extensions menu if "
+            "unpinned), then call browser_connect --transport extension for its new "
+            "session_id. This recovery requires the updated bundled extension. Do not replay "
             "the preceding click or submission, switch transport, or adopt "
             "another tab by matching its domain."
         )

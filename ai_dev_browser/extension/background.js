@@ -35,7 +35,7 @@ const BADGE_COLOR = "#5b49e6"; // sudoprivacy purple
 let ws = null;
 let connecting = false;
 let profileId = null; // persistent profile identity, not an account/email guess
-let sessionId = null; // survives a worker/bridge restart, not a Chrome restart
+let sessionId = null; // authorization identity; survives worker/bridge restart
 let launchToken = null; // proves an explicitly launched profile answered
 
 // Automation session state. targetId (string) == chrome tabId as a string.
@@ -66,6 +66,9 @@ function ownershipError(tabId) {
   const state = tabStates.get(Number(tabId)) || { state: revokedTabs.has(Number(tabId)) ? "revoked" : "unowned" };
   const successor = state.successorTargetId;
   const details = { target_id: String(tabId), ...state, ownership_log: ownershipLog.slice() };
+  // Legacy stored states lack a timestamp; report it only when history proves it.
+  if (details.time == null) details.time = [...ownershipLog].reverse().find(
+    event => event.tabId === Number(tabId) && event.event === details.state)?.time ?? null;
   if (successor && (!autoTabs.has(Number(successor)) || revokedTabs.has(Number(successor)))) delete details.successorTargetId;
   const error = new Error(`Target is not an owned automation tab (${details.state})`);
   error.ownership = details;
@@ -74,6 +77,10 @@ function ownershipError(tabId) {
 
 function requireOwned(tabId) {
   if (revokedTabs.has(tabId) || !autoTabs.has(tabId)) throw ownershipError(tabId);
+}
+
+function requireSessionConsent() {
+  if (mainTabId != null && revokedTabs.has(mainTabId)) throw ownershipError(mainTabId);
 }
 
 function claim(tabId, sourceTabId = null, reason = "created") {
@@ -204,11 +211,12 @@ function forget(tabId, state = "closed", detail = {}) {
   if (state === "revoked") revokedTabs.add(tabId);
   if (wasOwned || tabStates.has(tabId) || revokedTabs.has(tabId)) {
     // Removal can arrive after replacement/revocation; preserve the more useful state.
-    if (state !== "closed" || !tabStates.has(tabId)) tabStates.set(tabId, { state, ...detail });
+    if (state !== "closed" || !tabStates.has(tabId)) tabStates.set(tabId, { state, time: Date.now(), ...detail });
     while (tabStates.size > 128) tabStates.delete(tabStates.keys().next().value);
     trace(state, tabId, detail);
   }
-  if (tabId === mainTabId && state !== "revoked") mainTabId = null;
+  // Closing a revoked tab must not erase the human's consent boundary.
+  if (tabId === mainTabId && !revokedTabs.has(tabId)) mainTabId = null;
   syncKeepalive();
   persist();
   announce().catch(() => {});
@@ -242,7 +250,7 @@ async function ensureDedicatedTabSelected() {
   // NEVER attach to the user's existing tabs — automation gets its own tab so a
   // hijacked/injected page can't act on whatever the user had open.
   if (mainTabId != null) {
-    if (revokedTabs.has(mainTabId)) throw ownershipError(mainTabId);
+    requireSessionConsent();
     try { await chrome.tabs.get(mainTabId); }
     catch { autoTabs.delete(mainTabId); attached.delete(mainTabId); mainTabId = null; }
   }
@@ -302,6 +310,7 @@ function adoptLaunch(tab) {
   if (!token) return Promise.resolve();
   return selectDedicated(async () => {
     await boot();
+    requireSessionConsent();
     if (launchToken === token) return;
     const old = mainTabId;
     mainTabId = tab.id;
@@ -447,7 +456,9 @@ async function browserLevel(method, params, tab) {
       return { targetInfo: found };
     }
     case "Target.createTarget": {
+      requireSessionConsent();
       const t = await createAutomationTab((params && params.url) || "about:blank");
+      requireSessionConsent();
       claim(t.id);
       await attachTab(t.id);
       return { targetId: String(t.id) };
@@ -558,7 +569,7 @@ async function connect() {
     // Seed the dedicated tab BEFORE announcing readiness, so the first
     // Target.getTargets a driver sends already lists it — no empty-list race
     // that would make adb spin up a second blank tab.
-    try { await ensureDedicatedTab(); } catch { /* driver can create one */ }
+    try { await ensureDedicatedTab(); } catch { /* announce bridge liveness, not page readiness */ }
     await announce();
   };
 
@@ -692,7 +703,39 @@ function boot() {
   })();
   return booting;
 }
-if (chrome.action && chrome.action.onClicked) chrome.action.onClicked.addListener(connect);
+// Only a real Chrome toolbar/shortcut action grants a fresh authorization.
+// No protocol method or background reconnect can call this recovery path.
+function onToolbarAction() {
+  return selectDedicated(async () => {
+    await boot();
+    const current = mainTabId == null ? null : await chrome.tabs.get(mainTabId).catch(() => null);
+    if (!current || revokedTabs.has(mainTabId)) {
+      const fresh = await createAutomationTab("about:blank");
+      // Keep all previous pages open, but retire their authority permanently.
+      for (const id of [...autoTabs]) {
+        forget(id, "revoked", { reason: "new_authorization" });
+        await chrome.debugger.detach(dbg(id)).catch(() => {});
+      }
+      sessionId = crypto.randomUUID();
+      launchToken = null;
+      await chrome.storage.session.set({ adbSessionId: sessionId, adbLaunchToken: null });
+      mainTabId = fresh.id;
+      // Fence existing bound drivers before making the new page available.
+      await announce();
+      claim(fresh.id, null, "human-authorized");
+      await attachTab(fresh.id);
+    } else {
+      await attachTab(mainTabId);
+    }
+    await browserLevel("Target.activateTarget", { targetId: String(mainTabId) });
+    persist();
+    connect();
+    await announce();
+  });
+}
+if (chrome.action && chrome.action.onClicked) chrome.action.onClicked.addListener(() => {
+  onToolbarAction().catch(error => console.error("Explicit authorization failed", error));
+});
 chrome.runtime.onStartup.addListener(boot);
 chrome.runtime.onInstalled.addListener(boot);
 boot();
