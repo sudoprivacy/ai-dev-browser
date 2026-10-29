@@ -109,9 +109,17 @@ async def test_worker_mcp_child_frames_keep_target_and_control(
                 assert response.status == 200, (response.status, value)
                 result = value["result"]
                 if error:
-                    assert (
-                        result.get("isError") and result["content"][0]["text"] == error
-                    ), result
+                    assert result.get("isError"), result
+                    message = result["content"][0]["text"]
+                    if error == "stale_browser_operation":
+                        # The current worker keeps the refusal code and adds
+                        # model-facing recovery guidance. Verify both through
+                        # MCP; never turn this into an input replay.
+                        code, separator, hint = message.partition(": ")
+                        assert code == error and separator, result
+                        assert "browser_observe" in hint and "epochs" in hint, result
+                    else:
+                        assert message == error, result
                     return None
                 assert not result.get("isError"), result
                 return json.loads(result["content"][0]["text"])["result"]
