@@ -445,6 +445,10 @@ async def live_extension(request, tmp_path, monkeypatch):
                 *(["about:blank"] if legacy_window else []),
             ],
         )
+        (tmp_path / "chrome-startup-evidence.json").write_text(
+            json.dumps({"backend": request.param, "result": chrome}, indent=2),
+            encoding="utf-8",
+        )
         assert "error" not in chrome, chrome
         if bundle_env:
             # Keep the published old extension unchanged and supply its required

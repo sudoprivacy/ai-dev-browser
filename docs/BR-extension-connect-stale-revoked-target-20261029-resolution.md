@@ -70,6 +70,15 @@ Local receipts, including failed setup attempts and the official-package
 baseline, are under `scratch/stale-target/`. Native accepted results are in
 `linux-acceptance/native-accepted-{legacy,asyncio}`.
 
+The first Windows extension CI passed all 45 primary workflows, then an old
+extension fixture timed out obtaining Chrome's CDP identity before connecting.
+The same old-extension journey passed locally on both backends. Startup results
+are now recorded before the fixture's first assertion, and CI retains Chrome
+logs, resource snapshots and cleanup receipts for previous/unknown extensions.
+The startup failure's cause is unconfirmed; deadlines, assertions and retry
+counts were left unchanged. The affected old/current live journeys passed
+again after this diagnostic change (six checks).
+
 ## CLI steering audit
 
 Audited against `document-ai/.claude/skills/cli-steering-engineering/SKILL.md`.

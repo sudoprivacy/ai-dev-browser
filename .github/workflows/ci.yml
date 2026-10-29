@@ -340,6 +340,7 @@ jobs:
             extension-results/**/extension-lifecycle.png
             extension-results/**/installed-extension.png
             extension-results/**/extension-startup-evidence.json
+            extension-results/**/chrome-startup-evidence.json
             extension-results/**/windowless-startup-order.json
             extension-results/**/windowless-extension-accepted.png
             extension-results/**/extension-chrome.log
@@ -354,10 +355,17 @@ jobs:
             native-window-results/**/extension-cleanup-evidence.json
             native-window-results/**/extension-cleanup-stacks.txt
             previous-extension-results/**/previous-extension-evidence.json
+            previous-extension-results/**/chrome-startup-evidence.json
+            previous-extension-results/**/extension-*.json
+            previous-extension-results/**/extension-chrome.log
+            previous-extension-results/**/host-resources-*.json
+            previous-extension-results/**/extension-cleanup-stacks.txt
             runtime-upgrade-results/**/runtime-upgrade-evidence.json
             runtime-upgrade-results/**/runtime-upgrade-accepted.png
             runtime-upgrade-results/**/extension-*.json
             runtime-upgrade-results/**/extension-chrome.log
+            runtime-upgrade-results/**/chrome-startup-evidence.json
+            runtime-upgrade-results/**/host-resources-*.json
 
   # ─────────────────────────────────────────────────────────────────────
   # CI-integration dogfood: prove the documented "consumer's CI" recipe
