@@ -30,7 +30,12 @@ from tests.integration.test_remote_view import (
 
 
 async def startup_target_journey(
-    folder, monkeypatch, headless, with_url=False, slow_initial=False
+    folder,
+    monkeypatch,
+    headless,
+    with_url=False,
+    slow_initial=False,
+    cookie_probe_unavailable=False,
 ):
     """Let an independent startup actor navigate its early page during first use."""
     loop = asyncio.get_running_loop()
@@ -43,6 +48,25 @@ async def startup_target_journey(
     early_id = None
     real_launch = lifecycle.launch_chrome
     timeline = []
+
+    if cookie_probe_unavailable:
+        from ai_dev_browser.core import _transport
+        from ai_dev_browser.core._tab import _resume_command
+
+        real_send = _transport.CDPConnection.send
+
+        async def send(connection, command, *args, **kwargs):
+            request = next(command)
+            if request["method"] == "Network.getCookies":
+                # Only this unrelated RPC is withheld. Every document, network,
+                # input and receipt operation still uses the actual browser.
+                timeline.append({"phase": "cookie-probe-withheld"})
+                await asyncio.Event().wait()
+            return await real_send(
+                connection, _resume_command(request, command), *args, **kwargs
+            )
+
+        monkeypatch.setattr(_transport.CDPConnection, "send", send)
 
     async def page(request):
         requests.append(request.path)
@@ -122,7 +146,7 @@ async def startup_target_journey(
                 stealth=False,
                 silent_stderr=True,
                 url=url if with_url else None,
-                startup_timeout=3 if slow_initial else None,
+                startup_timeout=3 if slow_initial or cookie_probe_unavailable else None,
                 extra_args=(["--no-sandbox"] if sys.platform == "linux" else [])
                 + (
                     # Match the existing owned visual fixtures: another desktop
@@ -249,9 +273,11 @@ async def startup_target_journey(
                     "({url:location.href,ready:document.readyState,heading:document.querySelector('h1')?.textContent})",
                     return_by_value=True,
                 ),
-                lambda value: value["url"] == url
-                and value["ready"] == "complete"
-                and value["heading"] == "Owned startup page",
+                lambda value: (
+                    value["url"] == url
+                    and value["ready"] == "complete"
+                    and value["heading"] == "Owned startup page"
+                ),
                 timeout=10,
             )
             assert requests == ["/first"]
@@ -301,6 +327,7 @@ async def startup_target_journey(
                         "headless": headless,
                         "with_startup_url": with_url,
                         "initial_document_timeout": initial_timeout,
+                        "cookie_probe_unavailable": cookie_probe_unavailable,
                         "same_process": browser["pid"] == process.pid,
                         "early_target": early_id,
                         "owned_target": browser["automation_target_id"],
@@ -440,9 +467,11 @@ async def startup_race_journey(folder, accepted=True):
                         "({url:location.href,ready:document.readyState,"
                         "marker:document.querySelector('#bootstrap')?.textContent})"
                     ),
-                    lambda value: value["url"] == bootstrap_url
-                    and value["ready"] in ("interactive", "complete")
-                    and value["marker"] == "Ready",
+                    lambda value: (
+                        value["url"] == bootstrap_url
+                        and value["ready"] in ("interactive", "complete")
+                        and value["marker"] == "Ready"
+                    ),
                     timeout=10,
                 )
                 assert bootstrap_requests == ["/bootstrap"] and requests == []

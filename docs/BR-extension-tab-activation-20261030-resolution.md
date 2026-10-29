@@ -83,7 +83,7 @@ or duplicate CLI arguments were introduced. Catalog steering contracts and
 generated-wrapper consistency are checked alongside the live CLI refusals.
 
 Local results: the native suite passed three checks (two browser journeys and
-one import check); Python unit/bridge regressions passed 329 checks, JavaScript
+one import check); Python unit/bridge regressions passed 328 checks, JavaScript
 ownership checks passed 25, and the CLI audit passed 119. Regenerating all 63
 CLI wrappers changed none. The no-extension bridge test invokes the actual CLI
 against a live daemon and retains truthful runtime diagnostics on failure.
@@ -95,3 +95,15 @@ owner explicitly stopped it. No version was inferred from the newer client.
 Original-profile retesting is still needed to identify that incident's native
 condition. The fix makes that next refusal observable; it does not claim that
 Chrome focus APIs can force every Windows desktop condition to become visible.
+
+## Shared startup failure found by full CI
+
+The full Windows regression reproduced a pre-existing startup failure on
+`Network.getCookies`. Startup no longer depends on this unrelated cookie-store
+probe. It still waits for the committed owned document and, when requested,
+one navigation to its parsed destination. A new real-browser scenario withholds
+only CookieManager replies and checks one GET and trusted submission in both
+headed and headless modes. Both cases fail before this change; all 38 local
+startup, scroll, proxy-identity and handshake checks pass afterward.
+See the [startup investigation](BR-cdp-startup-target-20261024.md) for the retained
+failures and the narrower readiness contract.

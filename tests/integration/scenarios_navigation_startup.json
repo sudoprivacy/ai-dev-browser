@@ -12,6 +12,15 @@
   },
   "scenarios": [
     {
+      "name": "real_chrome_startup_without_cookie_probe",
+      "title": "Use an owned page when an unrelated CookieManager RPC cannot reply",
+      "workflow": "Launch actual Chrome -> withhold only CookieManager replies -> commit the owned initial document -> request the application URL once -> inspect real destination -> trusted typing and one server submission",
+      "user_problem": "A real usable page must not be blocked by an unrelated cookie-store readiness probe.",
+      "async": true,
+      "fixtures": ["tmp_path", "monkeypatch", "startup_mode"],
+      "steps": [{"raw_code": ["await startup_target_journey(tmp_path, monkeypatch, startup_mode, with_url=True, cookie_probe_unavailable=True)"]}]
+    },
+    {
       "name": "real_chrome_initial_document_timeout_preserves_owned_page",
       "title": "Keep the owned page when the initial HTTP document exceeds the startup budget",
       "workflow": "Launch owned Chrome -> wait for its actual network context before the timed launch gate -> hold the initial HTTP response -> document timeout retains process and owned target -> release response -> reconnect same session and target -> one GET and one trusted submission",
