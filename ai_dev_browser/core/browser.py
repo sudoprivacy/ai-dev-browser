@@ -933,7 +933,7 @@ async def browser_connect(
     headless: bool | str | None = None,
     timeout: float = 4.0,
 ) -> dict:
-    """Use when: attaching to existing CDP or real Chrome; returns session identity and extension_warning to check before input.
+    """Use when: attaching to existing CDP or real Chrome; inspect returned session identity, extension_warning and bridge_warning before input.
 
     {mode_guidance}
 

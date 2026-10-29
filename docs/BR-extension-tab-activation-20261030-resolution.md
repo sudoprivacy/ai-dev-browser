@@ -63,6 +63,12 @@ and asyncio WebSocket server implementations exercise the same neutral form:
 4. Uncover the same target, type and click with trusted events, assert exactly
    one HTTP receipt, inspect the final PNG, and preserve unrelated tab IDs/URLs.
 
+The ordinary unfocused-window case uses Chrome APIs without native topmost
+assistance. Additional live runs observed both true and false Chrome window
+focus under the known cover; the cover does not guarantee foreground focus.
+The regression requires a real boolean observation and hidden-input refusal in
+both cases. The two-second production visibility deadline remains unchanged.
+
 The scenario source is `tests/integration/scenarios_extension_window.json`;
 the integration-test-generator skill generates its test entry. The existing
 Windows CI job runs this suite and retains JSON/PNG evidence. Real WebSocket
@@ -81,6 +87,10 @@ one import check); Python unit/bridge regressions passed 329 checks, JavaScript
 ownership checks passed 25, and the CLI audit passed 119. Regenerating all 63
 CLI wrappers changed none. The no-extension bridge test invokes the actual CLI
 against a live daemon and retains truthful runtime diagnostics on failure.
+An isolated daemon from the unchanged public 0.57.7 package was also queried by
+the new CLI: runtime version, message limit and driver count stayed null, an
+actionable warning appeared, and the daemon remained running until its test
+owner explicitly stopped it. No version was inferred from the newer client.
 
 Original-profile retesting is still needed to identify that incident's native
 condition. The fix makes that next refusal observable; it does not claim that
