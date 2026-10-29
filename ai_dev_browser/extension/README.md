@@ -8,7 +8,7 @@ default CDP mode (`browser_start`) is better.
 
 ## Loading it (one-time, manual)
 
-Chrome 127+ blocks command-line extension loading, so this is loaded by hand
+Branded Chrome 137+ blocks command-line extension loading, so this is loaded by hand
 once:
 
 1. Open `chrome://extensions`
@@ -22,13 +22,28 @@ Then run any ai-dev-browser tool with `--transport extension` (or set
 
 ## What it does / doesn't
 
-- Only active while ai-dev-browser is connected; it attaches `chrome.debugger`
-  to the active tab and relays CDP, then detaches.
+- It attaches `chrome.debugger` only to its owned automation pages and proven
+  children. Selecting an unrelated user tab does not authorize that tab.
 - The "扩展正在调试此浏览器 / extension is debugging this browser" banner is
   Chrome's mandatory consent notice for `chrome.debugger`. It is **browser UI,
   invisible to web pages** — it does not affect bot detection.
 - It never decrypts cookies or bypasses any Chrome protection; it drives the
   browser through the sanctioned, user-permissioned extension API.
+
+## Window activation and runtime versions
+
+Use `python -m ai_dev_browser.tools.window_set --help` for activation and
+observed visibility. `focused` describes document focus; `tab_active` and
+`window_focused` describe Chrome's tab/window state. Genuine native occlusion
+can leave a focused active page hidden. Input stays withheld until that same
+page is visible; the runtime hint explains the supported human recovery.
+
+`browser_connect --transport extension` reports the loaded extension version
+and the running Python bridge version separately. Reloading this extension
+does not restart an old Python bridge. Read `bridge_warning` and coordinate
+with active controllers before explicitly disconnecting; keep Chrome and its
+existing profile/tabs. Older daemons report unknown runtime fields, not the
+newly installed SDK's version.
 
 ## Cross-origin child frames
 

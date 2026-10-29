@@ -31,15 +31,17 @@ import asyncio
 import itertools
 import json
 import logging
-from http import HTTPStatus
 import re
+import time
+from http import HTTPStatus
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import websockets
 
-from .extension import EXTENSION_BRIDGE_PORT
+from .._version import __version__
 from ._transport import MAX_SIZE, _local_websocket_options
+from .extension import EXTENSION_BRIDGE_PORT
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,11 @@ def _target_id_from_path(path: str) -> str | None:
 
 class _Bridge:
     def __init__(self) -> None:
+        # Capture this process's imported code, not newly installed disk metadata.
+        self.runtime_version = __version__
+        self.message_limit = MAX_SIZE
+        self.started_at = time.time()
+        self._drivers: set = set()
         self.extension: object | None = None  # single ws to the extension
         self.account: str | None = None  # profile email from the extension hello
         self.identity: dict = {}
@@ -236,6 +243,7 @@ class _Bridge:
         except websockets.exceptions.ConnectionClosed:
             pass  # the adb CLI process exited — normal per-call lifecycle
         finally:
+            self._drivers.discard(ws)
             if target_id is not None:
                 connections = self._tab_conns.get(target_id, set())
                 connections.discard(ws)
@@ -262,6 +270,10 @@ class _Bridge:
                             "account": self.account,
                             "concurrent_events": True,
                             "can_shutdown": self.server is not None,
+                            "bridge_runtime_version": self.runtime_version,
+                            "bridge_started_at": self.started_at,
+                            "bridge_message_limit": self.message_limit,
+                            "bridge_driver_connections": len(self._drivers),
                             **self.identity,
                         },
                     }
@@ -297,6 +309,9 @@ class _Bridge:
                 asyncio.get_running_loop().call_later(0.05, self.server.close)
             return
 
+        # Status/control probes aren't controllers. Count both browser and page
+        # sockets once they attempt CDP, even when status was their first frame.
+        self._drivers.add(ws)
         if expected_session and self.identity.get("session_id") != expected_session:
             await ws.send(
                 json.dumps(

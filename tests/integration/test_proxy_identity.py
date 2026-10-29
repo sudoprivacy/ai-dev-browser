@@ -184,13 +184,13 @@ async def test_match_proxy_success_applies_and_surfaces(monkeypatch):
 
     monkeypatch.setattr(identity_mod, "derive_from_proxy", fake_derive)
     r = browser_start(headless=True, temp=True, reuse="none", match_proxy=True)
-    assert "error" not in r, r
-    assert r.get("identity_consistent") is True, r
-    assert r.get("timezone") == "Asia/Tokyo" and r.get("egress_ip") == "1.2.3.4", r
-    assert r.get("geolocation") == [35.68, 139.69], r
-    port = r["port"]
     browser = None
     try:
+        assert "error" not in r, r
+        assert r.get("identity_consistent") is True, r
+        assert r.get("timezone") == "Asia/Tokyo" and r.get("egress_ip") == "1.2.3.4", r
+        assert r.get("geolocation") == [35.68, 139.69], r
+        port = r["port"]
         browser = await connect_browser(port=port)
         tab = await get_active_tab(browser)
         assert await _tz(tab) == "Asia/Tokyo"  # matched identity really applied
@@ -198,8 +198,10 @@ async def test_match_proxy_success_applies_and_surfaces(monkeypatch):
         if browser is not None:
             with contextlib.suppress(Exception):
                 await browser.close()
-        with contextlib.suppress(Exception):
-            browser_stop(port=port)
+        if r.get("session_id"):
+            browser_stop(session_id=r["session_id"])
+        elif r.get("port"):
+            browser_stop(port=r["port"])
 
 
 @pytest.mark.asyncio
@@ -209,8 +211,14 @@ async def test_match_proxy_failure_fails_loud_not_hard(monkeypatch):
 
     monkeypatch.setattr(identity_mod, "derive_from_proxy", fake_none)
     r = browser_start(headless=True, temp=True, reuse="none", match_proxy=True)
-    assert "error" not in r, "lookup failure must not hard-fail the launch"
-    assert r.get("identity_consistent") is False, r
-    assert "identity_warning" in r and "inconsistent" in r["identity_warning"].lower()
-    with contextlib.suppress(Exception):
-        browser_stop(port=r["port"])
+    try:
+        assert "error" not in r, r
+        assert r.get("identity_consistent") is False, r
+        assert (
+            "identity_warning" in r and "inconsistent" in r["identity_warning"].lower()
+        )
+    finally:
+        if r.get("session_id"):
+            browser_stop(session_id=r["session_id"])
+        elif r.get("port"):
+            browser_stop(port=r["port"])

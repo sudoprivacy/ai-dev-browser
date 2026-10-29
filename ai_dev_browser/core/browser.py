@@ -26,6 +26,7 @@ from .extension import (
     extension_dir,
     extension_load_instructions,
     extension_version_info,
+    bridge_version_info,
     query_extension_version,
 )
 from .port import (
@@ -278,7 +279,7 @@ def browser_start(
             Chrome, default). Only consulted for a named profile — an
             ephemeral session never reuses.
         startup_timeout: Seconds to wait for Chrome's debug port, CDP browser
-            identity, owned page/network context and initial navigation, or
+            identity, committed owned page and initial navigation, or
             the extension handshake.
             `None` resolves to the
             `AI_DEV_BROWSER_STARTUP_TIMEOUT` env var, else 30s — which
@@ -764,7 +765,7 @@ async def _prepare_startup_page(
     Chrome's temporary empty document can already report readyState=complete.
     Its navigation entry has no name and no DOMContentLoaded timestamp.
     """
-    from ai_dev_browser.cdp import network, page, runtime
+    from ai_dev_browser.cdp import page, runtime
     from ._transport import CDPConnection, ProtocolException
 
     connection = CDPConnection(f"ws://127.0.0.1:{port}/devtools/page/{target_id}")
@@ -794,13 +795,9 @@ async def _prepare_startup_page(
     async def prepare():
         await connection.connect()
         await connection.send(page.enable())
-        # Commit the owned initial document before binding a CookieManager RPC
-        # to its frame. The temporary frame can be replaced during startup.
+        # Confirm the document we will operate on. Cookie-store availability is
+        # a separate capability, not a prerequisite for a usable blank page.
         await wait_document()
-        # A parsed blank page can precede Chrome's profile NetworkContext.
-        # This origin-scoped CookieManager RPC waits for that context without
-        # making an HTTP request. Discard its result; no cookies are modified.
-        await connection.send(network.get_cookies(urls=[f"http://127.0.0.1:{port}/"]))
         if url != "about:blank":
             previous_loader = (
                 await connection.send(page.get_frame_tree())
@@ -932,7 +929,7 @@ async def browser_connect(
     headless: bool | str | None = None,
     timeout: float = 4.0,
 ) -> dict:
-    """Use when: attaching to existing CDP or real Chrome; returns session identity and extension_warning to check before input.
+    """Use when: attaching to existing CDP or real Chrome; inspect returned session identity, extension_warning and bridge_warning before input.
 
     {mode_guidance}
 
@@ -958,6 +955,12 @@ async def browser_connect(
     connected=true requires the dedicated page to exist. bridge_connected alone
     means the extension is reachable; page_available reports the dedicated page.
     Use window_set to verify actual foreground visibility.
+    `bridge_runtime_version`, `bridge_version_matches_client` and
+    `bridge_warning` describe the running Python daemon independently of the
+    loaded extension. `bridge_driver_connections` is a pre-connect snapshot of
+    controller sockets, including recorders, rather than a count of tasks.
+    Unknown runtime fields stay null. Upgrading Python does not restart that
+    daemon; use bridge_warning for coordinated recovery without closing Chrome.
 
     Args:
         transport: "cdp" (default, existing debug Chrome) or "extension"
@@ -1023,7 +1026,7 @@ async def browser_connect(
                 session_id=session_id,
                 transport="extension",
             )
-        from .ext_bridge import ensure_bridge_running, wait_for_extension
+        from .ext_bridge import bridge_status, ensure_bridge_running, wait_for_extension
         from .connection import connect_extension, _require_extension_page
         from .errors import SessionError
 
@@ -1043,8 +1046,6 @@ async def browser_connect(
             and not status.get("launch_token")
             and _session.pending_launch(EXTENSION_BRIDGE_PORT)
         ):
-            from .ext_bridge import bridge_status
-
             while time.monotonic() < connection_deadline and not status.get(
                 "launch_token"
             ):
@@ -1063,6 +1064,7 @@ async def browser_connect(
                 "No extension has connected in the requested time; check enabled bridge and running Chrome/profile",
                 transport="extension",
                 bridge_running=True,
+                **bridge_version_info(await bridge_status(timeout=1) or {}),
                 extension_dir=str(extension_dir()),
                 setup_instructions=extension_load_instructions(),
                 **_build_info(),
@@ -1073,6 +1075,7 @@ async def browser_connect(
                 "Connected bridge lacks lifecycle identity. Reload the updated bundled extension in the selected profile",
                 transport="extension",
                 bridge_running=True,
+                **bridge_version_info(status),
                 extension_dir=str(extension_dir()),
                 setup_instructions=extension_load_instructions(),
             )
@@ -1146,6 +1149,7 @@ async def browser_connect(
                 str(error),
                 **_session.describe(record),
                 bridge_connected=True,
+                **bridge_version_info(status),
                 page_available=False,
                 tabs=[t["url"] for t in tabs],
                 targets=[
@@ -1172,6 +1176,7 @@ async def browser_connect(
         return {
             **_session.describe(record),
             "connected": True,
+            **bridge_version_info(status),
             "bridge_connected": True,
             "page_available": True,
             "account": status.get("account"),

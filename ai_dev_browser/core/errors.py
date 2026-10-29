@@ -33,7 +33,11 @@ class InputUnavailableError(SessionError):
         self.hint = (
             "This input dispatch was not sent. Show the selected Chrome tab/window "
             "and inspect current state before resuming; earlier steps may have "
-            "completed. If the loaded "
+            "completed. focused is document focus; inspect tab_active and "
+            "window_focused separately. If those are true but visibility stays "
+            "hidden, ask the human to uncover/show that window on the current "
+            "unlocked desktop. The browser APIs do not establish which native "
+            "visibility condition prevented input. If the loaded "
             "extension version is unknown or differs from the bundle, arrange an "
             "ordinary update/reload in chrome://extensions; reloading can reset "
             "control, so inspect session ownership again afterwards. Do not replay "

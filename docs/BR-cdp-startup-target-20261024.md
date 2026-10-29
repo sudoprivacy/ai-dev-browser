@@ -141,3 +141,34 @@ including all nine unchanged generated startup checks and the complete embedded
 scroll suite. These local checks used sandboxed Chrome 156.0.8078.73. A fresh
 full CI run remains required to qualify the original runner environment; this
 does not establish the particular Chrome-internal cause of its lost response.
+
+## Separate page startup from cookie-store availability, 30 October
+
+The next full run reproduced `Network.getCookies` startup timeouts in another
+Windows scroll fixture; the previous master run had two recording fixtures fail
+on the same probe. Sequencing the RPC after document commit did not eliminate
+this dependency. An origin-scoped cookie read still depends on CookieManager;
+it is not evidence that unrelated page operations need that service.
+
+Startup now confirms the committed owned document directly. For an explicit
+URL it sends navigation once and waits for that destination's new loader and
+parsed document, as before. The unrelated cookie-store probe is removed rather
+than retried or ignored after a timeout. Cookie operations retain their own
+success/failure contract. Startup budgets, input guards and navigation replay
+rules are unchanged.
+
+The new live regression withholds only `Network.getCookies` replies while all
+other Chrome, CDP, HTTP and trusted input operations remain real. Both headless
+and windowed cases fail on the previous production code and pass after removing
+the coupling, with one GET and one trusted submission on the same owned target.
+The existing nine startup checks continue to cover the independent startup
+actor, actual navigation aborts, wrong destinations and a held initial response.
+All 38 local startup, scroll, proxy-identity and handshake checks passed using
+sandboxed Windows Chrome 156.0.8078.73. The obsolete CookieManager-ordering unit
+check is removed; document-before-navigation ordering remains covered.
+
+The macOS proxy-failure regression now retains the full launch result on failure
+and cleans up its own session even when its first assertion fails. A separate
+Windows remote-worker failure never opened its debug port within 90 seconds;
+that evidence is retained separately, and its local reproduction passed. Neither
+failure justifies widening deadlines or claiming a specific Chrome-internal cause.

@@ -6,6 +6,44 @@ const vm = require('node:vm');
 
 const event = () => ({ handlers: [], addListener(fn) { this.handlers.push(fn); } });
 
+test('selected page diagnostics expose only owned tab/window observations', async () => {
+  const { run, tabs, windows } = await fixture();
+  run('claim(11)');
+  tabs.get(11).active = true;
+  windows.get(101).focused = false;
+  const state = await run("browserLevel('AiDevBrowser.debugState',{},'11')");
+  assert.equal(state.selectedTarget.targetId, '11');
+  assert.equal(state.selectedTarget.tabActive, true);
+  assert.equal(state.selectedTarget.windowFocused, false);
+  assert.equal(state.selectedTarget.windowState, 'normal');
+  assert(state.selectedTarget.observedAt > 0);
+  assert(!JSON.stringify(state.selectedTarget).includes('neutral.test'));
+  await assert.rejects(run('selectedPageState(99)'), /not an owned automation tab \(unowned\)/);
+});
+
+test('consent revocation during visibility observation wins over diagnostic metadata', async () => {
+  const { run, chrome } = await fixture();
+  run('claim(11)');
+  const get = chrome.windows.get;
+  chrome.windows.get = async (...args) => {
+    const result = await get(...args);
+    run("forget(11,'revoked')");
+    return result;
+  };
+  await assert.rejects(run('selectedPageState(11)'), /revoked/);
+});
+
+test('tab moving windows during observation cannot produce a stale window report', async () => {
+  const { run, chrome, tabs } = await fixture();
+  run('claim(11)');
+  const get = chrome.windows.get;
+  chrome.windows.get = async (...args) => {
+    tabs.get(11).windowId = 102;
+    return get(...args);
+  };
+  await assert.rejects(run('selectedPageState(11)'), /changed windows during observation/);
+});
+
 test('closing a revoked main preserves consent across restore and every implicit creation route', async () => {
   const { chrome, tabs, run, saved } = await fixture();
   run('claim(11); mainTabId=11; forget(11, "revoked", {reason:"canceled_by_user"})');
@@ -176,7 +214,7 @@ async function fixture(saved = {}, beforeRestore = null) {
     tabs: { onCreated: event(), onUpdated: event(), onRemoved: event(), onReplaced: event(),
       get: async id => { if (!tabs.has(id)) throw Error('closed'); return tabs.get(id); },
       query: async () => [...tabs.values()], update: async id => tabs.get(id) },
-    windows: { get: async id => windows.get(id), update: async (id, changes) => Object.assign(windows.get(id), changes) },
+    windows: { get: async (id, options) => ({...windows.get(id), ...(options?.populate ? {tabs:[...tabs.values()].filter(tab => tab.windowId === id)} : {})}), update: async (id, changes) => Object.assign(windows.get(id), changes) },
     debugger: { onDetach: event(), onEvent: event(), attach: async () => {}, detach: async () => {}, sendCommand: async () => ({}) },
     storage: { local: { get: async () => ({ adbProfileId: 'profile' }), set: async () => {} },
       session: { get: async () => saved, set: async data => Object.assign(saved, structuredClone(data)) },

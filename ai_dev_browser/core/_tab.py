@@ -1038,29 +1038,50 @@ class Tab:
             state = await self._input_state()
         return state
 
-    async def _input_diagnostics(self, state: dict) -> dict:
-        """Bounded, read-only support data; never include flow URLs or accounts."""
-        from .extension import extension_version_info, query_extension_version
+    async def _input_observation(self, state: dict) -> dict:
+        """Observe only this page/window; document focus is not window focus."""
+        from .extension import extension_version_info, query_extension_state
+        from .errors import SessionError
 
         details = {
-            "input_sent": False,
-            "input_scope": "current_dispatch",
             "target_id": str(self._target.target_id),
             **state,
         }
-        if getattr(self._browser, "transport", "cdp") != "extension":
-            return details
-        loaded = await query_extension_version(self._browser)
-        details.update(extension_version_info(loaded))
+        extension = getattr(self._browser, "transport", "cdp") == "extension"
+        if extension:
+            report = await query_extension_state(self)
+            details.update(extension_version_info(report.get("extensionVersion")))
+            selected = report.get("selectedTarget") or {}
+            details.update(tab_active=None, window_focused=None)
+            if selected.get("targetId") == str(self._target.target_id):
+                details.update(
+                    tab_active=selected.get("tabActive"),
+                    window_focused=selected.get("windowFocused"),
+                    window_state=selected.get("windowState"),
+                    window_id=selected.get("windowId"),
+                    window_observed_at=selected.get("observedAt"),
+                )
+                return details
+        # Native CDP and older workers still report the bounds they can observe.
         try:
             window_id, bounds = await self.send(
                 cdp_browser.get_window_for_target(self._target.target_id), timeout=1
             )
             details["window_state"] = bounds.window_state.value
             details["window_id"] = window_id
+        except SessionError:
+            raise
         except Exception:
             pass  # Preserve the original refusal if diagnostic support is incomplete.
         return details
+
+    async def _input_diagnostics(self, state: dict) -> dict:
+        """Bounded, read-only refusal details; never include URLs or accounts."""
+        return {
+            "input_sent": False,
+            "input_scope": "current_dispatch",
+            **await self._input_observation(state),
+        }
 
     async def _prepare_input(self, allow_cached: bool = False):
         """Wake only the selected extension page before trusted input."""

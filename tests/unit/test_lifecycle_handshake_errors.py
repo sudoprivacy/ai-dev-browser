@@ -18,8 +18,8 @@ def test_missing_identity_preserves_launch_message_without_overriding_failure(
     assert result["pid"] == 1234 and result["message"] == "Browser started"
 
 
-async def test_requested_url_waits_for_profile_network_response(monkeypatch):
-    """A stalled startup RPC must not dispatch the caller's URL prematurely."""
+async def test_requested_url_waits_for_the_committed_document(monkeypatch):
+    """Prepare the owned document, then navigate once without a cookie probe."""
     from ai_dev_browser.core import _transport
 
     requested, release = asyncio.Event(), asyncio.Event()
@@ -38,12 +38,9 @@ async def test_requested_url_waits_for_profile_network_response(monkeypatch):
         async def send(self, command):
             request = next(command)
             method = request["method"]
-            if method == "Network.getCookies":
-                assert request["params"]["urls"] == ["http://127.0.0.1:9355/"]
+            if method == "Page.getFrameTree":
                 requested.set()
                 await release.wait()
-                return []
-            if method == "Page.getFrameTree":
                 return SimpleNamespace(frame=SimpleNamespace(loader_id=self.loader))
             if method == "Runtime.evaluate":
                 return SimpleNamespace(value=True), None
@@ -65,55 +62,6 @@ async def test_requested_url_waits_for_profile_network_response(monkeypatch):
         assert navigations == ["https://neutral.test/once"]
     finally:
         release.set()
-        await asyncio.gather(task, return_exceptions=True)
-
-
-async def test_profile_network_probe_waits_for_the_committed_startup_document(
-    monkeypatch,
-):
-    """Do not bind a CookieManager RPC to Chrome's temporary initial frame."""
-    from ai_dev_browser.core import _transport
-
-    requested_document, release_document = asyncio.Event(), asyncio.Event()
-    requested_network = asyncio.Event()
-    disconnected = []
-
-    class Connection:
-        def __init__(self, endpoint):
-            pass
-
-        async def connect(self):
-            pass
-
-        async def disconnect(self):
-            disconnected.append(True)
-
-        async def send(self, command):
-            request = next(command)
-            if request["method"] == "Page.getFrameTree":
-                requested_document.set()
-                await release_document.wait()
-                return SimpleNamespace(frame=SimpleNamespace(loader_id="committed"))
-            if request["method"] == "Runtime.evaluate":
-                return SimpleNamespace(value=True), None
-            if request["method"] == "Network.getCookies":
-                requested_network.set()
-                return []
-            assert request["method"] == "Page.enable"
-
-    monkeypatch.setattr(_transport, "CDPConnection", Connection)
-    task = asyncio.create_task(
-        browser._prepare_startup_page(9355, "owned", "about:blank", 5)
-    )
-    try:
-        await asyncio.wait_for(requested_document.wait(), 2)
-        assert not requested_network.is_set()
-        release_document.set()
-        await task
-        assert requested_network.is_set()
-        assert disconnected == [True]
-    finally:
-        release_document.set()
         await asyncio.gather(task, return_exceptions=True)
 
 

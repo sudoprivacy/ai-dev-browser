@@ -3,7 +3,7 @@
 AUTO-GENERATED - DO NOT EDIT
 
 This file was auto-generated from SKILL.md by integration-test-generator.
-Generated: 2026-10-20 09:29:38
+Generated: 2026-10-30 06:00:18
 
 To modify test behavior:
   1. Update SKILL.md with better workflow examples
@@ -15,7 +15,7 @@ Coverage: 1/1 real workflows (100%)
 Identified using AI scenario recognition with complete code generation
 
 Coverage Report:
-  ✅ Neutral form -> minimize the owned window -> restore and inspect real visibility -> cover only the owned window -> refuse mouse and keyboard before dispatch -> uncover -> submit once with trusted input -> inspect final screenshot
+  ✅ Connect and inspect actual bridge runtime -> minimize and restore the owned window -> activate an inactive owned tab -> focus a normal unfocused window -> cover only the owned window -> refuse mouse and keyboard with separate tab/window/document diagnostics -> uncover -> submit once with trusted input -> inspect final screenshot and preserve unrelated tabs
 
 Uncovered workflows: None
 """
@@ -60,7 +60,7 @@ async def test_real_extension_window_restore_and_hidden_input(
     """
     Real scenario: Restore an owned Chrome window and withhold input under real native occlusion
 
-    Workflow: Neutral form -> minimize the owned window -> restore and inspect real visibility -> cover only the owned window -> refuse mouse and keyboard before dispatch -> uncover -> submit once with trusted input -> inspect final screenshot
+    Workflow: Connect and inspect actual bridge runtime -> minimize and restore the owned window -> activate an inactive owned tab -> focus a normal unfocused window -> cover only the owned window -> refuse mouse and keyboard with separate tab/window/document diagnostics -> uncover -> submit once with trusted input -> inspect final screenshot and preserve unrelated tabs
 
     User problem: An ordinary profile must support window controls and preserve an actionable hidden-page refusal without claiming that native focus proves visibility.
 

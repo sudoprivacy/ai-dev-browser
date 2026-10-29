@@ -3,7 +3,7 @@
 AUTO-GENERATED - DO NOT EDIT
 
 This file was auto-generated from SKILL.md by integration-test-generator.
-Generated: 2026-10-24 05:23:11
+Generated: 2026-10-30 06:35:57
 
 To modify test behavior:
   1. Update SKILL.md with better workflow examples
@@ -11,10 +11,11 @@ To modify test behavior:
 
 Manual edits will be lost when regenerated!
 
-Coverage: 5/5 real workflows (100%)
+Coverage: 6/6 real workflows (100%)
 Identified using AI scenario recognition with complete code generation
 
 Coverage Report:
+  ✅ Launch actual Chrome -> withhold only CookieManager replies -> commit the owned initial document -> request the application URL once -> inspect real destination -> trusted typing and one server submission
   ✅ Launch owned Chrome -> wait for its actual network context before the timed launch gate -> hold the initial HTTP response -> document timeout retains process and owned target -> release response -> reconnect same session and target -> one GET and one trusted submission
   ✅ Launch actual Chrome -> arrange an early startup page -> finish browser_start -> first owned navigation held by HTTP -> independent early page navigates to blank -> release one request -> correct owned page -> trusted typing and one submission
   ✅ Launch actual Chrome with URL -> independent early page exists -> prepare blank owned page -> hold its single initial HTTP request -> early page finishes to blank -> release response -> startup returns parsed owned destination -> trusted typing and one submission
@@ -49,6 +50,29 @@ def _integration_guard():
     """Skip if SKIP_INTEGRATION is set."""
     if SKIP_INTEGRATION:
         pytest.skip("SKIP_INTEGRATION is set — skipping integration tests")
+
+
+async def test_real_chrome_startup_without_cookie_probe(
+    tmp_path, monkeypatch, startup_mode
+):
+    """
+    Real scenario: Use an owned page when an unrelated CookieManager RPC cannot reply
+
+    Workflow: Launch actual Chrome -> withhold only CookieManager replies -> commit the owned initial document -> request the application URL once -> inspect real destination -> trusted typing and one server submission
+
+    User problem: A real usable page must not be blocked by an unrelated cookie-store readiness probe.
+
+    Data flow:
+      1. inline code operation
+    """
+    # Step 1: Execute operation
+    await startup_target_journey(
+        tmp_path,
+        monkeypatch,
+        startup_mode,
+        with_url=True,
+        cookie_probe_unavailable=True,
+    )
 
 
 async def test_real_chrome_initial_document_timeout_preserves_owned_page(

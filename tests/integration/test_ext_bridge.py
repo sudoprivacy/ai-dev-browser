@@ -11,14 +11,88 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import sys
 
 import pytest
 import websockets
 
-from ai_dev_browser.cdp import runtime, target as cdp_target
+from ai_dev_browser.cdp import runtime
+from ai_dev_browser.cdp import target as cdp_target
 from ai_dev_browser.core._transport import MAX_SIZE, CDPConnection, ProtocolException
 from ai_dev_browser.core.connection import BrowserClient, get_active_tab
 from ai_dev_browser.core.ext_bridge import run_bridge
+
+
+@pytest.mark.parametrize("backend", ["legacy", "asyncio"])
+async def test_running_bridge_reports_its_version_and_controller_sockets(backend):
+    """Real sockets distinguish probes, browser/page drivers and disconnects."""
+    from ai_dev_browser._version import __version__
+    from ai_dev_browser.core.ext_bridge import _Bridge, bridge_status
+
+    if backend == "legacy":
+        from websockets.legacy.server import serve
+    else:
+        from websockets.asyncio.server import serve
+    bridge = _Bridge()
+    server = await serve(bridge.handler, "127.0.0.1", 0, max_size=MAX_SIZE)
+    port = server.sockets[0].getsockname()[1]
+    url = f"ws://127.0.0.1:{port}"
+    try:
+        initial = await bridge_status(port)
+        assert initial["bridge_runtime_version"] == __version__
+        assert initial["bridge_started_at"] > 0
+        assert initial["bridge_message_limit"] == MAX_SIZE
+        assert initial["bridge_driver_connections"] == 0
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "ai_dev_browser.tools.browser_connect",
+            "--transport",
+            "extension",
+            "--timeout",
+            "0.2",
+            env={**os.environ, "AI_DEV_BROWSER_EXTENSION_BRIDGE_PORT": str(port)},
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), 15)
+        finally:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+        result = json.loads(stdout)
+        assert process.returncode != 0, stderr
+        assert result["error_code"] == "transient" and result["bridge_running"] is True
+        assert result["bridge_runtime_version"] == initial["bridge_runtime_version"]
+        assert result["bridge_message_limit"] == MAX_SIZE
+        assert result["bridge_driver_connections"] == 0
+        async with websockets.connect(url + "/devtools/browser") as browser:
+            # The same socket can first probe status and later become a driver.
+            await browser.send(json.dumps({"id": 1, "method": "_bridge.status"}))
+            assert (
+                json.loads(await browser.recv())["result"]["bridge_driver_connections"]
+                == 0
+            )
+            await browser.send(json.dumps({"id": 2, "method": "Target.getTargets"}))
+            assert "error" in json.loads(await browser.recv())  # no fake extension
+            async with websockets.connect(url + "/devtools/page/11") as page:
+                await page.send(json.dumps({"id": 3, "method": "Page.enable"}))
+                assert "error" in json.loads(await page.recv())
+                observed = await bridge_status(port)
+                assert observed["bridge_driver_connections"] == 2
+                assert observed["bridge_started_at"] == initial["bridge_started_at"]
+                assert (
+                    observed["bridge_runtime_version"]
+                    == initial["bridge_runtime_version"]
+                )
+        async with asyncio.timeout(3):
+            while (await bridge_status(port))["bridge_driver_connections"]:
+                await asyncio.sleep(0.01)
+    finally:
+        server.close()
+        await server.wait_closed()
 
 
 async def test_bridge_preserves_large_replies_and_dom_events():

@@ -5,15 +5,17 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from ai_dev_browser.core._session import describe
 from ai_dev_browser.core.ax import _fill_verified, click_by_ref
 from ai_dev_browser.core.errors import InputUnavailableError, SessionError
 from ai_dev_browser.core.extension import (
+    bridge_version_info,
     extension_version_info,
+    query_extension_state,
     query_extension_version,
 )
 from ai_dev_browser.core.mouse import mouse_click
 from ai_dev_browser.core.window import window_set
-from ai_dev_browser.core._session import describe
 
 
 @pytest.mark.parametrize("prefer", [None, "keys", "human"])
@@ -140,3 +142,69 @@ def test_bridge_records_insert_text_command_without_its_value(caplog):
     assert [record.getMessage() for record in caplog.records] == [
         "action: Input.insertText"
     ]
+
+
+@pytest.mark.parametrize("version", [None, "0.0.0"])
+def test_bridge_runtime_is_not_inferred_from_client_or_extension(version):
+    result = bridge_version_info({"bridge_runtime_version": version})
+    assert result["bridge_runtime_version"] == version
+    assert result["bridge_version_matches_client"] is (False if version else None)
+    assert result["bridge_driver_connections"] is None
+    assert "does not restart" in result["bridge_warning"]
+    assert "Disconnect releases other controllers" in result["bridge_warning"]
+
+
+async def test_observation_refuses_to_replace_revocation_with_visibility_advice():
+    from ai_dev_browser.core._transport import OwnershipProtocolError
+
+    error = OwnershipProtocolError(
+        {"message": "revoked", "data": {"adbOwnership": {"state": "revoked"}}}
+    )
+    sender = SimpleNamespace(send=AsyncMock(side_effect=error))
+    with pytest.raises(OwnershipProtocolError) as caught:
+        await query_extension_state(sender)
+    assert caught.value is error
+
+
+async def test_window_focus_success_uses_chrome_window_focus_separately():
+    state = {"visibility": "visible", "focused": True}
+    tab = SimpleNamespace(
+        bring_to_front=AsyncMock(),
+        _wait_input_visibility=AsyncMock(return_value=state),
+        _input_observation=AsyncMock(
+            return_value={
+                **state,
+                "window_state": "normal",
+                "tab_active": True,
+                "window_focused": False,
+            }
+        ),
+    )
+    result = await window_set(tab, focus=True)
+    assert result["focused"] is True and result["window_focused"] is False
+    assert result["input_ready"] is True and result["success"] is False
+    assert result["retryable"] is False
+
+
+async def test_older_extension_keeps_focus_unknown_and_preserves_revocation():
+    from ai_dev_browser.core._tab import Tab
+    from ai_dev_browser.core._transport import OwnershipProtocolError
+
+    bounds = SimpleNamespace(window_state=SimpleNamespace(value="normal"))
+    tab = SimpleNamespace(
+        _target=SimpleNamespace(target_id="11"),
+        _browser=SimpleNamespace(transport="extension"),
+        send=AsyncMock(side_effect=[{"extensionVersion": "0.4.8"}, (101, bounds)]),
+    )
+    result = await Tab._input_observation(
+        tab, {"visibility": "hidden", "focused": True}
+    )
+    assert result["tab_active"] is None and result["window_focused"] is None
+    assert result["window_id"] == 101 and result["window_state"] == "normal"
+    error = OwnershipProtocolError(
+        {"message": "revoked", "data": {"adbOwnership": {"state": "revoked"}}}
+    )
+    tab.send.side_effect = [{"extensionVersion": "0.4.8"}, error]
+    with pytest.raises(OwnershipProtocolError) as caught:
+        await Tab._input_observation(tab, {"visibility": "hidden", "focused": True})
+    assert caught.value is error

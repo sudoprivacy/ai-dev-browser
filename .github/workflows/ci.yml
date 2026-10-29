@@ -324,7 +324,7 @@ jobs:
           AI_DEV_BROWSER_TEST_UNKNOWN_EXTENSION: ${{ github.workspace }}/unknown-extension-fixture/ai_dev_browser/extension
         run: uv run --no-sync python -m pytest -v tests/integration/test_extension_runtime_upgrade.py --basetemp runtime-upgrade-results
 
-      - name: Honor genuine Windows window visibility before input
+      - name: Verify Windows tab activation, window focus and genuine occlusion before input
         if: runner.os == 'Windows'
         env:
           AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.windows-chrome.outputs.chrome-path || steps.chrome.outputs.chrome-path }}
