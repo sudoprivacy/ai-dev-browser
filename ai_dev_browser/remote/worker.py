@@ -12,6 +12,7 @@ import os
 import pathlib
 import re
 import secrets
+import sys
 import time
 from contextlib import asynccontextmanager
 from urllib.parse import unquote
@@ -36,6 +37,7 @@ from ai_dev_browser.remote.window_stream import WindowStream
 
 from .existing import ExistingExtension
 from .profile_lease import ProfileLease
+from .native_window import NativeWindowError, helper_configuration, process_identity
 
 
 class Worker:
@@ -830,9 +832,46 @@ class Worker:
             raise ControlError("invalid_browser_epoch")
         return values
 
+    async def prepare_native_window(self, controller, action):
+        """Describe only the selected, human-owned native window for the UI helper."""
+        if set(action) != {"kind", "targetId", "controlEpoch", "targetEpoch"}:
+            raise ControlError("invalid_browser_action")
+        if sys.platform != "win32" or self.display_mode != "native":
+            raise ControlError("native_window_not_supported")
+        if not self.session or not self.browser or self.browser.get("headless") is True:
+            raise ControlError("native_window_not_available")
+        epoch, target_epoch = self.epochs(action)
+
+        async def prepare():
+            if action["targetId"] != self.session.target_id:
+                raise ControlError("stale_browser_operation")
+            record = self.browser
+            try:
+                pid = (
+                    await self.existing_extension.native_process_id(
+                        self.personal_reference
+                    )
+                    if record.get("external_attachment")
+                    else record.get("pid")
+                )
+                identity = process_identity(pid)
+            except NativeWindowError as error:
+                raise ControlError(str(error), details=error.details) from None
+            page = await self.session._connect_page()
+            await page.call("Page.bringToFront")
+            title = await page.js("document.title")
+            if not isinstance(title, str) or len(title) > 4096:
+                raise ControlError("native_window_target_unavailable")
+            return {"process": identity, "title": title}
+
+        descriptor = await self.control.run(controller, epoch, target_epoch, prepare)
+        return {"session": await self.state(controller), "nativeWindow": descriptor}
+
     async def invoke(self, controller, action):
         kind = action.get("kind")
         extra = {}
+        if kind == "prepare-native-window":
+            return await self.prepare_native_window(controller, action)
         if kind == "state":
             pass
         elif kind == "inspect-existing-extension":
@@ -1161,7 +1200,12 @@ def application(worker):
         try:
             return await handler(request)
         except (ControlError, BrowserViewError) as error:
-            return web.json_response({"error": error.code}, status=409)
+            payload = {"error": error.code}
+            if error.code.startswith("native_window_") and getattr(
+                error, "details", None
+            ):
+                payload["details"] = error.details
+            return web.json_response(payload, status=409)
         except (aiohttp.ClientError, ConnectionError, TimeoutError):
             return web.json_response({"error": "browser_disconnected"}, status=503)
         except (KeyError, TypeError, ValueError):
@@ -1190,7 +1234,13 @@ def application(worker):
     async def binding(request):
         authorize(request, worker.host_token)
         return web.json_response(
-            {"binding": worker.binding, "browserRunning": worker.session is not None}
+            {
+                "binding": worker.binding,
+                "browserRunning": worker.session is not None,
+                "nativeWindowHelper": helper_configuration()
+                if worker.display_mode == "native"
+                else None,
+            }
         )
 
     def file_context(request):

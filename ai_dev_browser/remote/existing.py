@@ -13,7 +13,10 @@ from ai_dev_browser.core import _session
 from ai_dev_browser.core.browser import browser_connect
 from ai_dev_browser.core.connection import connect_extension
 from ai_dev_browser.core.ext_bridge import bridge_status, ensure_bridge_running
-from ai_dev_browser.core.extension import extension_load_instructions
+from ai_dev_browser.core.extension import (
+    EXTENSION_BRIDGE_PORT,
+    extension_load_instructions,
+)
 
 from .control import ControlError
 from .profile_lease import ProfileLease
@@ -101,6 +104,18 @@ class ExistingExtension:
                 await client.close()
             self.close()
             raise
+
+    async def native_process_id(self, expected):
+        """Resolve only the still-selected local extension's Chrome process."""
+        from .native_window import extension_process_id
+
+        identity = {key: expected[key] for key in ("sessionId", "profileId")}
+        if self.identity(await bridge_status(timeout=1)) != identity:
+            raise ControlError("browser_existing_extension_changed")
+        pid = await asyncio.to_thread(extension_process_id, EXTENSION_BRIDGE_PORT)
+        if self.identity(await bridge_status(timeout=1)) != identity:
+            raise ControlError("browser_existing_extension_changed")
+        return pid
 
     def close(self):
         # The application owns its connection and lease, never personal Chrome.
