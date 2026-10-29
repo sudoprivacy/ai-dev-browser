@@ -39,7 +39,7 @@ from urllib.parse import parse_qs, urlsplit
 import websockets
 
 from .extension import EXTENSION_BRIDGE_PORT
-from ._transport import _local_websocket_options
+from ._transport import MAX_SIZE, _local_websocket_options
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +80,11 @@ class _Bridge:
         # its own event stream; a new driver must not steal the recorder's ACKs.
         self._tab_conns: dict[str, set] = {}
 
-    async def _tab_event(self, target_id, method, params):
-        payload = json.dumps({"method": method, "params": params})
+    async def _tab_event(self, target_id, method, params, session_id=None):
+        event = {"method": method, "params": params}
+        if session_id is not None:
+            event["sessionId"] = session_id
+        payload = json.dumps(event)
         connections = list(self._tab_conns.get(target_id, ()))
         if connections:
             await asyncio.gather(
@@ -133,8 +136,10 @@ class _Bridge:
                     entry = self._pending.pop(m["_gid"], None)
                     if entry is None:
                         continue
-                    driver_ws, orig_id = entry
+                    driver_ws, orig_id, session_id = entry
                     out: dict = {"id": orig_id}
+                    if session_id is not None:
+                        out["sessionId"] = session_id
                     if "error" in m:
                         out["error"] = m["error"]
                     else:
@@ -145,25 +150,42 @@ class _Bridge:
                         pass
                 elif "_event_tab" in m:
                     await self._tab_event(
-                        m["_event_tab"], m.get("method"), m.get("params", {})
+                        m["_event_tab"],
+                        m.get("method"),
+                        m.get("params", {}),
+                        m.get("sessionId"),
                     )
                 elif "_hello" in m:
                     self.account = m.get("account")
                     self.identity.update({key: m.get(key) for key in self.identity})
-        except websockets.exceptions.ConnectionClosed:
-            pass  # extension disconnected — normal
+        except websockets.exceptions.ConnectionClosed as error:
+            received = getattr(getattr(error, "rcvd", None), "code", None)
+            sent = getattr(getattr(error, "sent", None), "code", None)
+            logger.log(
+                logging.INFO if sent in (1000, 1001) else logging.WARNING,
+                "Extension bridge socket closed: received_code=%s sent_code=%s",
+                received,
+                sent,
+            )
         finally:
             if self.extension is ws:
                 self.extension = None
                 self.account = None
                 self.identity = {}
                 # Fail every in-flight command so no driver hangs.
-                for gid, (driver_ws, orig_id) in list(self._pending.items()):
+                for gid, (driver_ws, orig_id, session_id) in list(
+                    self._pending.items()
+                ):
                     try:
                         await driver_ws.send(
                             json.dumps(
                                 {
                                     "id": orig_id,
+                                    **(
+                                        {"sessionId": session_id}
+                                        if session_id is not None
+                                        else {}
+                                    ),
                                     "error": {"message": "extension disconnected"},
                                 }
                             )
@@ -299,13 +321,18 @@ class _Bridge:
 
         self._log_action(method or "", msg.get("params"))
         gid = next(self._gid)
-        self._pending[gid] = (ws, mid)
+        self._pending[gid] = (ws, mid, msg.get("sessionId"))
         try:
             await self.extension.send(
                 json.dumps(
                     {
                         "_gid": gid,
                         "tab": target_id,
+                        **(
+                            {"sessionId": msg["sessionId"]}
+                            if "sessionId" in msg
+                            else {}
+                        ),
                         "method": method,
                         "params": msg.get("params") or {},
                     }
@@ -467,6 +494,9 @@ async def run_bridge(port: int = EXTENSION_BRIDGE_PORT):
         "127.0.0.1",
         port,
         process_request=_launch_page,
+        # DOM events may contain a review iframe's entire srcdoc attribute.
+        # Match the bounded native CDP client instead of the 1 MiB WS default.
+        max_size=MAX_SIZE,
     )
     bridge.server = server
     logger.info("extension bridge listening on 127.0.0.1:%d", port)

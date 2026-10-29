@@ -374,6 +374,40 @@ them before Chrome starts. Remote exposure requires the application's
 authenticated gateway. `X-ADB-Browser-Context` scopes file transport and
 `X-ADB-Browser-Session` scopes MCP calls; existing Moss headers remain compatible.
 
+#### Agent commands in embedded pages
+
+`browser_action(kind="command", method=..., paramsJson=..., frame=...)` can
+address a cross-origin iframe inside the selected tab. Use the iframe's exact
+`frameId` from `DOM.describeNode`, or a URL substring that identifies one
+descendant. Omit `frame` for the top page. Nested frames are supported;
+extension child sessions require Chrome 125 or newer.
+
+The worker reuses the SDK's selected-tab frame resolver. It resolves and sends
+on the same connection because native CDP child session IDs belong to that
+connection. Callers supply a frame selector, never a raw debugger session ID.
+Browser/Target methods remain outside the command allowlist. Missing, foreign,
+ambiguous or malformed selectors return `invalid_browser_frame`; protocol
+errors keep their generic public code and private host diagnostics.
+
+Bridge and worker CDP sockets use the same bounded message size as the native
+SDK transport. DOM events can include a review iframe's entire `srcdoc`
+attribute, even when a query returns only a node ID. These events and large
+replies must preserve the connection rather than disconnecting other viewers
+or agents. The live workflow exercises a 5 MiB DOM attribute event and reply.
+
+Frame lookup and execution stay within the existing control barrier. Main and
+child agents share the same human lease and control/target epochs. Switching
+tabs invalidates queued operations; human control rejects frame reads and
+writes through this command path. An uncertain input is never replayed.
+The host uses its normal question, interrupt and continuation UX; these APIs
+do not require additional business handoff buttons.
+
+Real HTTP MCP acceptance covers native CDP and signed managed extension Chrome,
+nested reads, trusted Chinese input, two tabs with identical child URLs,
+invalid selectors, private protocol failures, stale target epochs and human
+control blocking a frame write. Host/model and public-page acceptance remain
+separate requirements.
+
 Real HTTP acceptance on Windows covers native headless and headful Chrome, two
 viewers of one target, trusted Unicode input, blocked AI writes during takeover,
 fresh observation after return, and one trusted submission with the original

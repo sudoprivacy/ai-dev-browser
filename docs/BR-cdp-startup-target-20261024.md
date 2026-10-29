@@ -47,8 +47,24 @@ profile's network context had responded. Startup now waits for an origin-scoped,
 read-only CookieManager RPC in parallel with blank-document readiness. The reply
 is discarded. This sends no HTTP request and changes no cookies, so it cannot
 replay the user's URL or depend on external network/proxy access. The short
-document-timeout fixture warms its real network context before opening the launch
-gate; its original three-second deadline and outcome assertions remain unchanged.
+document-timeout fixture loads a separate local readiness document before opening
+the launch gate. A CookieManager request on the fixture's cold early target itself
+timed out on Windows Chrome 156.0.8078.73, before the scenario began. The readiness
+response and parsed DOM now establish that the actual network path works, within
+the original ten-second actor preparation budget. That budget belongs to the
+async preparation; its cleanup releases the launch gate even on cancellation.
+The held application URL is still requested exactly once, and its original
+three-second deadline and outcome assertions remain unchanged. Production startup
+continues to use the read-only CookieManager probe; it sends no readiness request.
+
+The owned Windows visual fixture also uses the existing integration suite's
+`--disable-backgrounding-occluded-windows` flag. Local runs exposed a separate
+intermittent failure: document and trusted submission were ready, but no first
+paint was recorded and screenshot capture timed out. The fixture must keep
+painting beside the user's foreground apps. Production launch flags and the
+separate native occlusion tests remain unchanged; screenshot assertions and
+command deadlines are retained. Raw failed receipts are kept separately from
+the later passing run, rather than treating repetition as evidence of a fix.
 
 Chromium routes this command through the selected target's storage-partition
 CookieManager and answers after its callbacks; see the

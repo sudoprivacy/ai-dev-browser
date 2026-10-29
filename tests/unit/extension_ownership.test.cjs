@@ -61,6 +61,113 @@ for (const history of [[], [{event:'revoked', tabId:11, time:123456789, reason:'
   });
 }
 
+test('selected-tab frame discovery refreshes a provisional empty URL after document load', async () => {
+  const { chrome, run } = await fixture();
+  let currentUrl = '';
+  chrome.debugger.sendCommand = async (debuggee, method) => method === 'Target.getTargetInfo'
+    ? { targetInfo: { targetId: 'child', type: 'iframe', url: currentUrl } } : {};
+  run("globalThis.navigator={userAgent:'Chrome/156.0.0.0'};claim(11)");
+  await chrome.debugger.onEvent.handlers[0]({ tabId: 11 }, 'Target.attachedToTarget',
+    { sessionId: 'child-session', targetInfo: { targetId: 'child', type: 'iframe', url: '', parentFrameId: 'root' } });
+  assert.equal(run("frameSessions.get(11).get('child-session').info.url"), '');
+  currentUrl = 'https://child.test/loaded';
+  const result = await run("browserLevel('Target.getTargets',{},'11')");
+  assert.equal(result.targetInfos.find(info => info.targetId === 'child').url, currentUrl);
+});
+
+test('revocation during frame metadata refresh refuses the pending discovery result', async () => {
+  const { chrome, run } = await fixture();
+  chrome.debugger.sendCommand = async () => ({});
+  run("globalThis.navigator={userAgent:'Chrome/156.0.0.0'};claim(11)");
+  await chrome.debugger.onEvent.handlers[0]({ tabId: 11 }, 'Target.attachedToTarget',
+    { sessionId: 'child-session', targetInfo: { targetId: 'child', type: 'iframe', url: '', parentFrameId: 'root' } });
+  let release, requested;
+  const started = new Promise(resolve => { requested = resolve; });
+  chrome.debugger.sendCommand = async () => new Promise(resolve => { release = resolve; requested(); });
+  const pending = run("browserLevel('Target.getTargets',{},'11')");
+  await Promise.race([started, pending.then(() => { throw new Error('Frame metadata was not refreshed'); })]);
+  run("forget(11,'revoked')");
+  release({ targetInfo: { targetId: 'child', type: 'iframe', url: 'https://child.test/late' } });
+  await assert.rejects(pending, error => error.ownership?.state === 'revoked');
+  assert.equal(run('frameSessions.has(11)'), false);
+});
+
+test('child sessions route only within their owning tab and die with its consent', async () => {
+  const { chrome, run } = await fixture();
+  const commands = [];
+  chrome.debugger.sendCommand = async (debuggee, method, params) => {
+    commands.push({ debuggee, method, params }); return {};
+  };
+  run("globalThis.navigator={userAgent:'Chrome/156.0.0.0'};globalThis.messages=[];ws={readyState:1,send:value=>messages.push(JSON.parse(value))};announcedSocket=ws;claim(11);claim(12)");
+  const attach = async (tabId, sessionId, targetId, parentSessionId = null) => chrome.debugger.onEvent.handlers[0](
+    { tabId, ...(parentSessionId ? { sessionId: parentSessionId } : {}) }, 'Target.attachedToTarget',
+    { sessionId, targetInfo: { targetId, type: 'iframe', url: 'https://child.test/', parentFrameId: parentSessionId ? 'frame-a' : `root-${tabId}` }, waitingForDebugger: false }
+  );
+  await attach(11, 'session-a', 'frame-a');
+  await attach(12, 'session-b', 'frame-b');
+  await attach(11, 'nested-a', 'nested-frame', 'session-a');
+  const infos = await run("browserLevel('Target.getTargets',{},'11')");
+  assert.deepEqual(Array.from(infos.targetInfos, item => item.targetId).sort(), ['11', 'frame-a', 'nested-frame']);
+  await run("handleCommand(1,'11','Runtime.evaluate',{expression:'read'},'session-b')");
+  assert.match(run('messages.at(-1).error.message'), /not owned by this automation tab/);
+  assert(!commands.some(item => item.method === 'Runtime.evaluate'));
+  await run("handleCommand(2,'11','Runtime.evaluate',{expression:'read'},'session-a')");
+  assert(commands.some(item => item.method === 'Runtime.evaluate' && item.debuggee.tabId === 11 && item.debuggee.sessionId === 'session-a'));
+  await chrome.debugger.onEvent.handlers[0]({ tabId: 11 }, 'Target.targetInfoChanged', { targetInfo: { targetId: 'frame-a', url: 'https://child.test/updated' } });
+  assert.equal(run("frameSessions.get(11).get('session-a').info.url"), 'https://child.test/updated');
+  run("forget(11,'revoked',{reason:'canceled_by_user'})");
+  assert.equal(run('frameSessions.has(11)'), false);
+  assert.equal(run("frameSessions.get(12).has('session-b')"), true);
+  const before = run('messages.filter(item => item._event_tab !== undefined).length');
+  await chrome.debugger.onEvent.handlers[0]({ tabId: 11, sessionId: 'session-a' }, 'Runtime.consoleAPICalled', { marker: 'stale-frame-event' });
+  assert.equal(run('messages.filter(item => item._event_tab !== undefined).length'), before);
+  assert.equal(run("messages.some(item => item.params?.marker === 'stale-frame-event')"), false);
+});
+
+test('child setup cannot resume after consent is revoked during metadata lookup', async () => {
+  const { chrome, run } = await fixture();
+  const commands = [];
+  let release;
+  chrome.debugger.sendCommand = async (debuggee, method) => {
+    commands.push({ debuggee, method });
+    if (method === 'Target.getTargetInfo') return new Promise(resolve => { release = resolve; });
+    return {};
+  };
+  run("globalThis.navigator={userAgent:'Chrome/156.0.0.0'};claim(11)");
+  const pending = chrome.debugger.onEvent.handlers[0]({ tabId: 11 }, 'Target.attachedToTarget',
+    { sessionId: 'child', targetInfo: { targetId: 'frame', type: 'iframe', parentFrameId: 'root' } });
+  assert(release);
+  run("forget(11,'revoked')");
+  release({});
+  await pending;
+  assert.equal(run('frameSessions.has(11)'), false);
+  assert(!commands.some(item => item.method === 'Target.setAutoAttach'));
+});
+
+test('restored child events cannot precede the extension hello or replace its session identity', async () => {
+  const { chrome, run } = await fixture();
+  run("globalThis.navigator={userAgent:'Chrome/156.0.0.0'};globalThis.messages=[];ws={readyState:1,send:value=>messages.push(JSON.parse(value))};claim(11)");
+  await chrome.debugger.onEvent.handlers[0]({ tabId: 11 }, 'Target.attachedToTarget',
+    { sessionId: 'child', targetInfo: { targetId: 'frame', type: 'iframe', parentFrameId: 'root' } });
+  assert.equal(run('messages.length'), 0);
+  await run('announce()');
+  assert.equal(run('messages[0]._hello'), true);
+  assert.equal(run("messages[0].session_id === sessionId && typeof sessionId === 'string'"), true);
+  const state = await run("browserLevel('AiDevBrowser.debugState',{},'11')");
+  assert.equal(state.sessionId, run('sessionId'));
+  await chrome.debugger.onEvent.handlers[0]({ tabId: 11, sessionId: 'child' }, 'Runtime.consoleAPICalled', { marker: true });
+  assert.equal(run('messages.at(-1).sessionId'), 'child');
+});
+
+test('older Chrome retains tab operation without advertising unsupported flat children', async () => {
+  const { chrome, run } = await fixture();
+  const commands = [];
+  chrome.debugger.sendCommand = async (_debuggee, method) => { commands.push(method); return {}; };
+  run("globalThis.navigator={userAgent:'Chrome/124.0.0.0'};claim(11)");
+  await run('attachTab(11)');
+  assert.equal(run('attached.has(11)'), true);
+  assert(!commands.includes('Target.setAutoAttach'));
+});
 async function fixture(saved = {}, beforeRestore = null) {
   const tabs = new Map([[11, { id: 11, url: 'https://neutral.test/consent?secret=yes#token' }], [12, { id: 12, url: 'https://neutral.test/result' }], [99, { id: 99, url: 'https://neutral.test/private' }]]);
   for (const [id, tab] of tabs) tab.windowId = id === 99 ? 102 : 101;

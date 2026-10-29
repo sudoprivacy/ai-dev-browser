@@ -20,6 +20,7 @@ from ai_dev_browser.core import cdp_send, connect_browser, get_active_tab, js_ev
 from ai_dev_browser.core.browser import browser_start
 from ai_dev_browser.core.connection import BrowserClient
 from ai_dev_browser.core.ext_bridge import _Bridge
+from ai_dev_browser.core._transport import MAX_SIZE
 from ai_dev_browser.core.extension import extension_dir
 
 # Shared fixture visibility must not depend on which test module pytest collects
@@ -374,7 +375,11 @@ async def live_extension(request, tmp_path, monkeypatch):
 
     bridge = _Bridge()
     server = await serve(
-        bridge.handler, "127.0.0.1", 0, start_serving=not bool(bundle_env)
+        bridge.handler,
+        "127.0.0.1",
+        0,
+        start_serving=not bool(bundle_env),
+        max_size=MAX_SIZE,
     )
     port = server.sockets[0].getsockname()[1]
     # Only the endpoint changes, isolating this test from a user's live bridge.
@@ -430,6 +435,14 @@ async def live_extension(request, tmp_path, monkeypatch):
             extra_args=[
                 f"--load-extension={copied_extension}",
                 f"--disable-extensions-except={copied_extension}",
+                *(
+                    [
+                        "--host-resolver-rules=MAP *.test 127.0.0.1",
+                        "--proxy-server=direct://",
+                    ]
+                    if request.node.get_closest_marker("extension_frames")
+                    else []
+                ),
                 "--enable-logging=file",
                 f"--log-file={tmp_path / 'extension-chrome.log'}",
                 # The owned visual fixture runs beside the user's foreground

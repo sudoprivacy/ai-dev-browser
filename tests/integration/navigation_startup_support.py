@@ -38,7 +38,7 @@ async def startup_target_journey(
     release_launch = threading.Event()
     first_request = asyncio.Event()
     release_request = asyncio.Event()
-    requests, receipts = [], []
+    requests, receipts, setup_requests = [], [], []
     browser = process = actor = root = controller = navigation = launch_task = None
     early_id = None
     real_launch = lifecycle.launch_chrome
@@ -68,9 +68,17 @@ async def startup_target_journey(
         receipts.append(value)
         return web.json_response(value)
 
+    async def network_ready(request):
+        setup_requests.append(request.path)
+        return web.Response(
+            text='<title>Network ready</title><h1 id="network-ready">Ready</h1>',
+            content_type="text/html",
+        )
+
     app = web.Application()
     app.router.add_get("/first", page)
     app.router.add_post("/receipt", receipt)
+    app.router.add_get("/network-ready", network_ready)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)
@@ -78,6 +86,7 @@ async def startup_target_journey(
     url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}/first"
 
     def launch(**options):
+        nonlocal process
         options["extra_args"] = [
             *(options.get("extra_args") or []),
             f"--log-net-log={folder / 'startup-netlog.json'}",
@@ -85,11 +94,22 @@ async def startup_target_journey(
             "--trace-startup-duration=10",
             "--trace-startup-format=json",
             f"--trace-startup-file={folder / 'startup-trace.json'}",
+            "--enable-logging",
+            f"--log-file={folder / 'chrome.log'}",
         ]
         owned = real_launch(**options)
-        loop.call_soon_threadsafe(announced.set_result, (owned, options["port"]))
-        if not release_launch.wait(10):
-            raise TimeoutError("Startup actor was not prepared")
+        process = owned
+        preparation_deadline = loop.time() + 10
+
+        def announce():
+            if not announced.done():
+                announced.set_result((owned, options["port"], preparation_deadline))
+
+        loop.call_soon_threadsafe(announce)
+        # The async preparation owns the same ten-second deadline. Its finally
+        # releases this gate, including on cancellation; a competing thread
+        # timeout must not invalidate an actor still being prepared.
+        release_launch.wait()
         return owned
 
     monkeypatch.setattr(lifecycle, "launch_chrome", launch)
@@ -103,10 +123,18 @@ async def startup_target_journey(
                 silent_stderr=True,
                 url=url if with_url else None,
                 startup_timeout=3 if slow_initial else None,
-                extra_args=["--no-sandbox"] if sys.platform == "linux" else [],
+                extra_args=(["--no-sandbox"] if sys.platform == "linux" else [])
+                + (
+                    # Match the existing owned visual fixtures: another desktop
+                    # window must not suspend this test browser's compositor.
+                    # Native occlusion behavior has its own unmodified tests.
+                    ["--disable-backgrounding-occluded-windows"]
+                    if sys.platform == "win32" and not headless
+                    else []
+                ),
             )
         )
-        process, port = await asyncio.wait_for(announced, 10)
+        process, port, preparation_deadline = await asyncio.wait_for(announced, 10)
         async with aiohttp.ClientSession() as http:
 
             async def identity():
@@ -118,38 +146,68 @@ async def startup_target_journey(
                 except aiohttp.ClientError:
                     return None
 
-            version = await wait_for(identity, bool, timeout=10)
-            root = CDP(
-                await http.ws_connect(version["webSocketDebuggerUrl"]),
-                on_event=lambda method, params: timeline.append(
-                    {"source": "browser", "method": method, "params": params}
-                ),
+            async def prepare_actor():
+                nonlocal root, actor, early_id
+                version = await wait_for(identity, bool, timeout=10)
+                root = CDP(
+                    await http.ws_connect(version["webSocketDebuggerUrl"]),
+                    on_event=lambda method, params: timeline.append(
+                        {"source": "browser", "method": method, "params": params}
+                    ),
+                )
+                await root.call("Target.setDiscoverTargets", {"discover": True})
+                pages = (await root.call("Target.getTargets"))["targetInfos"]
+                pages = [item for item in pages if item["type"] == "page"]
+                # This independent actor owns its early page and can finish
+                # startup later, while the SDK uses a different owned target.
+                early_id = (
+                    pages[0]["targetId"]
+                    if pages
+                    else (
+                        await root.call("Target.createTarget", {"url": "about:blank"})
+                    )["targetId"]
+                )
+                actor = CDP(
+                    await http.ws_connect(
+                        f"ws://127.0.0.1:{port}/devtools/page/{early_id}"
+                    ),
+                    on_event=lambda method, params: timeline.append(
+                        {"target": early_id, "method": method, "params": params}
+                    ),
+                )
+                await actor.call("Page.enable")
+                await wait_for(
+                    lambda: actor.js(
+                        "performance.getEntriesByType('navigation').some("
+                        "n => n.name && n.domContentLoadedEventEnd > 0)"
+                    ),
+                    bool,
+                    timeout=10,
+                )
+                timeline.append({"phase": "actor-document-ready"})
+                if slow_initial:
+                    # A CookieManager request on the cold actor itself timed
+                    # out in Windows CI. Observe a real independent response
+                    # before starting the three-second held-document scenario.
+                    warmup = await actor.call(
+                        "Page.navigate",
+                        {"url": url.replace("/first", "/network-ready")},
+                    )
+                    assert not warmup.get("errorText"), warmup
+                    await actor.wait_navigation(warmup, timeout=10)
+                    assert (
+                        await actor.js(
+                            "document.querySelector('#network-ready')?.textContent"
+                        )
+                        == "Ready"
+                    )
+                    assert setup_requests == ["/network-ready"]
+                    timeline.append({"phase": "actor-network-response-ready"})
+                return version
+
+            version = await asyncio.wait_for(
+                prepare_actor(), max(0.0, preparation_deadline - loop.time())
             )
-            await root.call("Target.setDiscoverTargets", {"discover": True})
-            pages = (await root.call("Target.getTargets"))["targetInfos"]
-            pages = [item for item in pages if item["type"] == "page"]
-            # Arrange a real early Chrome page before high-level startup resumes.
-            # This actor owns that page and can finish its own startup later.
-            early_id = (
-                pages[0]["targetId"]
-                if pages
-                else (await root.call("Target.createTarget", {"url": "about:blank"}))[
-                    "targetId"
-                ]
-            )
-            actor = CDP(
-                await http.ws_connect(
-                    f"ws://127.0.0.1:{port}/devtools/page/{early_id}"
-                ),
-                on_event=lambda method, params: timeline.append(
-                    {"target": early_id, "method": method, "params": params}
-                ),
-            )
-            await actor.call("Page.enable")
-            if slow_initial:
-                # Isolate the short document timeout from cold network setup.
-                # The public startup clock begins after this launch gate opens.
-                await actor.call("Network.getCookies", {"urls": [url]})
             release_launch.set()
             if with_url:
                 await asyncio.wait_for(first_request.wait(), 10)
@@ -218,6 +276,21 @@ async def startup_target_journey(
                 lambda state: bool(state["receipt"]),
             )
             assert receipts == [{"name": "Startup accepted", "trusted": True}]
+            timeline.append(
+                {
+                    "phase": "input-verified-before-capture",
+                    "window": window,
+                    "interaction": interaction,
+                    "viewport": await owned.evaluate(
+                        "({width:innerWidth,height:innerHeight,"
+                        "deviceScale:devicePixelRatio,screenWidth:screen.width,"
+                        "screenHeight:screen.height,"
+                        "paints:performance.getEntriesByType('paint').map("
+                        "p=>({name:p.name,start:p.startTime}))})",
+                        return_by_value=True,
+                    ),
+                }
+            )
             await page_screenshot(
                 owned, path=str(folder / "startup-target-accepted.png")
             )
@@ -236,6 +309,7 @@ async def startup_target_journey(
                         "window": window,
                         "interaction": interaction,
                         "requests": requests,
+                        "setup_requests": setup_requests,
                         "trusted_input": trust,
                         "receipts": receipts,
                     },
@@ -253,17 +327,23 @@ async def startup_target_journey(
             outcome = await asyncio.gather(navigation, return_exceptions=True)
             if isinstance(outcome[0], BaseException):
                 timeline.append({"phase": "navigation-error", "error": str(outcome[0])})
+        launch_result = None
         if launch_task:
             outcome = await asyncio.gather(launch_task, return_exceptions=True)
             if isinstance(outcome[0], dict):
-                browser = outcome[0]
+                launch_result = outcome[0]
+                if browser is None:
+                    browser = launch_result
         (folder / "startup-target-observations-evidence.json").write_text(
             json.dumps(
                 {
                     "browser": browser,
+                    "launch_result": launch_result,
                     "http_requests": requests,
+                    "setup_requests": setup_requests,
                     "receipts": receipts,
                     "failure": str(failure) if failure else None,
+                    "failure_type": type(failure).__name__ if failure else None,
                     "timeline": timeline,
                 },
                 indent=2,

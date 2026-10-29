@@ -16,9 +16,175 @@ import pytest
 import websockets
 
 from ai_dev_browser.cdp import runtime, target as cdp_target
-from ai_dev_browser.core._transport import CDPConnection, ProtocolException
+from ai_dev_browser.core._transport import MAX_SIZE, CDPConnection, ProtocolException
 from ai_dev_browser.core.connection import BrowserClient, get_active_tab
 from ai_dev_browser.core.ext_bridge import run_bridge
+
+
+async def test_bridge_preserves_large_replies_and_dom_events():
+    """Real WS frames carry review metadata above the default server limit."""
+    server, bridge = await run_bridge(0)
+    port = server.sockets[0].getsockname()[1]
+    payload = "x" * (5 * 1024 * 1024)
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as extension:
+            await extension.send(json.dumps({"_hello": True}))
+
+            async def announced():
+                while bridge.extension is None:
+                    await asyncio.sleep(0.01)
+
+            await asyncio.wait_for(announced(), 3)
+            async with websockets.connect(
+                f"ws://127.0.0.1:{port}/devtools/page/11", max_size=MAX_SIZE
+            ) as driver:
+                await driver.send(json.dumps({"id": 1, "method": "Runtime.evaluate"}))
+                request = json.loads(await asyncio.wait_for(extension.recv(), 3))
+                await extension.send(
+                    json.dumps({"_gid": request["_gid"], "result": {"value": payload}})
+                )
+                reply = json.loads(await asyncio.wait_for(driver.recv(), 3))
+                assert reply == {"id": 1, "result": {"value": payload}}
+                await extension.send(
+                    json.dumps(
+                        {
+                            "_event_tab": "11",
+                            "method": "DOM.attributeModified",
+                            "params": {"nodeId": 2, "name": "srcdoc", "value": payload},
+                        }
+                    )
+                )
+                event = json.loads(await asyncio.wait_for(driver.recv(), 3))
+                assert event["method"] == "DOM.attributeModified"
+                assert event["params"]["value"] == payload
+                assert bridge.extension is not None
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_bridge_preserves_child_sessions_without_cross_tab_events():
+    server, bridge = await run_bridge(0)
+    port = server.sockets[0].getsockname()[1]
+    seen = []
+
+    async def extension():
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            await ws.send(json.dumps({"_hello": True, "session_id": "frame-fixture"}))
+            pending = []
+            async for raw in ws:
+                command = json.loads(raw)
+                seen.append(command)
+                if command["params"].get("expression") == "disconnect":
+                    await ws.close()
+                    return
+                if len(seen) <= 2:
+                    pending.append(command)
+                    if len(pending) < 2:
+                        continue
+                    for item in reversed(pending):
+                        await ws.send(
+                            json.dumps(
+                                {
+                                    "_gid": item["_gid"],
+                                    "result": {"child": item["sessionId"]},
+                                }
+                            )
+                        )
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "_event_tab": "11",
+                                "sessionId": "child-a",
+                                "method": "Runtime.consoleAPICalled",
+                                "params": {"marker": "only-first-tab"},
+                            }
+                        )
+                    )
+                else:
+                    await ws.send(
+                        json.dumps(
+                            {"_gid": command["_gid"], "result": {"barrier": True}}
+                        )
+                    )
+
+    task = asyncio.create_task(extension())
+    try:
+        async with asyncio.timeout(5):
+            while bridge.extension is None:
+                await asyncio.sleep(0.01)
+        async with (
+            websockets.connect(f"ws://127.0.0.1:{port}/devtools/page/11") as first,
+            websockets.connect(f"ws://127.0.0.1:{port}/devtools/page/22") as second,
+        ):
+            for driver, session in ((first, "child-a"), (second, "child-b")):
+                await driver.send(
+                    json.dumps(
+                        {
+                            "id": 7,
+                            "sessionId": session,
+                            "method": "Runtime.evaluate",
+                            "params": {"expression": "read"},
+                        }
+                    )
+                )
+            assert json.loads(await first.recv()) == {
+                "id": 7,
+                "sessionId": "child-a",
+                "result": {"child": "child-a"},
+            }
+            assert json.loads(await second.recv()) == {
+                "id": 7,
+                "sessionId": "child-b",
+                "result": {"child": "child-b"},
+            }
+            event = json.loads(await first.recv())
+            assert event == {
+                "method": "Runtime.consoleAPICalled",
+                "params": {"marker": "only-first-tab"},
+                "sessionId": "child-a",
+            }
+            # The ordered acknowledgement follows event dispatch. The other
+            # tab must receive its response without an intervening child event.
+            await second.send(
+                json.dumps(
+                    {
+                        "id": 8,
+                        "method": "Runtime.evaluate",
+                        "params": {"expression": "barrier"},
+                    }
+                )
+            )
+            assert json.loads(await second.recv()) == {
+                "id": 8,
+                "result": {"barrier": True},
+            }
+            assert {(item["tab"], item["sessionId"]) for item in seen[:2]} == {
+                ("11", "child-a"),
+                ("22", "child-b"),
+            }
+            await first.send(
+                json.dumps(
+                    {
+                        "id": 9,
+                        "sessionId": "child-a",
+                        "method": "Runtime.evaluate",
+                        "params": {"expression": "disconnect"},
+                    }
+                )
+            )
+            failure = json.loads(await first.recv())
+            assert failure == {
+                "id": 9,
+                "sessionId": "child-a",
+                "error": {"message": "extension disconnected"},
+            }
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        server.close()
+        await server.wait_closed()
 
 
 async def _fake_extension(port: int, ready: asyncio.Event, seen: list):
