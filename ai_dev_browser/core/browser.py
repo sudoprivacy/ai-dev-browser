@@ -939,7 +939,8 @@ async def browser_connect(
     extension gets a dedicated automation tab and follows its OAuth children;
     unrelated user tabs are excluded. profile_id identifies an extension
     installation in a profile even when account is absent. session_id identifies
-    this Chrome run across worker/bridge reconnects. Physical profile path and
+    this authorization across worker/bridge reconnects. Explicit human recovery
+    starts a new session in the same profile. Physical profile path and
     PID are unknown for a browser adb did not launch; unknown fields stay null.
     Use browser_list for OS inventory. A newly installed/reloaded extension
     may need a few seconds to dial the local bridge, which auto-starts.
@@ -952,8 +953,10 @@ async def browser_connect(
     does not reload Chrome's extension. Ordinary extension reload can reset
     control: inspect the session and original owned page before further input.
     A non-null extension_warning means the runtime version is unknown or differs
-    from the bundle: follow its update/reload steps before input. connected=true
-    confirms the connection; actual visibility/readiness comes from window_set.
+    from the bundle: follow its update/reload steps before input. For extension,
+    connected=true requires the dedicated page to exist. bridge_connected alone
+    means the extension is reachable; page_available reports the dedicated page.
+    Use window_set to verify actual foreground visibility.
 
     Args:
         transport: "cdp" (default, existing debug Chrome) or "extension"
@@ -968,6 +971,7 @@ async def browser_connect(
 
     Returns:
         dict with connected, transport, session_id, capabilities, profile_id,
+        bridge_connected and page_available for extension,
         owner, profile_owner, actual headless (null if unknown), account for
         extension, port for CDP, tabs and tab_count. Includes version/git_commit
         and loaded/bundled extension versions with their observed match status.
@@ -981,6 +985,12 @@ async def browser_connect(
         A missing CDP Chrome needs an explicit start request or a corrected port.
         session_changed/target_closed require inspecting the actual state and an
         explicit decision; never restart, switch profile/transport or replay input.
+        auth_failed with details.state=revoked reports stored debugger revocation;
+        its reason/time may predate this request. Ask the human to click the
+        AI Dev Browser extension toolbar action in that same Chrome profile
+        (Extensions menu if unpinned), which authorizes a fresh visible blank
+        page. Then browser_connect --transport extension returns a new session_id.
+        This recovery requires the updated bundled extension; read extension_warning.
     """
     if headless is not None:
         return _session.failure(
@@ -1013,7 +1023,7 @@ async def browser_connect(
                 transport="extension",
             )
         from .ext_bridge import ensure_bridge_running, wait_for_extension
-        from .connection import connect_extension
+        from .connection import connect_extension, _require_extension_page
 
         connection_deadline = time.monotonic() + timeout
         if not ensure_bridge_running(timeout=timeout):
@@ -1070,7 +1080,7 @@ async def browser_connect(
         ):
             return _session.failure(
                 "session_changed",
-                "The connected extension is a different Chrome run/profile. No input was replayed",
+                "The connected Chrome/profile authorization differs from the requested session. No input was replayed",
                 session_id=session_id,
                 actual_session_id=identity,
                 actual_profile_id=status["profile_id"],
@@ -1085,16 +1095,21 @@ async def browser_connect(
                 "owner": "external",
                 "profile_owner": "user",
             }
+        main = status.get("automation_target_id")
+        previous_main = record.get("automation_target_id")
+        record.update(
+            {
+                "profile_id": status["profile_id"],
+                "browser_version": status.get("browser_version"),
+                **extension_version_info(status.get("extension_version")),
+            }
+        )
+        record.setdefault("automation_target_id", main)
+        _session.write(record)
+        tabs = []
+        browser = None
         try:
-            browser = await connect_extension(session_id=session_id)
-        except Exception as error:
-            return _session.failure(
-                getattr(error, "error_code", "transient"),
-                str(error),
-                session_id=session_id,
-                transport="extension",
-            )
-        try:
+            browser = await connect_extension()
             tabs = [
                 {"tab_id": str(t._target.target_id), "url": t._target.url or ""}
                 for t in browser.tabs
@@ -1102,19 +1117,38 @@ async def browser_connect(
             loaded_version = await query_extension_version(
                 browser, status.get("extension_version")
             )
-        finally:
-            await browser.close()
-        main = status.get("automation_target_id")
-        if expected and expected.get("automation_target_id") != main:
-            return _session.failure(
-                "target_closed",
-                "Original automation tab was closed or detached; a new blank tab is not continuation of its page state. Inspect and choose explicitly",
-                session_id=session_id,
-                actual_automation_target_id=main,
-                transport="extension",
-                tabs=tabs,
+            record.update(extension_version_info(loaded_version))
+            await _require_extension_page(
+                browser, expected.get("automation_target_id") if expected else main
             )
-        previous_main = record.get("automation_target_id")
+            if expected and expected.get("automation_target_id") != main:
+                from .errors import SessionError
+
+                raise SessionError(
+                    "Original automation page changed; inspect current state",
+                    "target_closed",
+                )
+        except Exception as error:
+            hint = getattr(error, "hint", None)
+            return _session.failure(
+                getattr(error, "error_code", "transient"),
+                str(error),
+                **_session.describe(record),
+                bridge_connected=True,
+                page_available=False,
+                tabs=[t["url"] for t in tabs],
+                targets=[
+                    {"index": i, "target_id": t["tab_id"], "url": t["url"]}
+                    for i, t in enumerate(tabs)
+                ],
+                tab_count=len(tabs),
+                details=getattr(error, "details", None),
+                **({"hint": hint} if hint else {}),
+                **_build_info(),
+            )
+        finally:
+            if browser is not None:
+                await browser.close()
         record.update(
             {
                 "profile_id": status["profile_id"],
@@ -1127,6 +1161,8 @@ async def browser_connect(
         return {
             **_session.describe(record),
             "connected": True,
+            "bridge_connected": True,
+            "page_available": True,
             "account": status.get("account"),
             "bridge_port": EXTENSION_BRIDGE_PORT,
             "tabs": [t["url"] for t in tabs],
@@ -1236,10 +1272,14 @@ async def browser_reconnect(session_id: str, timeout: float = 10.0) -> dict:
         dict with reconnected, connected, session_id, actual capabilities and tabs.
 
     Failure:
-        session_changed means the original browser/profile is gone or replaced;
+        session_changed means the browser, profile or authorization changed;
         target_closed means its original page is gone. Inspect actual state and
         request a new session explicitly. Missing extension needs the configured
         profile running and its bridge enabled. Do not replay input or restart.
+        auth_failed with a revoked state needs the human to click the AI Dev
+        Browser extension toolbar action in the same profile, then call
+        browser_connect --transport extension for the fresh session_id.
+        Stored revocation reason/time describe history, not necessarily this call.
     """
     record = _session.read(session_id)
     result = await browser_connect(

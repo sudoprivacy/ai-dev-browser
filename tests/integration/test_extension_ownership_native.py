@@ -3,7 +3,7 @@
 AUTO-GENERATED - DO NOT EDIT
 
 This file was auto-generated from SKILL.md by integration-test-generator.
-Generated: 2026-10-19 10:14:14
+Generated: 2026-10-29 15:37:13
 
 To modify test behavior:
   1. Update SKILL.md with better workflow examples
@@ -15,7 +15,7 @@ Coverage: 1/1 real workflows (100%)
 Identified using AI scenario recognition with complete code generation
 
 Coverage Report:
-  ✅ Open owned page -> activate its native window -> click Chrome Cancel banner through X11 -> observe canceled_by_user -> refuse same Tab and fresh CLI input -> reconnect -> restart worker -> keep revocation
+  ✅ Authenticate dedicated main page -> preserve unrelated tab -> click Chrome Cancel through native X11 -> refuse input -> close revoked main -> restart worker -> compare real CLI connect/reconnect/navigation/new-tab errors and stored event time -> invoke native extension shortcut -> fresh visible blank page and new session in same profile -> fence old drivers -> read authenticated HTTP state without submitting -> keep unrelated tab and healthy action idempotent
 
 Uncovered workflows: None
 """
@@ -59,14 +59,14 @@ async def test_real_extension_native_consent_revocation(live_extension, tmp_path
     """
     Real scenario: Honor real Chrome native debugger cancellation across reconnect and worker restart
 
-    Workflow: Open owned page -> activate its native window -> click Chrome Cancel banner through X11 -> observe canceled_by_user -> refuse same Tab and fresh CLI input -> reconnect -> restart worker -> keep revocation
+    Workflow: Authenticate dedicated main page -> preserve unrelated tab -> click Chrome Cancel through native X11 -> refuse input -> close revoked main -> restart worker -> compare real CLI connect/reconnect/navigation/new-tab errors and stored event time -> invoke native extension shortcut -> fresh visible blank page and new session in same profile -> fence old drivers -> read authenticated HTTP state without submitting -> keep unrelated tab and healthy action idempotent
 
     User problem: A user's explicit cancellation must never be undone by automatic recovery or implicit page creation.
 
     Data flow:
-      1. Click real native Cancel and verify protocol, CLI, persistence and screenshots
+      1. Click real native Cancel, close and restart, then explicitly authorize through Chrome and inspect same-profile authenticated read and screenshots
     """
-    # Step 1: Click real native Cancel and verify protocol, CLI, persistence and screenshots
+    # Step 1: Click real native Cancel, close and restart, then explicitly authorize through Chrome and inspect same-profile authenticated read and screenshots
     await cancellation_journey(live_extension, tmp_path)
 
 

@@ -5,6 +5,62 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const event = () => ({ handlers: [], addListener(fn) { this.handlers.push(fn); } });
+
+test('closing a revoked main preserves consent across restore and every implicit creation route', async () => {
+  const { chrome, tabs, run, saved } = await fixture();
+  run('claim(11); mainTabId=11; forget(11, "revoked", {reason:"canceled_by_user"})');
+  const time = run('ownershipError(11).ownership.time');
+  tabs.delete(11);
+  await chrome.tabs.onRemoved.handlers[0](11);
+  assert.equal(run('mainTabId'), 11);
+  assert.equal(run('ownershipError(11).ownership.time'), time);
+  assert.equal(run('ownershipError(11).ownership.reason'), 'canceled_by_user');
+  const restored = await fixture(saved);
+  await assert.rejects(restored.run('ensureDedicatedTab()'), /revoked/);
+  await assert.rejects(restored.run("browserLevel('Target.createTarget', {url:'about:blank'})"), /revoked/);
+  await assert.rejects(restored.run(`adoptLaunch({id:12,url:'about:blank#adb-launch=${'0'.repeat(32)}'})`), /revoked/);
+  assert.equal(restored.run('mainTabId'), 11);
+  assert.equal(restored.run('autoTabs.size'), 0);
+});
+
+test('human action creates a fresh visible authorization; a healthy action reuses it', async () => {
+  const { chrome, tabs, windows, run, saved } = await fixture();
+  assert.equal(chrome.action.onClicked.handlers.length, 1);
+  run('claim(11); mainTabId=11; forget(11, "revoked", {reason:"canceled_by_user"})');
+  const oldIdentity = run('sessionId');
+  let created = 0;
+  chrome.windows.getAll = async () => [...windows.values()];
+  chrome.tabs.create = async options => {
+    created++;
+    const tab = {id:201, windowId:options.windowId, url:options.url};
+    tabs.set(tab.id, tab);
+    return tab;
+  };
+  chrome.tabs.update = async (id, changes) => Object.assign(tabs.get(id), changes);
+  await run('onToolbarAction()');
+  const fresh = run('sessionId');
+  assert.notEqual(fresh, oldIdentity);
+  assert.equal(saved.adbSessionId, fresh);
+  assert.equal(run('profileId'), 'profile');
+  assert.equal(run('mainTabId'), 201);
+  assert.equal(run('revokedTabs.has(11) && !autoTabs.has(11) && !autoTabs.has(99)'), true);
+  assert.equal(tabs.get(201).url, 'about:blank');
+  assert.equal(tabs.get(201).active, true);
+  assert.equal(windows.get(101).focused, true);
+  assert.equal(tabs.has(11) && tabs.has(99), true);
+  await run('onToolbarAction()');
+  assert.equal(created, 1);
+  assert.equal(run('sessionId'), fresh);
+});
+
+for (const history of [[], [{event:'revoked', tabId:11, time:123456789, reason:'canceled_by_user'}]]) {
+  test(`legacy revocation time is ${history.length ? 'proven by stored history' : 'unknown without evidence'}`, async () => {
+    const {run} = await fixture({adbMainTabId:11, adbRevokedTabs:[11],
+      adbTabStates:[[11,{state:'revoked', reason:'canceled_by_user'}]], adbOwnershipLog:history});
+    assert.equal(run('ownershipError(11).ownership.time'), history.length ? 123456789 : null);
+  });
+}
+
 async function fixture(saved = {}, beforeRestore = null) {
   const tabs = new Map([[11, { id: 11, url: 'https://neutral.test/consent?secret=yes#token' }], [12, { id: 12, url: 'https://neutral.test/result' }], [99, { id: 99, url: 'https://neutral.test/private' }]]);
   for (const [id, tab] of tabs) tab.windowId = id === 99 ? 102 : 101;
@@ -19,7 +75,7 @@ async function fixture(saved = {}, beforeRestore = null) {
       session: { get: async () => saved, set: async data => Object.assign(saved, structuredClone(data)) },
       managed: { get: async () => ({ ManagedBrowserProfile: false }) }, onChanged: event() },
     runtime: { getManifest: () => ({ version: 'test' }), onStartup: event(), onInstalled: event() },
-    action: { setBadgeText() {}, setBadgeBackgroundColor() {} },
+    action: { onClicked: event(), setBadgeText() {}, setBadgeBackgroundColor() {} },
     webNavigation: { onCreatedNavigationTarget: event() },
   };
   const ctx = vm.createContext({ chrome, console, URL, crypto: require('node:crypto').webcrypto,

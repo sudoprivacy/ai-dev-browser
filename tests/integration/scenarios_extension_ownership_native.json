@@ -15,7 +15,7 @@
     {
       "name": "real_extension_native_consent_revocation",
       "title": "Honor real Chrome native debugger cancellation across reconnect and worker restart",
-      "workflow": "Open owned page -> activate its native window -> click Chrome Cancel banner through X11 -> observe canceled_by_user -> refuse same Tab and fresh CLI input -> reconnect -> restart worker -> keep revocation",
+      "workflow": "Authenticate dedicated main page -> preserve unrelated tab -> click Chrome Cancel through native X11 -> refuse input -> close revoked main -> restart worker -> compare real CLI connect/reconnect/navigation/new-tab errors and stored event time -> invoke native extension shortcut -> fresh visible blank page and new session in same profile -> fence old drivers -> read authenticated HTTP state without submitting -> keep unrelated tab and healthy action idempotent",
       "user_problem": "A user's explicit cancellation must never be undone by automatic recovery or implicit page creation.",
       "async": true,
       "fixtures": [
@@ -24,7 +24,7 @@
       ],
       "steps": [
         {
-          "description": "Click real native Cancel and verify protocol, CLI, persistence and screenshots",
+          "description": "Click real native Cancel, close and restart, then explicitly authorize through Chrome and inspect same-profile authenticated read and screenshots",
           "raw_code": [
             "await cancellation_journey(live_extension, tmp_path)"
           ]

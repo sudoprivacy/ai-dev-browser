@@ -668,6 +668,41 @@ async def get_active_tab(
     return await _prepared(await browser.get("about:blank"))
 
 
+async def _require_extension_page(browser: BrowserClient, target_id: str | None):
+    """Check the selected identity without creating or adopting a page."""
+    if target_id and target_id in {str(tab.target_id) for tab in browser.tabs}:
+        return
+    from .cdp import _get_cdp_command
+    from ._transport import OwnershipProtocolError
+
+    if target_id:
+        # Preserve Chrome's authoritative revoked/replaced/closed distinction.
+        await browser.connection.send(
+            cdp_target.get_target_info(cdp_target.TargetID(target_id))
+        )
+    state = await browser.connection.send(
+        _get_cdp_command("AiDevBrowser.debugState", {})
+    )
+    main = state.get("mainTabId")
+    if main is not None:
+        await browser.connection.send(
+            cdp_target.get_target_info(cdp_target.TargetID(str(main)))
+        )
+    raise OwnershipProtocolError(
+        {
+            "message": "The original automation page is unavailable; inspect state before starting a new session",
+            "data": {
+                "adbOwnership": {
+                    "state": "closed",
+                    "target_id": target_id,
+                    "target_states": state.get("targetStates", []),
+                    "ownership_log": state.get("ownershipLog", []),
+                }
+            },
+        }
+    )
+
+
 async def connect_extension(session_id: str | None = None) -> BrowserClient:
     """Attach to the user's REAL browser via the bridge extension.
 
@@ -726,11 +761,6 @@ async def connect_extension(session_id: str | None = None) -> BrowserClient:
             raise SessionError(
                 "Connected Chrome/profile differs from the requested session; no input replayed"
             )
-        if expected.get("automation_target_id") != status.get("automation_target_id"):
-            raise SessionError(
-                "Original automation tab was closed or detached; inspect current state",
-                "target_closed",
-            )
     try:
         # The bridge serves no HTTP; hand BrowserClient the fixed browser-level
         # WS URL so it skips /json/version discovery. Everything else is the
@@ -748,14 +778,21 @@ async def connect_extension(session_id: str | None = None) -> BrowserClient:
         browser._automation_target_id = (
             expected.get("automation_target_id") if session_id else None
         )
-        if session_id and expected.get("automation_target_id") not in {
-            str(t._target.target_id) for t in browser.tabs
-        }:
-            await browser.close()
-            raise SessionError(
-                "Original automation target is closed; inspect current state",
-                "target_closed",
-            )
+        if session_id:
+            try:
+                await _require_extension_page(
+                    browser, expected.get("automation_target_id")
+                )
+                if expected.get("automation_target_id") != status.get(
+                    "automation_target_id"
+                ):
+                    raise SessionError(
+                        "Original automation page changed; inspect current state",
+                        "target_closed",
+                    )
+            except Exception:
+                await browser.close()
+                raise
         return browser
     except Exception as e:
         if getattr(e, "error_code", None):

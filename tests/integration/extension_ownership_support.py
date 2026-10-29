@@ -241,14 +241,33 @@ await fetch('/receipt',{{method:'POST',headers:{{'Content-Type':'application/jso
 async def cancellation_journey(extension, folder):
     """Click Chrome's real Cancel banner in an isolated X11 display."""
     from PIL import ImageGrab, ImageFilter
+    from tests.integration.browser_lifecycle_support import (
+        LifecycleCLI,
+        LifecycleServer,
+    )
 
     assert os.environ.get("DISPLAY") and shutil.which("xdotool")
+    server = LifecycleServer()
+    lifecycle = LifecycleCLI(
+        folder, AI_DEV_BROWSER_EXTENSION_BRIDGE_PORT=str(extension.port)
+    )
+
+    async def call(tool, *args, exit_code=0):
+        return await asyncio.to_thread(lifecycle, tool, *args, exit_code=exit_code)
+
+    initial = await call("browser_connect", "--transport", "extension")
+    identity = initial["session_id"]
     browser = await connect(extension)
     try:
-        tab = await browser.get(
-            "data:text/html,<title>Owned revocation fixture</title><h1>Cancel permission</h1>"
-        )
+        tab = await get_active_tab(browser)
         tid = str(tab.target_id)
+        assert tid == initial["automation_target_id"]
+        await tab.get(server.url + "/login")
+        await wait_until(lambda: tab.evaluate("window.serverState?.logged_in"), bool)
+        sentinel = await worker_call(
+            extension,
+            f"chrome.tabs.create({{url:{json.dumps(server.url + '/sentinel')},active:false}}).then(t=>t.id)",
+        )
         await tab.activate()
 
         async def native(*args):
@@ -269,7 +288,7 @@ async def cancellation_journey(extension, folder):
                 "--pid",
                 str(extension.chrome_pid),
                 "--name",
-                "Owned revocation fixture",
+                "Browser lifecycle acceptance",
             )
         ).splitlines()[0]
         await native("windowactivate", "--sync", window)
@@ -342,12 +361,121 @@ async def cancellation_journey(extension, folder):
             and refused["details"]["state"] == "revoked"
         )
         assert not browser.tabs
+        before_close = await call(
+            "browser_connect", "--transport", "extension", exit_code=7
+        )
+        assert not before_close["connected"] and before_close["bridge_connected"]
+        assert not before_close["page_available"] and before_close["tab_count"] == 0
+        assert before_close["details"]["state"] == "revoked"
+        revoked_at = before_close["details"]["time"]
+        assert isinstance(revoked_at, int) and revoked_at > 0
+        await worker_call(extension, f"chrome.tabs.remove({int(tid)})")
+        closed = await state()
+        assert closed["mainTabId"] == int(tid)
         await browser.close()
         await extension.restart_worker()
         browser = await connect(extension)
         after = await state()
         assert int(tid) not in after["autoTabs"] and int(tid) not in after["attached"]
         assert not browser.tabs
+        for tool, arguments in (
+            ("browser_connect", ("--transport", "extension")),
+            ("browser_reconnect", ("--session-id", identity)),
+            ("page_goto", ("--session-id", identity, "--url", server.url + "/login")),
+            ("tab_new", ("--transport", "extension", "--url", server.url + "/login")),
+        ):
+            result = await call(tool, *arguments, exit_code=7)
+            assert result["error_code"] == "auth_failed" and not result["retryable"]
+            assert result["details"]["state"] == "revoked"
+            assert result["details"]["time"] == revoked_at
+            assert "toolbar" in result["hint"] and "histor" in result["hint"]
+        with pytest.raises(OwnershipProtocolError):
+            await browser.connection.send(
+                _get_cdp_command("Target.createTarget", {"url": server.url + "/login"})
+            )
+        only_sentinel = await worker_call(
+            extension, "chrome.tabs.query({}).then(tabs=>tabs.map(t=>t.id))"
+        )
+        assert only_sentinel == [sentinel]
+
+        # A native Chrome action, never worker JS or a protocol reauthorization.
+        await native("key", "--clearmodifiers", "ctrl+shift+y")
+
+        async def recovered_identity():
+            return dict(extension.bridge.identity)
+
+        recovered = await wait_until(
+            recovered_identity,
+            lambda value: value.get("session_id") != identity.removeprefix("extension-")
+            and value.get("automation_target_id") not in (None, tid),
+        )
+        fresh = await call("browser_connect", "--transport", "extension")
+        assert fresh["automation_target_id"] == recovered["automation_target_id"]
+        assert (
+            fresh["connected"] and fresh["page_available"] and fresh["tab_count"] == 1
+        )
+        assert (
+            fresh["profile_id"] == initial["profile_id"]
+            and fresh["session_id"] != identity
+        )
+        assert fresh["tabs"] == ["about:blank"]
+        old = await call("browser_reconnect", "--session-id", identity, exit_code=5)
+        assert old["error_code"] == "session_changed"
+        # Already-open driver connections are fenced too.
+        from ai_dev_browser.core._transport import ProtocolException
+
+        with pytest.raises(ProtocolException, match="session changed"):
+            await browser.connection.send(_get_cdp_command("Target.getTargets", {}))
+        await browser.close()
+        browser = await connect(extension)
+        fresh_tab = await get_active_tab(browser)
+        assert await fresh_tab.evaluate("document.visibilityState") == "visible"
+        ImageGrab.grab().save(folder / "recovery-blank.png")
+        await call(
+            "page_goto", "--session-id", fresh["session_id"], "--url", server.url + "/"
+        )
+        await wait_until(
+            lambda: fresh_tab.evaluate("window.serverState?.logged_in"), bool
+        )
+        authenticated = await call(
+            "js_evaluate",
+            "--session-id",
+            fresh["session_id"],
+            "--expression",
+            "window.serverState",
+        )
+        assert authenticated["result"] == {
+            "logged_in": True,
+            "approvals": [],
+            "submissions": [],
+        }
+        assert not server.attempts
+        untouched = await worker_call(
+            extension,
+            f"chrome.tabs.get({sentinel}).then(t=>({{id:t.id,url:t.url,title:t.title}}))",
+        )
+        assert untouched == {
+            "id": sentinel,
+            "url": server.url + "/sentinel",
+            "title": "Unrelated user tab",
+        }
+        # Clicking the healthy action again reveals the same page/session.
+        await native("key", "--clearmodifiers", "ctrl+shift+y")
+        healthy = await call("browser_connect", "--transport", "extension")
+        assert (
+            healthy["session_id"] == fresh["session_id"] and healthy["tab_count"] == 1
+        )
+        assert healthy["automation_target_id"] == fresh["automation_target_id"]
+        ImageGrab.grab().save(folder / "recovery-authenticated.png")
+        lifecycle.evidence(
+            "native-recovery",
+            initial=initial,
+            revoked=before_close,
+            recovered=fresh,
+            authenticated=authenticated,
+            unrelated=untouched,
+            post_requests=server.attempts,
+        )
         (folder / "cancel-evidence.json").write_text(
             json.dumps(
                 {
@@ -361,3 +489,4 @@ async def cancellation_journey(extension, folder):
         )
     finally:
         await browser.close()
+        server.close()

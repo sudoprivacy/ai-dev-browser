@@ -1,0 +1,19 @@
+{
+  "config": {
+    "imports": ["from tests.integration.extension_readiness_support import closed_main_journey"],
+    "call_style": "function",
+    "required_env_vars": [],
+    "smoke_test_assertions": ["callable(closed_main_journey)"]
+  },
+  "scenarios": [
+    {
+      "name": "real_extension_closed_main",
+      "title": "Report missing dedicated pages consistently across real CLI operations",
+      "workflow": "Connect through a real installed extension -> retain an unrelated page -> close the proven main target -> reconnect without creating a page -> compare connect, reconnect and navigation refusals -> preserve the unrelated page",
+      "user_problem": "Bridge liveness must not report a usable connection when its dedicated page is absent.",
+      "async": true,
+      "fixtures": ["live_extension", "tmp_path"],
+      "steps": [{"raw_code": ["await closed_main_journey(live_extension, tmp_path)"]}]
+    }
+  ]
+}
