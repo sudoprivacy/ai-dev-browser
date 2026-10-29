@@ -165,6 +165,15 @@ jobs:
         id: chrome
         with:
           chrome-version: stable
+      - name: Stage Chrome for the Windows sandbox
+        if: runner.os == 'Windows'
+        id: windows-chrome
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixture = Join-Path $env:PUBLIC "ai-dev-browser-ci-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_JOB"
+          $browser = & ./scripts/prepare-windows-chrome.ps1 -ChromePath '${{ steps.chrome.outputs.chrome-path }}' -DestinationDirectory $fixture -ReceiptPath "$env:RUNNER_TEMP/windows-chrome-staging.json"
+          "chrome-path=$browser" >> $env:GITHUB_OUTPUT
       - run: python -m pip install ".[dev,remote]"
       - name: Install the real X11 and noVNC viewer
         if: runner.os == 'Linux'
@@ -192,15 +201,21 @@ jobs:
       - name: Run page and extension workflows on Windows
         if: runner.os == 'Windows'
         env:
-          AI_DEV_BROWSER_CHROME: ${{ steps.chrome.outputs.chrome-path }}
-          AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          AI_DEV_BROWSER_CHROME: ${{ steps.windows-chrome.outputs.chrome-path }}
+          AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.windows-chrome.outputs.chrome-path }}
         run: python -m pytest -v --full-trace -o faulthandler_timeout=180 tests/integration/test_worker_frames_live.py tests/integration/test_extension_frames_live.py tests/integration/test_remote_view.py tests/integration/test_worker_page_drag_live.py tests/integration/test_discovery_socket_pressure.py tests/integration/test_remote_selection_live.py tests/integration/test_browser_control_live.py tests/integration/test_browser_session_live.py tests/integration/test_browser_files_live.py tests/integration/test_browser_worker_live.py tests/integration/test_existing_worker_live.py tests/integration/test_navigation_startup.py --basetemp remote-results
+      - name: Check Windows sandbox startup diagnostics
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/check-windows-chrome-logs.ps1 -ResultsDirectory remote-results
       - name: Retain real viewer evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: remote-view-${{ matrix.os }}
-          path: remote-results/**
+          path: |
+            remote-results/**
+            ${{ runner.temp }}/windows-chrome-staging.json
           retention-days: 7
 
   managed-extension-live:
@@ -277,9 +292,18 @@ jobs:
         id: chrome
         with:
           chrome-version: stable
+      - name: Stage Chrome for the Windows sandbox
+        if: runner.os == 'Windows'
+        id: windows-chrome
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixture = Join-Path $env:PUBLIC "ai-dev-browser-ci-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_JOB"
+          $browser = & ./scripts/prepare-windows-chrome.ps1 -ChromePath '${{ steps.chrome.outputs.chrome-path }}' -DestinationDirectory $fixture -ReceiptPath "$env:RUNNER_TEMP/windows-chrome-staging.json"
+          "chrome-path=$browser" >> $env:GITHUB_OUTPUT
       - name: Run the real extension on both WebSocket server implementations
         env:
-          AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.windows-chrome.outputs.chrome-path || steps.chrome.outputs.chrome-path }}
         run: uv run --no-sync python -m pytest -v --full-trace -o faulthandler_timeout=180 tests/integration/test_extension_frames_live.py tests/integration/test_cli_extension_workflows.py tests/integration/test_recording_workflows.py tests/integration/test_recording_demo.py tests/integration/test_browser_lifecycle.py tests/integration/test_remote_view.py tests/integration/test_extension_ownership.py tests/integration/test_cli_steering.py tests/integration/test_extension_windowless.py tests/integration/test_editor_click.py tests/integration/test_extension_readiness.py -k "real_extension or outbound_proxy" --basetemp extension-results
 
       - name: Install the unchanged released extension fixture
@@ -287,7 +311,7 @@ jobs:
 
       - name: Verify live upgrade diagnostics against the released extension
         env:
-          AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.windows-chrome.outputs.chrome-path || steps.chrome.outputs.chrome-path }}
           AI_DEV_BROWSER_TEST_PREVIOUS_EXTENSION: ${{ github.workspace }}/previous-extension-fixture/ai_dev_browser/extension
         run: uv run --no-sync python -m pytest -v tests/integration/test_extension_window_previous.py --basetemp previous-extension-results
 
@@ -296,14 +320,14 @@ jobs:
 
       - name: Recover an unknown extension runtime through an ordinary reload
         env:
-          AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.windows-chrome.outputs.chrome-path || steps.chrome.outputs.chrome-path }}
           AI_DEV_BROWSER_TEST_UNKNOWN_EXTENSION: ${{ github.workspace }}/unknown-extension-fixture/ai_dev_browser/extension
         run: uv run --no-sync python -m pytest -v tests/integration/test_extension_runtime_upgrade.py --basetemp runtime-upgrade-results
 
       - name: Honor genuine Windows window visibility before input
         if: runner.os == 'Windows'
         env:
-          AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.windows-chrome.outputs.chrome-path || steps.chrome.outputs.chrome-path }}
         run: uv run --no-sync python -m pytest -v tests/integration/test_extension_window_native.py --basetemp native-window-results
 
       - name: Install native Chrome interaction tools
@@ -327,6 +351,10 @@ jobs:
             ' _ "$backend"
           done
 
+      - name: Check Windows sandbox startup diagnostics
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/check-windows-chrome-logs.ps1 -ResultsDirectory extension-results
       - name: Retain extension recording evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -334,6 +362,7 @@ jobs:
           name: recording-extension-${{ matrix.os }}-${{ matrix.websockets }}
           retention-days: 7
           path: |
+            ${{ runner.temp }}/windows-chrome-staging.json
             extension-results/**/extension.gif
             extension-results/**/demo-frame-*.png
             extension-results/**/extension-evidence.json
