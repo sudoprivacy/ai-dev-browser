@@ -46,6 +46,7 @@ async def test_headless_page_drag_updates_pixels_before_release(
     controller, viewer = "user-page-owner", str(uuid4())
     gesture = uuid4().hex
     viewer_browser = viewer_page = viewer_runner = None
+    acknowledge_begin = asyncio.Event()
 
     def epochs(state):
         return {key: state[key] for key in ("controlEpoch", "targetEpoch")}
@@ -182,11 +183,15 @@ async def test_headless_page_drag_updates_pixels_before_release(
             )["session"]
             await host({"kind": "attach", "viewerId": viewer, "surface": "page"})
 
+            hold_begin = False
+            begin_processed = asyncio.Event()
+
             async def viewer_html(request):
                 return web.Response(
                     content_type="text/html",
                     text="""<!doctype html>
                 <img id="screen" tabindex="0" style="display:block;width:640px;touch-action:none">
+                <button id="read">Copy current position</button>
                 <script type="module">
                 import {PageSurface} from '/surface.js';
                 window.packets=[];window.errors=[];
@@ -196,6 +201,11 @@ async def test_headless_page_drag_updates_pixels_before_release(
                   if(!response.ok)throw Error(await response.text());
                   return response.json();
                 }, {drag:true,liveDrag:true,viewerId:VIEWER});
+                window.reads=[];window.readRequested=false;
+                document.querySelector('#read').onclick=()=>{
+                  readRequested=true;
+                  surface.whenIdle().then(()=>fetch('/read')).then(r=>r.json()).then(value=>reads.push(value)).catch(error=>errors.push(String(error)));
+                };
                 async function poll(){try{
                   const response=await fetch('/frame');
                   if(!response.ok)throw Error(await response.text());
@@ -208,15 +218,22 @@ async def test_headless_page_drag_updates_pixels_before_release(
                 return web.FileResponse(files("ai_dev_browser.remote") / "page_view.js")
 
             async def checked_input(request):
+                packet = await request.json()
                 value = await host(
                     {
                         "kind": "input",
                         "surface": "page",
-                        "input": await request.json(),
+                        "input": packet,
                         **epochs(state),
                     }
                 )
+                if hold_begin and packet.get("phase") == "begin":
+                    begin_processed.set()
+                    await acknowledge_begin.wait()
                 return web.json_response(value)
+
+            async def checked_read(request):
+                return web.json_response(await source())
 
             async def checked_frame(request):
                 value = await host(
@@ -236,6 +253,7 @@ async def test_headless_page_drag_updates_pixels_before_release(
                     web.get("/surface.js", surface_asset),
                     web.post("/input", checked_input),
                     web.get("/frame", checked_frame),
+                    web.get("/read", checked_read),
                 ]
             )
             viewer_runner = web.AppRunner(app)
@@ -285,8 +303,9 @@ async def test_headless_page_drag_updates_pixels_before_release(
                 lambda: viewer_page.js(
                     """(()=>{const i=document.querySelector('#screen');if(!i?.complete||!i.naturalWidth)return null;const c=document.createElement('canvas');c.width=i.naturalWidth;c.height=i.naturalHeight;const x=c.getContext('2d');x.drawImage(i,0,0);return Array.from(x.getImageData(140,110,1,1).data).slice(0,3)})()"""
                 ),
-                lambda rgb: rgb
-                and all(abs(a - b) < 12 for a, b in zip(rgb, (102, 187, 153))),
+                lambda rgb: (
+                    rgb and all(abs(a - b) < 12 for a, b in zip(rgb, (102, 187, 153)))
+                ),
             )
             held_ui = await source()
             # Scaled CSS coordinates cross CDP's floating point conversion.
@@ -310,14 +329,60 @@ async def test_headless_page_drag_updates_pixels_before_release(
             await pointer("mouseReleased", 400, 200)
             await wait_for(
                 lambda: source(),
-                lambda value: sum(e["kind"] == "pointerup" for e in value["events"])
-                == 1,
+                lambda value: (
+                    sum(e["kind"] == "pointerup" for e in value["events"]) == 1
+                ),
             )
             await wait_for(lambda: viewer_page.js("surface.gesture === null"), bool)
             metrics["packets"] = await viewer_page.js("packets")
             metrics["viewerErrors"] = await viewer_page.js("errors")
             assert not metrics["viewerErrors"]
             assert [p["phase"] for p in metrics["packets"]] == ["begin", "move", "end"]
+
+            # A completed user drag may still be waiting for the first host
+            # acknowledgement when focus moves to Copy. Keep its end and
+            # defer the read until the real browser has acknowledged release.
+            hold_begin = True
+            await viewer_page.js("packets=[]")
+            before_read = await source()
+            await pointer("mouseMoved", 500, 250)
+            await pointer("mousePressed", 500, 250)
+            await pointer("mouseMoved", 440, 225)
+            await asyncio.wait_for(begin_processed.wait(), 5)
+            await pointer("mouseReleased", 440, 225)
+            button = await viewer_page.js(
+                "document.querySelector('#read').getBoundingClientRect().toJSON()"
+            )
+            for kind in ("mouseMoved", "mousePressed", "mouseReleased"):
+                await viewer_page.call(
+                    "Input.dispatchMouseEvent",
+                    {
+                        "type": kind,
+                        "x": button["x"] + button["width"] / 2,
+                        "y": button["y"] + button["height"] / 2,
+                        "button": "left",
+                        "buttons": 1 if kind == "mousePressed" else 0,
+                        **({"clickCount": 1} if kind != "mouseMoved" else {}),
+                    },
+                )
+            await wait_for(lambda: viewer_page.js("readRequested"), bool)
+            assert await viewer_page.js("reads") == []
+            acknowledge_begin.set()
+            observed_read = await wait_for(
+                lambda: viewer_page.js("reads[0] || null"), bool
+            )
+            assert observed_read["pan"] == pytest.approx(
+                {
+                    "x": before_read["pan"]["x"] - 60,
+                    "y": before_read["pan"]["y"] - 25,
+                },
+                abs=0.0001,
+            )
+            assert sum(e["kind"] == "pointerup" for e in observed_read["events"]) == 2
+            assert all(e["trusted"] for e in observed_read["events"])
+            assert await viewer_page.js("packets.map(p=>p.phase)") == ["begin", "end"]
+            assert await viewer_page.js("errors") == []
+            metrics["releaseThenCopy"] = observed_read
             (tmp_path / "page-drag.json").write_text(json.dumps(metrics, indent=2))
         except Exception:
             if viewer_page:
@@ -339,6 +404,7 @@ async def test_headless_page_drag_updates_pixels_before_release(
                 )
             raise
         finally:
+            acknowledge_begin.set()
             try:
                 if viewer_page:
                     await viewer_page.close()
