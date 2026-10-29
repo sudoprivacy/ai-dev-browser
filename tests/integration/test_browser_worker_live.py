@@ -12,6 +12,7 @@ import pytest
 from aiohttp import web
 
 from ai_dev_browser.remote.worker import Worker, application
+from tests.integration.test_remote_view import wait_for
 
 pytest_plugins = ["tests.integration.test_remote_view"]
 
@@ -27,14 +28,22 @@ async def test_host_authorized_page_keeps_cookie_private_and_preserves_control(
         pytest.skip("Signed managed extension policy fixture required")
     credential = secrets.token_hex(32)
     reads = []
+    reload_arrived = asyncio.Event()
+    release_reload = asyncio.Event()
     app = web.Application()
 
     async def review(request):
+        if reads:
+            reload_arrived.set()
+            await release_reload.wait()
         reads.append(request.cookies.get("fixture_review"))
         if reads[-1] != credential:
             raise web.HTTPForbidden()
         return web.Response(
-            text="<title>Private review</title><p>Checked model</p>",
+            text=(
+                "<title>Private review</title>"
+                f'<p id="review" data-visit="{len(reads)}">Checked model</p>'
+            ),
             content_type="text/html",
         )
 
@@ -160,10 +169,22 @@ async def test_host_authorized_page_keeps_cookie_private_and_preserves_control(
             assert (
                 reloaded["session"]["browserSessionId"] == current["browserSessionId"]
             )
-            # Wait for a fixed DOM read, without replaying navigation.
-            await page.wait_navigation({})
+            # Reload acknowledges dispatch before its HTTP response arrives.
+            # Hold that response to expose the old no-loader wait deterministically.
+            await asyncio.wait_for(reload_arrived.wait(), 15)
+            assert reads == [credential]
+            release_reload.set()
+            observed = await wait_for(
+                lambda: page.js(
+                    "({title:document.title,visit:"
+                    "document.querySelector('#review')?.dataset.visit})"
+                ),
+                lambda value: value == {"title": "Private review", "visit": "2"},
+            )
+            assert observed == {"title": "Private review", "visit": "2"}
             assert reads == [credential, credential]
         finally:
+            release_reload.set()
             await worker.close()
             await runner.cleanup()
             await review_runner.cleanup()
