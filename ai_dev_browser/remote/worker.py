@@ -1130,6 +1130,24 @@ class Worker:
         return await self.control.run(controller, epoch, target_epoch, receive)
 
 
+RECOVERY_HINTS = {
+    "stale_browser_operation": (
+        "call browser_observe to read the current page and fresh epochs, "
+        "then retry with the returned epochs"
+    ),
+    "browser_restart_requires_observation": (
+        "call browser_observe for the current page before acting; "
+        "use browser_launch first if the browser is stopped"
+    ),
+}
+
+
+def mcp_error_text(code):
+    """State-freshness errors tell the model the exact recovery step."""
+    hint = RECOVERY_HINTS.get(code)
+    return f"{code}: {hint}" if hint else code
+
+
 def application(worker):
     reaper_key = web.AppKey("viewer_reaper", asyncio.Task)
 
@@ -1166,7 +1184,9 @@ def application(worker):
 
     async def binding(request):
         authorize(request, worker.host_token)
-        return web.json_response({"binding": worker.binding})
+        return web.json_response(
+            {"binding": worker.binding, "browserRunning": worker.session is not None}
+        )
 
     def file_context(request):
         authorize(request, worker.host_token)
@@ -1351,7 +1371,7 @@ def application(worker):
             except (ControlError, BrowserViewError) as error:
                 result = {
                     "isError": True,
-                    "content": [{"type": "text", "text": error.code}],
+                    "content": [{"type": "text", "text": mcp_error_text(error.code)}],
                 }
         else:
             return web.json_response(
