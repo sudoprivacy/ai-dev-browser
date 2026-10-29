@@ -26,6 +26,7 @@ from .extension import (
     extension_dir,
     extension_load_instructions,
     extension_version_info,
+    bridge_version_info,
     query_extension_version,
 )
 from .port import (
@@ -958,6 +959,12 @@ async def browser_connect(
     connected=true requires the dedicated page to exist. bridge_connected alone
     means the extension is reachable; page_available reports the dedicated page.
     Use window_set to verify actual foreground visibility.
+    `bridge_runtime_version`, `bridge_version_matches_client` and
+    `bridge_warning` describe the running Python daemon independently of the
+    loaded extension. `bridge_driver_connections` is a pre-connect snapshot of
+    controller sockets, including recorders, rather than a count of tasks.
+    Unknown runtime fields stay null. Upgrading Python does not restart that
+    daemon; use bridge_warning for coordinated recovery without closing Chrome.
 
     Args:
         transport: "cdp" (default, existing debug Chrome) or "extension"
@@ -1023,7 +1030,7 @@ async def browser_connect(
                 session_id=session_id,
                 transport="extension",
             )
-        from .ext_bridge import ensure_bridge_running, wait_for_extension
+        from .ext_bridge import bridge_status, ensure_bridge_running, wait_for_extension
         from .connection import connect_extension, _require_extension_page
         from .errors import SessionError
 
@@ -1043,8 +1050,6 @@ async def browser_connect(
             and not status.get("launch_token")
             and _session.pending_launch(EXTENSION_BRIDGE_PORT)
         ):
-            from .ext_bridge import bridge_status
-
             while time.monotonic() < connection_deadline and not status.get(
                 "launch_token"
             ):
@@ -1063,6 +1068,7 @@ async def browser_connect(
                 "No extension has connected in the requested time; check enabled bridge and running Chrome/profile",
                 transport="extension",
                 bridge_running=True,
+                **bridge_version_info(await bridge_status(timeout=1) or {}),
                 extension_dir=str(extension_dir()),
                 setup_instructions=extension_load_instructions(),
                 **_build_info(),
@@ -1073,6 +1079,7 @@ async def browser_connect(
                 "Connected bridge lacks lifecycle identity. Reload the updated bundled extension in the selected profile",
                 transport="extension",
                 bridge_running=True,
+                **bridge_version_info(status),
                 extension_dir=str(extension_dir()),
                 setup_instructions=extension_load_instructions(),
             )
@@ -1146,6 +1153,7 @@ async def browser_connect(
                 str(error),
                 **_session.describe(record),
                 bridge_connected=True,
+                **bridge_version_info(status),
                 page_available=False,
                 tabs=[t["url"] for t in tabs],
                 targets=[
@@ -1172,6 +1180,7 @@ async def browser_connect(
         return {
             **_session.describe(record),
             "connected": True,
+            **bridge_version_info(status),
             "bridge_connected": True,
             "page_available": True,
             "account": status.get("account"),

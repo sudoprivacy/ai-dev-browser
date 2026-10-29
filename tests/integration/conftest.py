@@ -453,7 +453,11 @@ async def live_extension(request, tmp_path, monkeypatch):
                     if natural_occlusion
                     else ["--disable-backgrounding-occluded-windows"]
                 ),
-                "--no-sandbox",
+                *(
+                    []
+                    if sys.platform == "win32" and natural_occlusion
+                    else ["--no-sandbox"]
+                ),
                 # Published old extensions require an existing host window.
                 *(["about:blank"] if legacy_window else []),
             ],

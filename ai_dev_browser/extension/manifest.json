@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AI Dev Browser — bridge",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "storage": { "managed_schema": "managed-schema.json" },
   "description": "Lets ai-dev-browser drive THIS Chrome (your real profile) via chrome.debugger over a local bridge. Opt-in; only active while ai-dev-browser is connected.",
   "minimum_chrome_version": "116",

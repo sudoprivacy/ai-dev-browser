@@ -361,6 +361,21 @@ async function selectedWindow(tab, windowId) {
   return id;
 }
 
+async function selectedPageState(tab) {
+  const id = Number(tab);
+  requireOwned(id);
+  const selected = await chrome.tabs.get(id);
+  requireOwned(id);
+  const window = await chrome.windows.get(selected.windowId, { populate: true });
+  requireOwned(id);
+  const current = window.tabs.find(candidate => candidate.id === id);
+  if (!current) throw new Error("Selected automation tab changed windows during observation; inspect state");
+  // The populated window supplies tab activity and window focus in one read.
+  // Return no URLs, titles or information about its other tabs.
+  return { targetId: String(id), tabActive: current.active, windowId: window.id,
+    windowFocused: window.focused, windowState: window.state, observedAt: Date.now() };
+}
+
 // Chrome can commit the launch URL after the worker's first handshake. Adopt
 // only the caller's nonce-marked tab; do not guess at unrelated existing tabs.
 function adoptLaunch(tab) {
@@ -589,6 +604,7 @@ async function browserLevel(method, params, tab, childSessionId = null) {
       // Introspection for field support (not a real CDP method): which tabs
       // does the extension think it owns / has attached right now?
       return { mainTabId, autoTabs: [...autoTabs], attached: [...attached], profileId, sessionId, launchToken, managedProfile: await managedProfile(), extensionVersion: chrome.runtime.getManifest().version,
+        selectedTarget: tab == null ? null : await selectedPageState(tab),
         targetStates: [...tabStates].map(([id, state]) => ({ target_id: String(id), ...state })), ownershipLog };
     case "AiDevBrowser.closeBrowser":
       // The Python lifecycle layer verifies PID ownership/authorization first.

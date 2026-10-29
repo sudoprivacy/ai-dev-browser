@@ -17,7 +17,9 @@ async def window_set(
 ) -> dict:
     """Use when: you need the page to render at a specific width — to force a
     desktop (or a narrow, mobile) responsive layout — or to set the OS window's
-    state / focus.
+    state / focus. To activate a hidden extension page, use
+    window_set(state="normal", focus=True); its return already reports whether
+    the selected page became visible and ready for input.
 
     `width`/`height` set the **render viewport** (`window.innerWidth`, what the
     page actually lays out against) — not the OS window frame. That is the size
@@ -37,6 +39,10 @@ async def window_set(
     still have a hidden page (for example under native occlusion). When
     `input_ready` is false, show the actual selected tab/window and inspect it
     before input; focus emulation does not resolve this condition.
+    `focused` is document focus; `tab_active` and `window_focused` are separate
+    Chrome observations (null when unavailable). An active tab in a focused,
+    normal window can still be hidden. These APIs do not identify native
+    occlusion, another desktop or a locked session as the specific cause.
 
     Args:
         tab: Tab instance
@@ -58,6 +64,10 @@ async def window_set(
         before input. A hidden page needs its actual Chrome tab/window shown.
         Unknown/mismatched extension versions require an ordinary extension
         update/reload; this can reset control, so inspect ownership again.
+        `focused` is document focus: inspect `tab_active` and `window_focused`
+        separately. If both are true but visibility stays hidden, ask the human
+        to show/uncover the selected window on their current unlocked desktop.
+        These APIs cannot identify the specific native cause.
         Do not spoof visibility, replay completed input, or change transports
         to bypass a refusal. For layout use `width`/`height`.
 
@@ -113,16 +123,18 @@ async def window_set(
         observed = (
             await tab._wait_input_visibility() if focus else await tab._input_state()
         )
-        window_id, bounds = await tab.get_window()
-        actual_state = bounds.window_state.value
+        observation = await tab._input_observation(observed)
+        actual_state = observation.get("window_state")
         ready = observed["visibility"] == "visible"
+        focus_observed = observation.get("window_focused")
+        if focus_observed is None:
+            focus_observed = observed["focused"]
         result.update(
             state=actual_state,
-            window_id=window_id,
-            **observed,
+            **observation,
             input_ready=ready,
             success=(state is None or actual_state == state)
-            and (not focus or (ready and observed["focused"])),
+            and (not focus or (ready and focus_observed)),
         )
         if not result["success"]:
             result.update(error_code="unsupported", retryable=False)

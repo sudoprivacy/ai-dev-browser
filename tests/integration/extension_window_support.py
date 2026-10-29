@@ -7,9 +7,9 @@ import os
 import sys
 import time
 
-from aiohttp import web
 import psutil
 import pytest
+from aiohttp import web
 
 from ai_dev_browser.core import (
     cdp_send,
@@ -19,14 +19,16 @@ from ai_dev_browser.core import (
     mouse_click,
     page_goto,
     page_screenshot,
-    type_by_text,
-    type_by_ref,
     page_wait_element,
+    type_by_ref,
+    type_by_text,
     window_set,
 )
-from ai_dev_browser.core.errors import InputUnavailableError
 from ai_dev_browser.core._transport import ProtocolException
-from .native_window_occluder import visible_owned_window, cover_with_fixture_window
+from ai_dev_browser.core.errors import InputUnavailableError
+
+from .extension_ownership_support import worker_call
+from .native_window_occluder import cover_with_fixture_window, visible_owned_window
 
 
 async def extension_cli(extension, tool, *flags):
@@ -168,10 +170,19 @@ document.querySelector('#submit').onclick=async e=>{{const receipt={{name:docume
     try:
         args = psutil.Process(extension.chrome_pid).cmdline()
         assert "--disable-backgrounding-occluded-windows" not in args
+        assert "--no-sandbox" not in args
         await extension.call(page_goto, url=url + "/")
         code, connected = await extension_cli(extension, "browser_connect")
         assert code == 0 and connected["connected"]
         assert connected["extension_version_matches_bundle"] is True
+        assert connected["bridge_version_matches_client"] is True
+        assert (
+            connected["bridge_runtime_version"] and connected["bridge_warning"] is None
+        )
+        assert connected["bridge_started_at"] > 0
+        assert connected["bridge_message_limit"] > 1024 * 1024
+        assert connected["bridge_driver_connections"] >= 0
+        main = connected["automation_target_id"]
         history.append(
             {
                 "loaded_extension": {
@@ -181,7 +192,12 @@ document.querySelector('#submit').onclick=async e=>{{const receipt={{name:docume
                         "bundled_extension_version",
                         "extension_version_matches_bundle",
                     )
-                }
+                },
+                "running_bridge": {
+                    key: value
+                    for key, value in connected.items()
+                    if key.startswith("bridge_")
+                },
             }
         )
         minimized = await extension.call(
@@ -195,6 +211,32 @@ document.querySelector('#submit').onclick=async e=>{{const receipt={{name:docume
         observed = await state()
         assert restored["visibility"] == observed["visibility"]
         history.append({"minimized": minimized, "restored": restored})
+
+        # Fixture-only Chrome API setup; the product must activate this same
+        # owned tab without adopting/closing the unrelated tab it displaced.
+        with visible_owned_window(extension.chrome_pid, title):
+            sentinel = await worker_call(
+                extension,
+                f"""(async()=>{{
+              const main=await chrome.tabs.get({int(main)});
+              const tab=await chrome.tabs.create({{windowId:main.windowId,url:{json.dumps(url + "/unrelated")},active:true}});
+              return {{id:tab.id,windowId:tab.windowId,url:tab.url||tab.pendingUrl}};
+            }})()""",
+            )
+            inactive = await visible(False)
+            activated = await extension.call(window_set, tab_url=url + "/", focus=True)
+            assert activated["success"] and activated["input_ready"], activated
+            assert (
+                activated["tab_active"] is True and activated["window_focused"] is True
+            )
+            assert activated["target_id"] == main
+            history.append(
+                {
+                    "inactive_tab": inactive,
+                    "activated_tab": activated,
+                    "sentinel": sentinel,
+                }
+            )
 
         # Create an unrelated second window through the owned fixture's setup
         # connection. All form input and window operations under test use extension.
@@ -223,6 +265,27 @@ document.querySelector('#submit').onclick=async e=>{{const receipt={{name:docume
             assert before.window_state == after.window_state
         finally:
             await setup.close()
+        # A second normal Chrome window can hold Chrome focus while the selected
+        # window remains visible. Document and window focus are observed separately.
+        with visible_owned_window(extension.chrome_pid, title):
+            before_focus = await worker_call(
+                extension,
+                f"""(async()=>{{
+              const other=(await chrome.tabs.query({{}})).find(t=>t.url==={json.dumps(url + "/unrelated")}&&t.id!=={sentinel["id"]});
+              await chrome.windows.update(other.windowId,{{focused:true}});
+              const tab=await chrome.tabs.get({int(main)});
+              const window=await chrome.windows.get(tab.windowId);
+              return {{windowFocused:window.focused,windowState:window.state,
+                other:{{id:other.id,url:other.url,windowId:other.windowId}}}};
+            }})()""",
+            )
+            assert before_focus["windowFocused"] is False, before_focus
+            focused = await extension.call(window_set, tab_url=url + "/", focus=True)
+            assert focused["success"] and focused["input_ready"], focused
+            assert focused["window_focused"] is True and focused["tab_active"] is True
+            history.append(
+                {"unfocused_normal": before_focus, "focused_normal": focused}
+            )
         await extension.call(window_set, tab_url=url + "/", state="normal", focus=True)
 
         with visible_owned_window(extension.chrome_pid, title) as handle:
@@ -254,6 +317,18 @@ document.querySelector('#submit').onclick=async e=>{{const receipt={{name:docume
                 path=str(root / "native-window-accepted.png"),
             )
             history.append({"final": final, "receipts": receipts})
+        preserved = await worker_call(
+            extension,
+            f"""(async()=>{{
+          const tab=await chrome.tabs.get({sentinel["id"]});
+          const other=await chrome.tabs.get({before_focus["other"]["id"]});
+          return {{sentinel:{{id:tab.id,windowId:tab.windowId,url:tab.url}},
+            other:{{id:other.id,url:other.url,windowId:other.windowId}}}};
+        }})()""",
+        )
+        assert preserved["sentinel"] == sentinel
+        assert preserved["other"] == before_focus["other"]
+        history.append({"unrelated_tabs_preserved": preserved})
     finally:
         (root / "native-window-evidence.json").write_text(
             json.dumps(history, indent=2), encoding="utf-8"
@@ -272,6 +347,8 @@ async def _hidden_refusals(extension, url, state, visible, history, receipts, ca
         and hidden_result["error_code"] == "unsupported"
     )
     history.append({"occluded": hidden, "focus_result": hidden_result})
+    assert hidden_result["tab_active"] is True
+    assert hidden_result["window_focused"] is True
     code, cli_focus = await extension_cli(
         extension, "window_set", "--tab-url", url + "/", "--state", "normal", "--focus"
     )
@@ -322,6 +399,9 @@ async def _hidden_refusals(extension, url, state, visible, history, receipts, ca
         refused["details"]["input_sent"] is False
         and refused["details"]["visibility"] == "hidden"
     )
+    assert refused["details"]["tab_active"] is True
+    assert refused["details"]["window_focused"] is True
+    assert "tab_active" in refused["hint"] and "uncover" in refused["hint"]
     assert (
         "chrome://extensions" in refused["hint"] and "was not sent" in refused["error"]
     )
