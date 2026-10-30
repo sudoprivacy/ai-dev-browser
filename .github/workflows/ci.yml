@@ -24,12 +24,40 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
 
+      - uses: browser-actions/setup-chrome@v2
+        if: runner.os == 'Windows'
+        id: chrome
+        with:
+          chrome-version: stable
+      - name: Select and record the actual regression browser
+        shell: pwsh
+        if: runner.os == 'Windows'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixture = Join-Path $env:PUBLIC "ai-dev-browser-ci-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT-regression"
+          $browser = & ./scripts/prepare-windows-chrome.ps1 -ChromePath '${{ steps.chrome.outputs.chrome-path }}' -DestinationDirectory $fixture -ReceiptPath "ci-browser-staging.json"
+          "AI_DEV_BROWSER_CHROME=$browser" >> $env:GITHUB_ENV
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
 
       - name: Install package
         run: uv sync --extra dev --extra remote
+
+      - name: Record the chosen browser and interpreter
+        shell: bash
+        run: |
+          uv run python -c '
+          import hashlib, json, os, platform, sys
+          from pathlib import Path
+          from ai_dev_browser.core.chrome import find_chrome
+          browser = Path(find_chrome()).resolve()
+          receipt = {"browser": str(browser), "sha256": hashlib.sha256(browser.read_bytes()).hexdigest(), "platform": platform.platform(), "python": sys.version}
+          Path("ci-browser-runtime.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as environment:
+              environment.write("AI_DEV_BROWSER_CHROME=" + str(browser) + "\n")
+          print(json.dumps(receipt))
+          '
 
       - name: Check extension window and ownership contracts
         run: node --test tests/unit/extension_ownership.test.cjs tests/unit/page_view_input.test.cjs
@@ -49,12 +77,15 @@ jobs:
         shell: bash
         run: |
           uv run python -c "
+          import json
+          from pathlib import Path
           from ai_dev_browser.core.browser import browser_start, browser_stop
 
           result = browser_start(headless=True, temp=True)
-          if 'error' in result:
-              print('SKIP:', result['error'])
-              exit(0)
+          receipt = json.loads(Path('ci-browser-runtime.json').read_text())
+          receipt['actualLaunch'] = result
+          Path('ci-browser-runtime.json').write_text(json.dumps(receipt, indent=2), encoding='utf-8')
+          assert 'error' not in result, result
 
           port = result['port']
           pid = result['pid']
@@ -127,6 +158,8 @@ jobs:
           name: recording-demo-${{ matrix.os }}
           retention-days: 7
           path: |
+            ci-browser-runtime.json
+            ci-browser-staging.json
             test-results/**/demo.gif
             test-results/**/plain.gif
             test-results/**/scoped.gif
@@ -204,6 +237,21 @@ jobs:
           AI_DEV_BROWSER_CHROME: ${{ steps.windows-chrome.outputs.chrome-path }}
           AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.windows-chrome.outputs.chrome-path }}
         run: python -m pytest -v --full-trace -o faulthandler_timeout=180 tests/integration/test_worker_frames_live.py tests/integration/test_extension_frames_live.py tests/integration/test_remote_view.py tests/integration/test_worker_page_drag_live.py tests/integration/test_discovery_socket_pressure.py tests/integration/test_remote_selection_live.py tests/integration/test_browser_control_live.py tests/integration/test_browser_session_live.py tests/integration/test_browser_files_live.py tests/integration/test_browser_worker_live.py tests/integration/test_existing_worker_live.py tests/integration/test_navigation_startup.py --basetemp remote-results
+      - uses: actions/setup-node@v4
+        if: runner.os == 'Windows'
+        with:
+          node-version: "22"
+      - name: Install the real native host fixture
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: npm install --prefix "$env:RUNNER_TEMP/adb-native-host" --no-package-lock --no-audit --no-fund electron@40.8.5
+      - name: Reveal owned CDP and existing extension windows from a real host click
+        if: runner.os == 'Windows'
+        env:
+          AI_DEV_BROWSER_CHROME: ${{ steps.windows-chrome.outputs.chrome-path }}
+          AI_DEV_BROWSER_TEST_EXTENSION_CHROME: ${{ steps.windows-chrome.outputs.chrome-path }}
+          AI_DEV_BROWSER_TEST_ELECTRON: ${{ runner.temp }}/adb-native-host/node_modules/electron/dist/electron.exe
+        run: python -m pytest -v --full-trace tests/integration/test_native_window_electron_live.py --basetemp native-host-results
       - name: Check Windows sandbox startup diagnostics
         if: always() && runner.os == 'Windows'
         shell: pwsh
@@ -215,6 +263,7 @@ jobs:
           name: remote-view-${{ matrix.os }}
           path: |
             remote-results/**
+            native-host-results/**
             ${{ runner.temp }}/windows-chrome-staging.json
           retention-days: 7
 

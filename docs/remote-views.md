@@ -598,3 +598,44 @@ host authentication, rejected raw input, checked native submission, stale
 connection closure, reconnect and browser/profile/lease preservation. It runs
 in Linux viewer CI and the managed Chrome job. This SDK test does not establish
 a consumer's public authentication, graph performance or phone acceptance.
+
+## Native Windows window presentation
+
+Selecting a tab with CDP or the extension does not establish Windows foreground
+ownership. An explicit host UI click can reveal that same Chrome window through
+the authenticated native helper. This does not require another browser, a new
+profile or a business-level Take/Return button.
+
+On Windows native displays, the host-authenticated `/binding` reply includes
+`nativeWindowHelper: {python, script}`. Both paths are private host metadata.
+Validate the script against the pinned SDK installation before executing it.
+From the foreground host process, spawn the **actual base interpreter** directly
+with `-I` and that script. A Windows venv redirector introduces another process
+and loses the foreground eligibility inherited from the clicked host. Send one
+JSON request on stdin with `origin`, `token`, `binding`, `controller`, `parentPid`
+and `action: {kind: "prepare-native-window", targetId, controlEpoch, targetEpoch}`.
+Do not put host credentials in arguments, environment, files or renderer replies.
+
+The helper accepts only the exact loopback HTTP origin. The worker checks the
+human owner, selected target and current epochs before activating its tab and
+returning an exact Chrome process identity and page title. The helper checks the
+process creation time and executable again, requires one matching native Chrome
+window, and makes one ordinary Windows foreground request. It refuses if newer
+foreground work belongs to another process. It does not synthesize focus keys,
+attach input threads, modify foreground policy or replay a failed request.
+A success reply contains `nativeWindow.foreground: true`; otherwise retain the
+structured error and tell the user the window could not be shown.
+
+Owned Chrome uses its launch process. An explicit existing-extension attachment
+resolves only the Chrome connected to its selected local bridge, checking the
+extension run/profile identity before and after process inspection. Multiple
+processes/windows, changed identity or an OS permission failure stop the operation.
+Personal Chrome remains open when the host disconnects. The helper and descriptor
+are unavailable to AI credentials, cloud displays and known headless browsers.
+
+`tests.integration.native_window_electron` runs a real Electron button, physical
+Windows mouse input, actual worker/lease and owned Chrome foreground observation.
+`test_native_window_electron_live.py` covers owned CDP and existing-extension
+attachments on both WebSocket backends. Windows viewer CI runs these cases.
+Consumers must also qualify their actual UI/model journey and package; the host
+fixture alone does not establish that product acceptance.

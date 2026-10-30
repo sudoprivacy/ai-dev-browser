@@ -547,16 +547,16 @@ def browser_start(
                 if ready_guid:
                     bound = True
                     break
-            if process.poll() is not None:
+            exit_code = process.poll()
+            if exit_code is not None:
                 stderr = process.stderr.read() if process.stderr else ""
                 if not stderr:
-                    stderr = (
-                        "Chrome exited silently. Possible causes:\n"
-                        "  - Another Chrome is using this profile\n"
-                        "  - Profile directory is corrupted\n"
-                        "  - Insufficient permissions"
-                    )
-                last_error = {"error": f"Chrome process exited unexpectedly: {stderr}"}
+                    stderr = f"Chrome exited before its CDP endpoint was ready (exit code {exit_code}); no stderr was available"
+                last_error = {
+                    "error": f"Chrome process exited unexpectedly: {stderr}",
+                    "pid": process.pid,
+                    "exit_code": exit_code,
+                }
                 break
             time.sleep(poll_interval)
             elapsed = time.monotonic() - wait_started
