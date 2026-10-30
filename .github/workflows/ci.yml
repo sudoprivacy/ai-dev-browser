@@ -24,12 +24,43 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
 
+      - uses: browser-actions/setup-chrome@v2
+        id: chrome
+        with:
+          chrome-version: stable
+      - name: Select and record the actual regression browser
+        shell: pwsh
+        if: runner.os == 'Windows'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixture = Join-Path $env:PUBLIC "ai-dev-browser-regression-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $browser = & ./scripts/prepare-windows-chrome.ps1 -ChromePath '${{ steps.chrome.outputs.chrome-path }}' -DestinationDirectory $fixture -ReceiptPath "ci-browser-staging.json"
+          "AI_DEV_BROWSER_CHROME=$browser" >> $env:GITHUB_ENV
+      - name: Select the actual regression browser on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: echo 'AI_DEV_BROWSER_CHROME=${{ steps.chrome.outputs.chrome-path }}' >> "$GITHUB_ENV"
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
 
       - name: Install package
         run: uv sync --extra dev --extra remote
+
+      - name: Record the chosen browser and interpreter
+        shell: bash
+        run: |
+          uv run python -c '
+          import hashlib, json, platform, subprocess, sys
+          from pathlib import Path
+          from ai_dev_browser.core.chrome import find_chrome
+          browser = Path(find_chrome()).resolve()
+          version = subprocess.run([str(browser), "--version"], capture_output=True, text=True, check=True, timeout=15).stdout.strip()
+          receipt = {"browser": str(browser), "version": version, "sha256": hashlib.sha256(browser.read_bytes()).hexdigest(), "platform": platform.platform(), "python": sys.version}
+          Path("ci-browser-runtime.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+          print(json.dumps(receipt))
+          '
 
       - name: Check extension window and ownership contracts
         run: node --test tests/unit/extension_ownership.test.cjs tests/unit/page_view_input.test.cjs
@@ -127,6 +158,8 @@ jobs:
           name: recording-demo-${{ matrix.os }}
           retention-days: 7
           path: |
+            ci-browser-runtime.json
+            ci-browser-staging.json
             test-results/**/demo.gif
             test-results/**/plain.gif
             test-results/**/scoped.gif
