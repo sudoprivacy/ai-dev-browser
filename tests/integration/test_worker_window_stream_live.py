@@ -57,6 +57,7 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
     headers = {"Authorization": "Bearer " + host_token}
     credentials, context = {}, {}
     forwarded_types = []
+    quick_drag = {"active": False}
     viewer_browser = viewer = None
     viewer_runner = None
     clipboard = None
@@ -135,15 +136,25 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
             return web.FileResponse(files("ai_dev_browser.remote") / "page_view.js")
 
         async def checked_input(request):
+            packet = await request.json()
+            if quick_drag["active"] and packet.get("phase") == "end":
+                quick_drag["before_release"] = await wait_for(
+                    lambda: page.js("({pan,events:panEvents})"),
+                    lambda value: value["pan"] == {"x": -160, "y": -80},
+                )
+                assert quick_drag["before_release"]["events"][-1]["buttons"] == 1
             reply = await host(
                 {
                     "kind": "input",
                     "surface": "window",
-                    "input": await request.json(),
+                    "input": packet,
                     "controlEpoch": context["controlEpoch"],
                     "targetEpoch": context["targetEpoch"],
                 }
             )
+            if quick_drag["active"] and packet.get("phase") == "begin":
+                quick_drag["begun"].set()
+                await quick_drag["acknowledge"].wait()
             return web.json_response(reply)
 
         async def get_stream():
@@ -576,6 +587,31 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
                 for event in viewer_pointer_events
             )
 
+            # Release locally while the real press acknowledgement is delayed.
+            # Chrome must receive the held motion before its eventual release.
+            quick_drag.update(
+                active=True, begun=asyncio.Event(), acknowledge=asyncio.Event()
+            )
+            await move_pointer(0, 0)
+            await move_pointer(0, 0, "mousePressed")
+            await move_pointer(-60, -30)
+            await asyncio.wait_for(quick_drag["begun"].wait(), 2)
+            await move_pointer(-60, -30, "mouseReleased")
+            assert await viewer.js("surface.pointer === null")
+            assert await viewer.js("surface.gesture !== null")
+            quick_drag["acknowledge"].set()
+            quick_completed = await wait_for(
+                lambda: page.js("({pan,events:panEvents})"),
+                lambda value: (
+                    value["pan"] == {"x": -160, "y": -80}
+                    and sum(event["kind"] == "pointerup" for event in value["events"])
+                    == 2
+                ),
+            )
+            await wait_for(lambda: viewer.js("surface.gesture === null"), bool)
+            assert all(event["trusted"] for event in quick_completed["events"])
+            quick_drag["active"] = False
+
             # Close the real viewer during a second press. Bounded driver
             # cleanup must release its native button and retain human control.
             await move_pointer(0, 0)
@@ -583,7 +619,7 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
             await move_pointer(-30, -15)
             await wait_for(
                 lambda: page.js("({pan,events:panEvents})"),
-                lambda value: value["pan"] == {"x": -130, "y": -65},
+                lambda value: value["pan"] == {"x": -190, "y": -95},
             )
             await viewer.close()
             viewer = None
@@ -595,7 +631,7 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
             disconnected = await wait_for(
                 lambda: page.js("({pan,events:panEvents})"),
                 lambda value: (
-                    sum(event["kind"] == "pointerup" for event in value["events"]) == 2
+                    sum(event["kind"] == "pointerup" for event in value["events"]) == 3
                 ),
             )
             assert disconnected["events"][-1]["buttons"] == 0
@@ -634,7 +670,7 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
             switched = await wait_for(
                 lambda: page.js("({pan,events:panEvents})"),
                 lambda value: (
-                    sum(event["kind"] == "pointerup" for event in value["events"]) == 3
+                    sum(event["kind"] == "pointerup" for event in value["events"]) == 4
                 ),
             )
             assert switched["events"][-1]["buttons"] == 0
@@ -692,6 +728,10 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
                         "statusResponsiveDuringGesture": True,
                         "duplicatePacketAndForeignViewerRejected": True,
                         "completed": completed,
+                        "quickReleaseBeforeBeginAcknowledgement": quick_completed,
+                        "quickMotionObservedBeforeRemoteRelease": quick_drag[
+                            "before_release"
+                        ],
                         "viewerDisconnected": disconnected,
                         "humanLeasePreserved": True,
                         "browserPreserved": True,
