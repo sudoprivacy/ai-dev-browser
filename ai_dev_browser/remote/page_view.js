@@ -113,6 +113,10 @@ export class InputSurface {
 
   finishDrag(phase, point) {
     if (!this.gesture) return;
+    if (phase === 'end' && point) {
+      const last = this.gesture.last;
+      this.gesture.latest = point.x === last.x && point.y === last.y ? null : point;
+    }
     this.gesture.finish = { phase, point: point || this.gesture.latest || this.gesture.last };
     this.pumpDrag();
   }
@@ -122,8 +126,9 @@ export class InputSurface {
     if (!gesture || gesture.pending) return;
     let phase, point;
     if (gesture.begin) { phase = 'begin'; point = gesture.begin; gesture.begin = null; }
-    else if (gesture.finish) { ({ phase, point } = gesture.finish); }
+    else if (gesture.finish?.phase === 'cancel') { ({ phase, point } = gesture.finish); }
     else if (gesture.latest) { phase = 'move'; point = gesture.latest; }
+    else if (gesture.finish) { ({ phase, point } = gesture.finish); }
     else return;
     gesture.latest = null;
     gesture.last = point;

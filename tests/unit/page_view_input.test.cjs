@@ -42,21 +42,25 @@ test('pointer-up survives a subsequent copy-control blur before begin is acknowl
   f.pointer('pointerup', 60);
   f.image.dispatchEvent(new Event('blur'));
   gate.resolve(); await flush();
-  assert.deepEqual(f.packets.map(p => p.phase), ['begin', 'end']);
+  assert.deepEqual(f.packets.map(p => p.phase), ['begin', 'move', 'end']);
   assert.equal(f.packets[1].x, 60);
+  assert.equal(f.packets[2].x, 60);
   f.surface.dispose();
 });
 
 test('whenIdle waits for the final host acknowledgement, including an already released pointer', async () => {
-  const begin = deferred(), end = deferred();
-  const f = await fixture(packet => packet.phase === 'begin' ? begin.promise : end.promise);
+  const begin = deferred(), move = deferred(), end = deferred();
+  const f = await fixture(packet => packet.phase === 'begin' ? begin.promise : packet.phase === 'move' ? move.promise : end.promise);
   f.pointer('pointerdown', 10); f.pointer('pointermove', 30);
   await flush(); f.pointer('pointerup', 60);
   let settled = false;
   const idle = f.surface.whenIdle().then(() => { settled = true; });
   begin.resolve(); await flush();
   assert.equal(settled, false);
-  assert.deepEqual(f.packets.map(p => p.phase), ['begin', 'end']);
+  assert.deepEqual(f.packets.map(p => p.phase), ['begin', 'move']);
+  move.resolve(); await flush();
+  assert.equal(settled, false);
+  assert.deepEqual(f.packets.map(p => p.phase), ['begin', 'move', 'end']);
   end.resolve(); await idle;
   assert.equal(settled, true);
   f.surface.dispose();
