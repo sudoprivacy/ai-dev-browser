@@ -380,7 +380,11 @@ async def test_headless_page_drag_updates_pixels_before_release(
             )
             assert sum(e["kind"] == "pointerup" for e in observed_read["events"]) == 2
             assert all(e["trusted"] for e in observed_read["events"])
-            assert await viewer_page.js("packets.map(p=>p.phase)") == ["begin", "end"]
+            assert await viewer_page.js("packets.map(p=>p.phase)") == [
+                "begin",
+                "move",
+                "end",
+            ]
             assert await viewer_page.js("errors") == []
             metrics["releaseThenCopy"] = observed_read
             (tmp_path / "page-drag.json").write_text(json.dumps(metrics, indent=2))
