@@ -230,51 +230,41 @@ def _is_port_bindable(host: str = DEFAULT_DEBUG_HOST, port: int = 9350) -> bool:
         return False
 
 
+def _is_socket_resource_error(error: OSError) -> bool:
+    return error.errno in (errno.ENOBUFS, errno.ENOMEM, errno.EMFILE, errno.ENFILE) or (
+        getattr(error, "winerror", None) == 10055
+    )
+
+
+def _probe_listener(
+    host: str, port: int, timeout: float, family: socket.AddressFamily = socket.AF_INET
+) -> bool:
+    """Open one connection to an existing listener."""
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            sock.connect((host, port))
+        return True
+    except OSError as error:
+        if _is_socket_resource_error(error):
+            raise
+        return False
+
+
 def is_port_in_use(
     host: str = DEFAULT_DEBUG_HOST,
     port: int = 9350,
     timeout: float = 0.1,
 ) -> bool:
-    """Check if a port is in use (Chrome might be listening).
-
-    Uses a bind-first strategy for speed on Windows.
-
-    Args:
-        host: Host to check (default: 127.0.0.1)
-        port: Port to check
-        timeout: Connection timeout in seconds
-
-    Returns:
-        True if port is in use, False otherwise.
-    """
-    # Fast path: if we can bind, nothing is listening (sub-millisecond)
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.bind((host, port))
-        return False
-    except OSError:
-        pass
-
-    # Check IPv4
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.settimeout(timeout)
-            sock.connect((host, port))
-            return True
-    except (TimeoutError, ConnectionRefusedError, OSError):
-        pass
-
-    # Check IPv6
-    try:
-        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as sock:
-            sock.settimeout(timeout)
-            ipv6_host = "::1" if host in ("127.0.0.1", "localhost") else host
-            sock.connect((ipv6_host, port))
-            return True
-    except (TimeoutError, ConnectionRefusedError, OSError):
-        pass
-
-    return False
+    """Read local listeners, using connection probes when inventory is unavailable."""
+    if host == DEFAULT_DEBUG_HOST and 0 <= port <= 65535:
+        listening = _listening_ports((port, port + 1))
+        if listening is not None:
+            return bool(listening)
+    if _probe_listener(host, port, timeout):
+        return True
+    ipv6_host = "::1" if host in (DEFAULT_DEBUG_HOST, "localhost") else host
+    return _probe_listener(ipv6_host, port, timeout, socket.AF_INET6)
 
 
 def _allocate_ephemeral_port(
@@ -436,30 +426,8 @@ def _get_os_ephemeral_range() -> tuple[int, int]:
 def _fast_listening_check(
     port: int, host: str = DEFAULT_DEBUG_HOST, timeout: float = 0.005
 ) -> bool:
-    """Listening-port probe tuned for bulk scanning.
-
-    Skips the IPv6 fallback and uses a tight timeout. Works because:
-      - localhost listeners accept in microseconds, 20ms is ample
-      - Chrome debug ports always bind IPv4
-
-    Trades completeness (IPv6-only services invisible) for speed —
-    the scan completes in ~1-2s instead of ~7s on Hyper-V machines.
-    """
-    # Fast path: bind succeeds → nothing is listening
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.bind((host, port))
-        return False
-    except OSError:
-        pass
-
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.settimeout(timeout)
-            sock.connect((host, port))
-        return True
-    except (TimeoutError, ConnectionRefusedError, OSError):
-        return False
+    """Probe one IPv4 listener for the bounded discovery fallback."""
+    return _probe_listener(host, port, timeout)
 
 
 def _listening_ports(port_range: tuple[int, int]) -> list[int] | None:
@@ -474,10 +442,7 @@ def _listening_ports(port_range: tuple[int, int]) -> list[int] | None:
     try:
         connections = psutil.net_connections(kind="tcp4")
     except OSError as error:
-        if (
-            error.errno in (errno.ENOBUFS, errno.ENOMEM, errno.EMFILE, errno.ENFILE)
-            or getattr(error, "winerror", None) == 10055
-        ):
+        if _is_socket_resource_error(error):
             raise
         return None
     except (psutil.Error, NotImplementedError):
