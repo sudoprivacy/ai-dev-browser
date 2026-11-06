@@ -741,7 +741,7 @@ def browser_start(
 
 
 async def _create_startup_page(port: int, guid: str, url: str, timeout: float) -> str:
-    """Create the one startup target on the verified browser, without replay."""
+    """Create one owned page, opening the first window when needed."""
     from ai_dev_browser.cdp import target
     from ._transport import CDPConnection
 
@@ -749,7 +749,13 @@ async def _create_startup_page(port: int, guid: str, url: str, timeout: float) -
 
     async def create():
         await connection.connect()
-        return str(await connection.send(target.create_target(url), timeout=timeout))
+        targets = await connection.send(target.get_targets(), timeout=timeout)
+        has_page = any(info.type_ == "page" for info in targets)
+        return str(
+            await connection.send(
+                target.create_target(url, new_window=not has_page), timeout=timeout
+            )
+        )
 
     try:
         return await asyncio.wait_for(create(), timeout=timeout)

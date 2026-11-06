@@ -121,6 +121,7 @@ jobs:
             tests/integration/test_config_resolvers.py \
             tests/integration/test_pool_model_persistence.py \
             tests/integration/test_browser_start_retry.py \
+            tests/integration/test_windowless_cdp_startup.py \
             tests/integration/test_browser_inventory.py \
             tests/integration/test_proxy_identity.py \
             tests/integration/test_stealth_defaults.py \

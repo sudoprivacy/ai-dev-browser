@@ -386,7 +386,14 @@ class LifecycleJourneys:
             try:
                 sentinel = context.new_page()
                 sentinel.goto(self.server.url + "/sentinel")
-                process = profile_processes(profile)[0]
+                processes = profile_processes(profile)
+                self.cli.evidence(
+                    "existing-profile-process",
+                    profile=str(profile),
+                    processes=processes,
+                )
+                assert len(processes) == 1, processes
+                process = processes[0]
                 pid = process["pid"]
                 connected = self.cli(
                     "browser_connect", "--transport", "extension", "--timeout", 15
