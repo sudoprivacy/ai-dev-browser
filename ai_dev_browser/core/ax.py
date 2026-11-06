@@ -973,7 +973,7 @@ async def _fill_verified(
     if the field stayed empty). Always targets value===text (clears first), so
     verification is meaningful."""
     from ._demo import session
-    from ._editable import editor_state
+    from ._editable import editor_state, is_text_entry, typing_refusal
 
     prepare_input = getattr(tab, "_prepare_input", None)
     if prepare_input:
@@ -992,6 +992,9 @@ async def _fill_verified(
                 "error": "The editor's editable full document is unavailable. Its textarea is an input proxy; no replacement or Enter was sent. Use the editor's documented full-document API and verify its model before submitting.",
             }
         return await _fill_editor(tab, element, text, editor)
+
+    if not await is_text_entry(element):
+        return typing_refusal("not_editable")
 
     if prefer is None and session(tab):
         prefer = "human"
@@ -1082,6 +1085,10 @@ async def type_by_ref(
     (plus `entered` when `enter=True`) — `verified` already tells you the value
     actually landed, so don't screenshot or re-read the field to check.
 
+    The ref must identify an actual text field or supported editor proxy.
+    Noneditable containers are refused before input; type_by_text can resolve
+    a unique field from its label or wrapper instead.
+
     In extension mode, hidden-page or ownership refusals stop the operation
     before clearing; input fallbacks never override these refusals.
 
@@ -1136,6 +1143,9 @@ async def type_by_ref(
         For ordinary fields, re-check the ref points at the real
         `<input>/<textarea>/[contenteditable]`; for a masked/overlay field find
         the true input via `page_discover` / `find_by_html_id`.
+        A noneditable ref returns `validation` with `input_sent:false` before
+        clearing or typing. Use page_discover to choose the actual text field,
+        or type_by_text with its unique label; a ref never redirects to a child.
 
     Example:
         type_by_ref("5#214", "myusername")

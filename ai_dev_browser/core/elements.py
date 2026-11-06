@@ -9,7 +9,7 @@ from ai_dev_browser.cdp import input_ as cdp_input
 from . import human
 from ._actionability import ACTIONABILITY_JS, click_refusal
 from ._element import Element
-from ._ref import make_ref
+from ._ref import make_ref, parse_ref
 from ._tab import Tab
 from .ax import (
     _fill_verified,
@@ -47,8 +47,8 @@ async def _ax_by_text(
 ) -> dict | None:
     """Locate an element by its *accessible name*. One shot, no waiting.
 
-    The single answer to "where is the element labelled X", shared by every
-    `*_by_text` tool so they cannot disagree with each other.
+    Shared by text discovery and clicks. Typing uses `_wait_text_entry` because
+    a clickable text container is not necessarily a text field.
 
     Two tiers inside the accessibility tree: interactable elements (button /
     link / textbox) win, and only when none match does it fall back to
@@ -105,6 +105,51 @@ async def _wait_ax_by_text(tab: Tab, text: str, timeout: float) -> dict | None:
             return hit
         if loop.time() >= deadline:
             return None
+        await asyncio.sleep(_AX_POLL_INTERVAL)
+
+
+async def _wait_text_entry(tab: Tab, name: str, timeout: float):
+    """Typing has a narrower target contract than a text click or discovery."""
+    from ._editable import is_text_entry, resolve_text_entry
+    from .snapshot import page_discover
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while True:
+        hits = await page_discover(
+            tab, text=name, interactable_only=False, include_coordinates=False
+        )
+        direct, wrapped = {}, {}
+        ambiguous = False
+        for hit in hits:
+            element = await get_element_by_ref(tab, hit["ref"])
+            try:
+                if await is_text_entry(element):
+                    direct[element.backend_node_id] = (element, hit["ref"], hit)
+                    continue
+                target, reason = await resolve_text_entry(element, name)
+                ambiguous |= reason == "ambiguous"
+                if target is not None:
+                    prefix = parse_ref(hit["ref"])[0]
+                    ref = make_ref(0, int(target.backend_node_id))
+                    if prefix:
+                        ref = prefix + ":" + ref
+                    wrapped[target.backend_node_id] = (target, ref, hit)
+            finally:
+                await element.release()
+        exact = {
+            key: value
+            for key, value in direct.items()
+            if value[2].get("name", "").strip().lower() == name.strip().lower()
+        }
+        candidates = exact or {**wrapped, **direct}
+        if len(candidates) > 1 or (not exact and ambiguous):
+            return None, None, "ambiguous"
+        if candidates:
+            element, ref, _ = next(iter(candidates.values()))
+            return element, ref, None
+        if loop.time() >= deadline:
+            return None, None, "not_editable" if hits else "not_found"
         await asyncio.sleep(_AX_POLL_INTERVAL)
 
 
@@ -1253,6 +1298,10 @@ async def type_by_text(
     `clear` / `enter` / `keystrokes` / `human_like` options mirror `type_by_ref`
     so the two are interchangeable once the input is located.
 
+    A label or field wrapper resolves to its unique text input/textarea or
+    contenteditable host; `ref` identifies that actual field. Duplicate labels
+    or multiple contained fields return `conflict` before any input or Enter.
+
     Typing is VERIFIED with automatic fallback (shared with `type_by_ref`): it
     types, reads `el.value` back, and falls through `insertText` → real per-char
     keys → native value setter until the field holds the text, so a field that
@@ -1270,7 +1319,7 @@ async def type_by_text(
         tab: Tab instance
         name: Accessible name to page_discover element (placeholder, label, etc.)
         text: Text to type into the element
-        clear: If True, clear existing content first
+        clear: Kept for compatibility; verified fill replaces the value as needed
         timeout: Search timeout in seconds
         human_like: Add human timing between keystrokes (default: from config)
         enter: If True, press Enter after typing (submits the field)
@@ -1282,6 +1331,9 @@ async def type_by_text(
         `enter=True`.
 
     Failure:
+        For ambiguous labels or noneditable targets, no input was sent. Use
+        page_discover to choose the actual text field, then type_by_ref with
+        its ref. Do not repeat an ambiguous label or use a click target for typing.
         No input with this accessible name, in the main frame or any same-origin
         iframe, within `timeout`. If the input has no accessible name at all
         (no label, no placeholder, no aria-label), locate it by html id or xpath
@@ -1299,24 +1351,17 @@ async def type_by_text(
         type_by_text(name="Search", text="query", clear=True, enter=True)
         type_by_text(name="快捷过滤", text="FIN", keystrokes=True)  # live filter
     """
-    # Locator only — same accessible-name lookup as click_by_text / find_by_text.
-    # Locating by AX name is what this tool has always *claimed* to do; it was
-    # running a DOM text-node search, so a `<label for=email>Email</label>` match
-    # landed on the label instead of the input it labels.
-    #
-    # The DEFAULT typing actuator is deliberately per-character `char` events
-    # (not `type_by_ref`'s `Input.insertText`) — the two produce different DOM
-    # event streams and routing one through the other silently changes which
-    # pages work. `keystrokes=True` is the explicit shared opt-in (real key
-    # events, same `_type_keystrokes` path as `type_by_ref`) for the fields that
-    # need it; it does not change the default.
-    located = await _wait_ax_by_text(tab, name, timeout)
-    if located is None:
-        return {"typed": False, "error": f"Element with name '{name}' not found"}
+    from ._editable import typing_refusal
 
-    element = await get_element_by_ref(tab, located["ref"])
-    if element is None:
-        return {"typed": False, "verified": False, "error": f"'{name}' not found"}
+    element, ref, reason = await _wait_text_entry(tab, name, timeout)
+    if reason == "not_found":
+        result = typing_refusal("not_editable")
+        result.update(
+            error=f"Text field with name '{name}' not found", error_code="not_found"
+        )
+        return result
+    if reason:
+        return typing_refusal(reason)
 
     # Verified fill (shared with type_by_ref): type, read back, fall through
     # methods until value===text so a silently-rejecting field can't report a
@@ -1329,9 +1374,9 @@ async def type_by_text(
         prefer = None
     result = await _fill_verified(tab, element, text, prefer=prefer)
     result["name"] = name
-    result["ref"] = located["ref"]
+    result["ref"] = ref
     if enter and result.get("verified"):
-        pressed = await press_key(tab, "Enter", ref=located["ref"])
+        pressed = await press_key(tab, "Enter", ref=ref)
         result["entered"] = bool(pressed.get("pressed"))
     return result
 
