@@ -1,0 +1,89 @@
+{
+  "config": {
+    "imports": [
+      "from tests.integration.label_typing_support import fill_journey, refusal_journey"
+    ],
+    "call_style": "function",
+    "required_env_vars": [],
+    "smoke_test_assertions": [
+      "callable(fill_journey)",
+      "callable(refusal_journey)"
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "cdp_label_fill",
+      "title": "cdp: resolve field labels and preserve unrelated inputs",
+      "workflow": "Open app dialog -> resolve Name wrapper -> trusted name and multiline description fills -> fill labelled, placeholder, editable and iframe fields -> one HTTP submission -> inspect rendered result",
+      "user_problem": "A field label must resolve to one real editable field without guessing or typing into containers.",
+      "fixtures": [
+        "interaction_cdp",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "await fill_journey(interaction_cdp, tmp_path)"
+          ]
+        }
+      ],
+      "async": true
+    },
+    {
+      "name": "cdp_label_refusal",
+      "title": "cdp: refuse ambiguous labels and noneditable refs before input",
+      "workflow": "Open form -> focus sentinel -> refuse multi-input wrapper and duplicate names via real CLI -> refuse static text and wrapper ref -> zero events, zero Input commands and no submissions",
+      "user_problem": "A field label must resolve to one real editable field without guessing or typing into containers.",
+      "fixtures": [
+        "interaction_cdp",
+        "tmp_path",
+        "caplog"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "await refusal_journey(interaction_cdp, tmp_path, caplog)"
+          ]
+        }
+      ],
+      "async": true
+    },
+    {
+      "name": "real_extension_label_fill",
+      "title": "extension: resolve field labels and preserve unrelated inputs",
+      "workflow": "Open app dialog -> resolve Name wrapper -> trusted name and multiline description fills -> fill labelled, placeholder, editable and iframe fields -> one HTTP submission -> inspect rendered result",
+      "user_problem": "A field label must resolve to one real editable field without guessing or typing into containers.",
+      "fixtures": [
+        "live_extension",
+        "tmp_path"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "await fill_journey(live_extension, tmp_path)"
+          ]
+        }
+      ],
+      "async": true
+    },
+    {
+      "name": "real_extension_label_refusal",
+      "title": "extension: refuse ambiguous labels and noneditable refs before input",
+      "workflow": "Open form -> focus sentinel -> refuse multi-input wrapper and duplicate names via real CLI -> refuse static text and wrapper ref -> zero events, zero Input commands and no submissions",
+      "user_problem": "A field label must resolve to one real editable field without guessing or typing into containers.",
+      "fixtures": [
+        "live_extension",
+        "tmp_path",
+        "caplog"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "await refusal_journey(live_extension, tmp_path, caplog)"
+          ]
+        }
+      ],
+      "async": true
+    }
+  ]
+}
