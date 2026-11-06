@@ -135,17 +135,22 @@ async def test_real_discovery_uses_listener_inventory(tmp_path, monkeypatch):
             encoding="utf8",
         )
         reserved.close()
-        if client is not None:
-            await client.close()
-        if browser and "error" not in browser:
-            stopped = await asyncio.to_thread(
-                browser_stop, session_id=browser["session_id"]
-            )
-            assert stopped.get("stopped") and stopped.get("count") == 1, stopped
-        if startup_process and startup_process.poll() is None:
-            await asyncio.to_thread(
-                browser_module._kill_process_tree, startup_process.pid
-            )
-            assert startup_process.poll() is not None
-        server.close()
-        await server.wait_closed()
+        try:
+            if client is not None:
+                await client.close()
+            if browser and "error" not in browser:
+                stopped = await asyncio.to_thread(
+                    browser_stop, session_id=browser["session_id"]
+                )
+                assert stopped.get("stopped") and stopped.get("count") == 1, stopped
+                assert startup_process.poll() is not None
+        finally:
+            try:
+                if startup_process and startup_process.poll() is None:
+                    await asyncio.to_thread(
+                        browser_module._kill_process_tree, startup_process.pid
+                    )
+                    assert startup_process.poll() is not None
+            finally:
+                server.close()
+                await server.wait_closed()
