@@ -153,12 +153,14 @@ def profile_processes(user_data_dir: Path) -> list[dict]:
 
     wanted = os.path.normcase(str(user_data_dir.resolve()))
     matches = []
-    for process in psutil.process_iter(["pid", "name", "cmdline"]):
+    # Windows caches names on Process objects; reused PIDs need fresh identities.
+    for pid in psutil.pids():
         try:
-            args = process.info.get("cmdline") or []
+            process = psutil.Process(pid)
+            args = process.cmdline()
             if any(a.startswith("--type=") for a in args):
                 continue
-            name = (process.info.get("name") or "").lower()
+            name = process.name().lower()
             if "chrome" not in name and "chromium" not in name:
                 continue
             path = None

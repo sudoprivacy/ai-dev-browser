@@ -207,6 +207,7 @@ def test_mac_clone_requires_same_birth_profile_and_live_session(monkeypatch):
     current["launch_args"] = ["Google Chrome", "--user-data-dir=/test/owned-profile"]
     monkeypatch.setattr(port, "_query_chrome_guid", lambda number: "replacement")
     assert not _session.same_process(record)
+
     monkeypatch.setattr(port, "_query_chrome_guid", lambda number: "same")
     current["chrome_path"] = "/private/var/folders/test/unrelated/Google Chrome"
     assert not _session.same_process(record)
@@ -221,3 +222,24 @@ def test_mac_clone_requires_same_birth_profile_and_live_session(monkeypatch):
     current["process_created"] = 1.0
     monkeypatch.setattr(port, "_query_chrome_guid", lambda number: "replacement")
     assert not _session.same_process(record)
+
+
+def test_profile_scan_uses_current_pid_identity_after_process_cache_reuse(
+    monkeypatch, tmp_path
+):
+    import psutil
+
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    arguments = ["chrome", f"--user-data-dir={profile}"]
+    current = {"pid": 1234, "process_created": 2.0}
+    cached = SimpleNamespace(info={"pid": 1234, "name": "python", "cmdline": arguments})
+    observed = SimpleNamespace(
+        pid=1234, cmdline=lambda: arguments, name=lambda: "chrome"
+    )
+    monkeypatch.setattr(psutil, "process_iter", lambda attrs: iter([cached]))
+    monkeypatch.setattr(psutil, "pids", lambda: [1234])
+    monkeypatch.setattr(psutil, "Process", lambda pid: observed)
+    monkeypatch.setattr(_session, "process_info", lambda pid: current)
+
+    assert _session.profile_processes(profile) == [current]
