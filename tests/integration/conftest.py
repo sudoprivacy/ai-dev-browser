@@ -485,6 +485,7 @@ async def live_extension(request, tmp_path, monkeypatch):
         finally:
             evidence = {
                 "backend": request.param,
+                "bridgePort": port,
                 "connected": bridge.extension is not None,
                 "elapsedSeconds": time.monotonic() - started,
                 "startupBudgetSeconds": startup_budget,
@@ -504,6 +505,15 @@ async def live_extension(request, tmp_path, monkeypatch):
                     evidence["targets"] = await asyncio.to_thread(inspect_owned_chrome)
                 except (OSError, ValueError) as error:
                     evidence["inspectionError"] = str(error)
+                try:
+                    from .live_extension_diagnostics import inspect_extension_worker
+
+                    async with asyncio.timeout(2):
+                        evidence["workers"] = await inspect_extension_worker(
+                            chrome["port"], port
+                        )
+                except Exception as error:
+                    evidence["workerInspectionError"] = str(error)
             (tmp_path / "extension-startup-evidence.json").write_text(
                 json.dumps(evidence, indent=2), encoding="utf-8"
             )
