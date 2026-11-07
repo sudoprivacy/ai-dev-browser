@@ -6,6 +6,26 @@ const vm = require('node:vm');
 
 const event = () => ({ handlers: [], addListener(fn) { this.handlers.push(fn); } });
 
+for (const outcome of ['result', 'error']) {
+  test(`a disconnected command cannot send its late ${outcome} to a replacement bridge`, async () => {
+    const { chrome, run } = await fixture();
+    run('claim(11); attached.add(11); globalThis.oldMessages=[]; globalThis.oldSocket={readyState:1,send:value=>oldMessages.push(JSON.parse(value))}; ws=oldSocket');
+    let complete, reject, requested;
+    const started = new Promise(resolve => { requested = resolve; });
+    chrome.debugger.sendCommand = async () => new Promise((resolve, fail) => {
+      complete = resolve; reject = fail; requested();
+    });
+    const pending = run("handleCommand(7,'11','Runtime.evaluate',{expression:'old request'})");
+    await started;
+    run('oldSocket.readyState=3; globalThis.newMessages=[]; ws={readyState:1,send:value=>newMessages.push(JSON.parse(value))}');
+    if (outcome === 'result') complete({value:'old response'});
+    else reject(new Error('old failure'));
+    await pending;
+    assert.equal(run('newMessages.length'), 0);
+    assert.equal(run('oldMessages.length'), 0);
+  });
+}
+
 test('selected page diagnostics expose only owned tab/window observations', async () => {
   const { run, tabs, windows } = await fixture();
   run('claim(11)');

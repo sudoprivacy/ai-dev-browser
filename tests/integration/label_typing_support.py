@@ -141,6 +141,10 @@ async def fill_journey(driver, folder):
                 "notes",
             }
             assert (await driver.call(click_by_html_id, html_id="submit"))["clicked"]
+            evidence.update(events=events, receipts=receipts)
+            completion = await driver.call(page_wait_element, text="Created Moss QA")
+            evidence["completion"] = completion
+            assert completion["found"], completion
             assert receipts == [
                 {
                     "name": "Moss QA",
@@ -151,8 +155,9 @@ async def fill_journey(driver, folder):
                     "trusted": True,
                 }
             ], receipts
-            assert await read(driver, "done.textContent") == "Created Moss QA"
-            evidence.update(events=events, receipts=receipts)
+            rendered = await read(driver, "done.textContent")
+            evidence["rendered"] = rendered
+            assert rendered == "Created Moss QA", rendered
             await driver.call(
                 page_screenshot,
                 path=str(folder / "label-typing-accepted.png"),
