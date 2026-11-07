@@ -6,6 +6,7 @@ import json
 import pytest
 
 from ai_dev_browser.core import cdp_send
+from ai_dev_browser.core.extension import extension_version_info
 
 
 @pytest.fixture(scope="module")
@@ -26,6 +27,10 @@ async def test_real_extension_cold_start_identity(
     assert profile not in startup_profiles
     startup_profiles.add(profile)
     assert state["sessionId"] and state["sessionId"] == hello["session_id"]
+    assert state["extensionVersion"] == hello["extension_version"]
+    assert extension_version_info(state["extensionVersion"])[
+        "extension_version_matches_bundle"
+    ]
     main = state["mainTabId"]
     assert main is not None and str(main) == hello["automation_target_id"]
     assert state["autoTabs"] == [main] and state["attached"] == [main]
@@ -37,6 +42,7 @@ async def test_real_extension_cold_start_identity(
         "mainTabId": main,
         "ownedTabCount": len(state["autoTabs"]),
         "identityMatchesHello": True,
+        "extensionVersion": state["extensionVersion"],
     }
     (tmp_path / "cold-extension-startup-evidence.json").write_text(
         json.dumps(evidence, indent=2), encoding="utf-8"
