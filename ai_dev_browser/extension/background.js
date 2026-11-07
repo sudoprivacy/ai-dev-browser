@@ -332,9 +332,8 @@ function launchMarker(tab) {
   return null;
 }
 
-async function announce() {
-  if (!ws || ws.readyState !== 1) return;
-  const socket = ws;
+async function announce(socket = ws) {
+  if (!socket || ws !== socket || socket.readyState !== 1) return;
   const account = await profileAccount();
   if (ws !== socket || socket.readyState !== 1) return;
   socket.send(JSON.stringify({
@@ -651,7 +650,12 @@ async function browserLevel(method, params, tab, childSessionId = null) {
   }
 }
 
-async function handleCommand(gid, tab, method, params, childSessionId = null) {
+function replyToSocket(socket, response) {
+  if (ws === socket && socket?.readyState === 1) socket.send(JSON.stringify(response));
+}
+
+async function handleCommand(gid, tab, method, params, childSessionId = null, socket = ws) {
+  if (ws !== socket || socket?.readyState !== 1) return;
   try {
     if (childSessionId !== null) tab = String(ownedFrameSession(tab, childSessionId).tabId);
     let result = await browserLevel(method, params || {}, tab, childSessionId);
@@ -665,10 +669,10 @@ async function handleCommand(gid, tab, method, params, childSessionId = null) {
       result = await chrome.debugger.sendCommand({ ...dbg(tab),
         ...(childSessionId === null ? {} : { sessionId: childSessionId }) }, method, params || {});
     }
-    ws.send(JSON.stringify({ _gid: gid, result: result ?? {} }));
+    replyToSocket(socket, { _gid: gid, result: result ?? {} });
   } catch (e) {
-    ws.send(JSON.stringify({ _gid: gid, error: { message: String(e && e.message || e),
-      ...(e.ownership ? { data: { adbOwnership: e.ownership } } : {}) } }));
+    replyToSocket(socket, { _gid: gid, error: { message: String(e && e.message || e),
+      ...(e.ownership ? { data: { adbOwnership: e.ownership } } : {}) } });
   }
 }
 
@@ -682,25 +686,31 @@ async function connect() {
     setTimeout(connect, 1500);
     return;
   }
+  const socket = ws;
 
-  ws.onopen = async () => {
+  socket.onopen = async () => {
+    if (ws !== socket) return;
     connecting = false;
     // Seed the dedicated tab BEFORE announcing readiness, so the first
     // Target.getTargets a driver sends already lists it — no empty-list race
     // that would make adb spin up a second blank tab.
     try { await ensureDedicatedTab(); } catch { /* announce bridge liveness, not page readiness */ }
-    await announce();
+    await announce(socket);
   };
 
-  ws.onmessage = (ev) => {
+  socket.onmessage = (ev) => {
+    if (ws !== socket || socket.readyState !== 1) return;
     let m;
     try { m = JSON.parse(ev.data); } catch { return; }
     if (m._gid == null || !m.method) return;
-      handleCommand(m._gid, m.tab, m.method, m.params, m.sessionId ?? null);
+    handleCommand(m._gid, m.tab, m.method, m.params, m.sessionId ?? null, socket);
   };
 
-  ws.onclose = () => { connecting = false; ws = null; setTimeout(connect, 1500); };
-  ws.onerror = () => { connecting = false; };
+  socket.onclose = () => {
+    if (ws !== socket) return;
+    connecting = false; ws = null; setTimeout(connect, 1500);
+  };
+  socket.onerror = () => { if (ws === socket) connecting = false; };
 }
 
 // Follow tabs OUR automation opened — and only those. A new tab is followed only
