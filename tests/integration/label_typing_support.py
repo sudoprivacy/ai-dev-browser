@@ -197,7 +197,7 @@ async def modal_journey(driver, folder, caplog):
             ], receipts
             evidence.update(state=state, receipts=list(receipts))
             await driver.call(
-                page_screenshot, path=str(folder / "modal-label-accepted.png")
+                page_screenshot, path=str(folder / "label-typing-accepted.png")
             )
             assert (await driver.call(click_by_html_id, html_id="cancel"))["clicked"]
             assert await read(
