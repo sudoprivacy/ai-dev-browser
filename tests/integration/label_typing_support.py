@@ -9,6 +9,7 @@ from ai_dev_browser.core import (
     click_by_html_id,
     js_evaluate,
     page_goto,
+    page_discover,
     page_screenshot,
     page_wait_element,
     type_by_ref,
@@ -46,6 +47,41 @@ app.onsubmit=async e=>{e.preventDefault();const body={name:appName.value,descrip
  const r=await fetch('/receipt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
  if(r.ok)done.textContent='Created '+body.name};</script>"""
 
+_MODAL_HTML = """<!doctype html><meta charset=utf-8><title>Apps with modal field labels</title>
+<style>body{font:18px sans-serif;margin:32px}input,textarea,button{font:inherit;padding:8px}
+[role=dialog]{position:fixed;inset:100px 12% 40px;background:white;border:2px solid #345;
+padding:24px;overflow:auto;box-shadow:0 0 0 9999px #0003}.form-row{margin:20px 0}
+input,textarea{display:block}#done{color:green}</style>
+<h1>Apps</h1><input id=backgroundSearch placeholder="Search by app name or App ID" value="keep background">
+<button id=open>Create Custom App</button><output id=done>Not submitted</output>
+<section id=dialog role=dialog aria-modal=true aria-label="Create Custom App" hidden><form id=app>
+<h2>Create Custom App</h2><div class=form-row id=nameRow>
+<span><strong>Name</strong></span><b>*</b><span>0 / 32</span>
+<div><input id=appName aria-label="0/32"></div></div>
+<div class=form-row><span>Description</span><b>*</b><span>0 / 120</span>
+<textarea id=description aria-label="0/120"></textarea></div>
+<div id=extra><div class=form-row><span>Legal <strong>Name</strong></span><b>*</b><span>0 / 64</span>
+<input id=legalName aria-label="0/64" value="preserve legal"></div></div>
+<button id=submit>Create</button><button type=button id=cancel>Cancel</button>
+</form></section><script>
+window.events=[];
+for(const kind of ['input','beforeinput','keydown','keyup','change'])
+ document.addEventListener(kind,e=>events.push({kind,id:e.target.id,trusted:e.isTrusted}),true);
+document.querySelector('#open').onclick=()=>dialog.hidden=false;
+cancel.onclick=()=>dialog.hidden=true;
+app.onsubmit=async e=>{e.preventDefault();const body={name:appName.value,description:description.value,
+ background:backgroundSearch.value,trusted:e.isTrusted};
+ const r=await fetch('/receipt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+ if(r.ok)done.textContent='Created '+body.name};
+const variant=new URLSearchParams(location.search).get('case');
+if(variant==='direct')extra.innerHTML='<input id=second aria-label=Name value="preserve duplicate">';
+if(variant==='wrapped')extra.innerHTML='<div class=form-row><span>Name</span><b>*</b><span>0 / 64</span><input id=second aria-label="0/64" value="preserve duplicate"></div>';
+if(variant==='label')extra.innerHTML='<label for=second>Name</label><input id=second value="preserve duplicate">';
+if(variant==='group')nameRow.insertAdjacentHTML('beforeend','<input id=second value="preserve duplicate">');
+if(variant==='group-direct'){nameRow.insertAdjacentHTML('beforeend','<input id=second value="preserve duplicate">');extra.innerHTML='<input aria-label=Name value="preserve exact">';}
+if(variant==='substring'){nameRow.remove();extra.innerHTML='<input id=second placeholder="Filter by app name" value="preserve duplicate">';}
+</script>"""
+
 
 @asynccontextmanager
 async def label_site():
@@ -61,12 +97,16 @@ async def label_site():
             content_type="text/html",
         )
 
+    async def modal(request):
+        return web.Response(text=_MODAL_HTML, content_type="text/html")
+
     async def receipt(request):
         receipts.append(await request.json())
         return web.json_response({"accepted": True})
 
     app.router.add_get("/", page)
     app.router.add_get("/frame", frame)
+    app.router.add_get("/modal", modal)
     app.router.add_post("/receipt", receipt)
     runner = web.AppRunner(app)
     await runner.setup()
@@ -80,6 +120,179 @@ async def label_site():
 
 async def read(driver, expression):
     return (await driver.call(js_evaluate, expression=expression))["result"]
+
+
+async def modal_journey(driver, folder, caplog):
+    """A modal label competes with a real background substring, then duplicates."""
+    caplog.set_level("DEBUG", logger="ai_dev_browser.core.ext_bridge")
+    evidence = {"refusals": []}
+    async with label_site() as (url, receipts):
+        try:
+            await driver.call(page_goto, url=url + "/modal")
+            assert (await driver.call(click_by_html_id, html_id="open"))["clicked"]
+            assert await read(driver, "!dialog.hidden")
+            hits = await driver.call(
+                page_discover,
+                text="Name",
+                interactable_only=False,
+                include_coordinates=False,
+            )
+            evidence["discovery"] = hits
+            assert any(h["name"] == "Search by app name or App ID" for h in hits), hits
+            if hasattr(driver, "port"):
+                code, result = await extension_cli(
+                    driver,
+                    "type_by_text",
+                    "--name",
+                    "Name",
+                    "--text",
+                    "Moss QA",
+                    "--clear",
+                )
+                assert code == 0, result
+            else:
+                result = await driver.call(
+                    type_by_text, name="Name", text="Moss QA", clear=True
+                )
+            evidence["name"] = result
+            assert (
+                result["typed"]
+                and result["verified"]
+                and result["method"] == "insertText"
+            ), result
+            field = await driver.call(page_wait_element, selector="#appName")
+            assert result["ref"].split("#")[-1] == field["ref"].split("#")[-1]
+            description = await driver.call(
+                type_by_text,
+                name="Description",
+                text="Original modal acceptance",
+                clear=True,
+            )
+            assert description["typed"] and description["verified"], description
+            evidence["description"] = description
+            state = await read(
+                driver,
+                "({name:appName.value,background:backgroundSearch.value,events})",
+            )
+            assert (
+                state["name"] == "Moss QA" and state["background"] == "keep background"
+            ), state
+            assert await read(driver, "legalName.value==='preserve legal'")
+            assert state["events"] and all(
+                e["trusted"] and e["id"] in {"appName", "description"}
+                for e in state["events"]
+            ), state
+            assert receipts == []
+            assert (await driver.call(click_by_html_id, html_id="submit"))["clicked"]
+            assert (await driver.call(page_wait_element, text="Created Moss QA"))[
+                "found"
+            ]
+            assert receipts == [
+                {
+                    "name": "Moss QA",
+                    "description": "Original modal acceptance",
+                    "background": "keep background",
+                    "trusted": True,
+                }
+            ], receipts
+            evidence.update(state=state, receipts=list(receipts))
+            await driver.call(
+                page_screenshot, path=str(folder / "label-typing-accepted.png")
+            )
+            assert (await driver.call(click_by_html_id, html_id="cancel"))["clicked"]
+            assert await read(
+                driver, "dialog.hidden && backgroundSearch.value==='keep background'"
+            )
+            fallback = await driver.call(
+                type_by_text,
+                name="app name",
+                text="unique substring fallback",
+                clear=True,
+            )
+            assert fallback["typed"] and fallback["verified"], fallback
+            assert await read(
+                driver, "backgroundSearch.value==='unique substring fallback'"
+            )
+            evidence["substring_fallback"] = fallback
+            for variant in (
+                "direct",
+                "wrapped",
+                "label",
+                "group",
+                "group-direct",
+                "substring",
+            ):
+                await driver.call(page_goto, url=url + "/modal?case=" + variant)
+                assert (await driver.call(click_by_html_id, html_id="open"))["clicked"]
+                before = await read(
+                    driver,
+                    "({events:events.slice(),active:document.activeElement.id,values:Array.from(document.querySelectorAll('input,textarea')).map(n=>n.value)})",
+                )
+                start = len(caplog.records)
+                if hasattr(driver, "port"):
+                    code, refused = await extension_cli(
+                        driver,
+                        "type_by_text",
+                        "--name",
+                        "Name",
+                        "--text",
+                        "must not land",
+                        "--enter",
+                        "--timeout",
+                        "0",
+                    )
+                    assert code == 5 and "page_discover" in refused["hint"], refused
+                else:
+                    refused = await driver.call(
+                        type_by_text,
+                        name="Name",
+                        text="must not land",
+                        enter=True,
+                        timeout=0,
+                    )
+                assert (
+                    refused["error_code"] == "conflict"
+                    and refused["retryable"] is False
+                ), refused
+                assert (
+                    refused["typed"] is False
+                    and refused["verified"] is False
+                    and refused["input_sent"] is False
+                    and refused["methods_tried"] == []
+                ), refused
+                after = await read(
+                    driver,
+                    "({events:events.slice(),active:document.activeElement.id,values:Array.from(document.querySelectorAll('input,textarea')).map(n=>n.value)})",
+                )
+                assert after == before, (variant, before, after)
+                sent = [
+                    r.args[0]
+                    for r in caplog.records[start:]
+                    if r.name == "ai_dev_browser.core.ext_bridge"
+                    and r.msg == "action: %s%s"
+                    and r.args[0].startswith("Input.")
+                ]
+                assert sent == []
+                evidence["refusals"].append(
+                    {
+                        "case": variant,
+                        "result": refused,
+                        "state": after,
+                        "input_commands": sent,
+                    }
+                )
+                assert len(receipts) == 1
+                assert (await driver.call(click_by_html_id, html_id="cancel"))[
+                    "clicked"
+                ]
+                assert await read(
+                    driver,
+                    "dialog.hidden && backgroundSearch.value==='keep background'",
+                )
+        finally:
+            (folder / "modal-label-evidence.json").write_text(
+                json.dumps(evidence, indent=2, ensure_ascii=False), encoding="utf8"
+            )
 
 
 async def fill_journey(driver, folder):

@@ -1,13 +1,14 @@
 {
   "config": {
     "imports": [
-      "from tests.integration.label_typing_support import fill_journey, refusal_journey"
+      "from tests.integration.label_typing_support import fill_journey, refusal_journey, modal_journey"
     ],
     "call_style": "function",
     "required_env_vars": [],
     "smoke_test_assertions": [
       "callable(fill_journey)",
-      "callable(refusal_journey)"
+      "callable(refusal_journey)",
+      "callable(modal_journey)"
     ]
   },
   "scenarios": [
@@ -80,6 +81,44 @@
         {
           "raw_code": [
             "await refusal_journey(live_extension, tmp_path, caplog)"
+          ]
+        }
+      ],
+      "async": true
+    },
+    {
+      "name": "cdp_modal_label",
+      "title": "cdp: distinguish exact field labels from background substrings",
+      "workflow": "Open app list -> trusted open modal -> discover background search and modal Name -> fill actual Name and Description -> one trusted HTTP submission -> cancel -> refuse six genuine ambiguity cases without input",
+      "user_problem": "The original Name label must beat an unrelated background substring without guessing between genuine duplicate fields.",
+      "fixtures": [
+        "interaction_cdp",
+        "tmp_path",
+        "caplog"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "await modal_journey(interaction_cdp, tmp_path, caplog)"
+          ]
+        }
+      ],
+      "async": true
+    },
+    {
+      "name": "real_extension_modal_label",
+      "title": "real_extension: distinguish exact field labels from background substrings",
+      "workflow": "Open app list -> trusted open modal -> discover background search and modal Name -> fill actual Name and Description -> one trusted HTTP submission -> cancel -> refuse six genuine ambiguity cases without input",
+      "user_problem": "The original Name label must beat an unrelated background substring without guessing between genuine duplicate fields.",
+      "fixtures": [
+        "live_extension",
+        "tmp_path",
+        "caplog"
+      ],
+      "steps": [
+        {
+          "raw_code": [
+            "await modal_journey(live_extension, tmp_path, caplog)"
           ]
         }
       ],

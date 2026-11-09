@@ -119,34 +119,36 @@ async def _wait_text_entry(tab: Tab, name: str, timeout: float):
         hits = await page_discover(
             tab, text=name, interactable_only=False, include_coordinates=False
         )
-        direct, wrapped = {}, {}
-        ambiguous = False
+        candidates, exact = {}, {}
+        ambiguous = exact_ambiguous = False
         for hit in hits:
             element = await get_element_by_ref(tab, hit["ref"])
             try:
                 if await is_text_entry(element):
-                    direct[element.backend_node_id] = (element, hit["ref"], hit)
+                    match = (element, hit["ref"])
+                    candidates[element.backend_node_id] = match
+                    if (hit.get("name") or "").strip().lower() == name.strip().lower():
+                        exact[element.backend_node_id] = match
                     continue
-                target, reason = await resolve_text_entry(element, name)
+                target, reason, exact_label = await resolve_text_entry(element, name)
                 ambiguous |= reason == "ambiguous"
+                exact_ambiguous |= reason == "ambiguous" and exact_label
                 if target is not None:
                     prefix = parse_ref(hit["ref"])[0]
                     ref = make_ref(0, int(target.backend_node_id))
                     if prefix:
                         ref = prefix + ":" + ref
-                    wrapped[target.backend_node_id] = (target, ref, hit)
+                    match = (target, ref)
+                    candidates[target.backend_node_id] = match
+                    if exact_label:
+                        exact[target.backend_node_id] = match
             finally:
                 await element.release()
-        exact = {
-            key: value
-            for key, value in direct.items()
-            if value[2].get("name", "").strip().lower() == name.strip().lower()
-        }
-        candidates = exact or {**wrapped, **direct}
-        if len(candidates) > 1 or (not exact and ambiguous):
+        candidates = exact or candidates
+        if len(candidates) > 1 or exact_ambiguous or (not exact and ambiguous):
             return None, None, "ambiguous"
         if candidates:
-            element, ref, _ = next(iter(candidates.values()))
+            element, ref = next(iter(candidates.values()))
             return element, ref, None
         if loop.time() >= deadline:
             return None, None, "not_editable" if hits else "not_found"
@@ -1299,8 +1301,11 @@ async def type_by_text(
     so the two are interchangeable once the input is located.
 
     A label or field wrapper resolves to its unique text input/textarea or
-    contenteditable host; `ref` identifies that actual field. Duplicate labels
-    or multiple contained fields return `conflict` before any input or Enter.
+    contenteditable host; `ref` identifies that actual field. Exact accessible
+    field names and associated labels take precedence over longer substring
+    matches (Name beats Search by app name). Required markers and their counters
+    do not change a label. Multiple exact fields or multiple contained fields
+    return `conflict` before any input or Enter; no field is chosen by page order.
 
     Typing is VERIFIED with automatic fallback (shared with `type_by_ref`): it
     types, reads `el.value` back, and falls through `insertText` → real per-char

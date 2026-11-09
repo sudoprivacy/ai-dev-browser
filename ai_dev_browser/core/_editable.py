@@ -42,7 +42,7 @@ async def is_text_entry(element):
 
 
 async def resolve_text_entry(element, query):
-    """Resolve one label/control or contained field without moving focus.
+    """Return (field, refusal, exact_label) without moving focus.
 
     Keep the returned DOM identity pinned with CDP, rather than tagging the
     page or later re-running a selector that could target a different field.
@@ -51,13 +51,29 @@ async def resolve_text_entry(element, query):
     script = (
         "function(){"
         + _TEXT_ENTRY
-        + "const el=this.nodeType===3 ? this.parentElement : this;"
-        "if(!el || !el.querySelectorAll) return 'not_editable';"
-        "if(textEntry(el)) return el;"
-        "const label=el.closest && el.closest('label');"
-        "if(label && textEntry(label.control)) return label.control;"
-        "const query=" + json.dumps(query.lower()) + ";"
-        "const fields=n=>Array.from(n.querySelectorAll('input,textarea,[contenteditable]')).filter(textEntry);"
+        + r"""
+const normal=s=>s.trim().replace(/\s+/g,' ').toLowerCase();
+const query=normal(QUERY);
+function labelText(n) {
+  if(n.nodeType===3) return n.nodeValue;
+  if(n.nodeType!==1 || textEntry(n) || n.matches(
+      'button,a,select,script,style,[role=button],[role=link],[hidden],[aria-hidden=true]')) return '';
+  return Array.from(n.childNodes).map(labelText).join('');
+}
+function result(field,reason,scope) {
+  const text=normal(labelText(scope));
+  // Required markers and their character counters decorate a field label.
+  // Keep the entire label: a nested word in "Legal Name" is not exact "Name".
+  const label=text.replace(/\s*\*\s*(?:\d+\s*\/\s*\d+\s*)?$/,'').trim();
+  return {field,reason,exact:text===query || label===query};
+}
+const el=this.nodeType===3 ? this.parentElement : this;
+if(!el || !el.querySelectorAll) return 'not_editable';
+if(textEntry(el)) return {field:el,exact:false};
+const label=el.closest && el.closest('label');
+if(label && textEntry(label.control)) return result(label.control,null,label);
+""".replace("QUERY", json.dumps(query))
+        + "const fields=n=>Array.from(n.querySelectorAll('input,textarea,[contenteditable]')).filter(textEntry);"
         "let scope=el;"
         # An outer dialog may include the label too. Narrow to its matching
         # field group rather than treating every input in the dialog as labelled.
@@ -66,7 +82,9 @@ async def resolve_text_entry(element, query):
         "   (n.textContent||'').toLowerCase().includes(query) && fields(n).length);"
         " if(groups.length!==1) break; scope=groups[0];}"
         "const found=fields(scope);"
-        "return found.length===1 ? found[0] : found.length ? 'ambiguous' : 'not_editable';}"
+        "if(!found.length) return 'not_editable';"
+        "return result(found.length===1 ? found[0] : null,"
+        " found.length===1 ? null : found.length ? 'ambiguous' : 'not_editable',scope);}"
     )
     source = await element._resolve()
     target, error = await element.tab.send(
@@ -76,12 +94,25 @@ async def resolve_text_entry(element, query):
     )
     if error:
         unwrap(target, error, expression=script)
-    if not target.object_id or target.subtype != "node":
-        return None, target.value or "not_editable"
+    if not target.object_id:
+        return None, target.value or "not_editable", False
+    field = None
     try:
-        node = await element.tab.send(dom.describe_node(object_id=target.object_id))
-        return Element(node, element.tab), None
+        properties, _, _, error = await element.tab.send(
+            runtime.get_properties(target.object_id, own_properties=True)
+        )
+        if error:
+            unwrap(target, error, expression=script)
+        values = {p.name: p.value for p in properties if p.value is not None}
+        field = values.get("field")
+        exact = bool(values["exact"].value)
+        if field is None or field.subtype != "node":
+            return None, values["reason"].value, exact
+        node = await element.tab.send(dom.describe_node(object_id=field.object_id))
+        return Element(node, element.tab), None, exact
     finally:
+        if field and field.object_id:
+            await element.tab.send(runtime.release_object(field.object_id))
         await element.tab.send(runtime.release_object(target.object_id))
 
 
