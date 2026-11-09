@@ -5,6 +5,7 @@ take/return human control. No raw CDP, extension or VNC port is published.
 """
 
 import asyncio
+import copy
 import hashlib
 import hmac
 import json
@@ -23,7 +24,12 @@ from aiohttp import web
 from ai_dev_browser.core.browser import browser_connect, browser_start, browser_stop
 from ai_dev_browser.core.connection import connect_browser, connect_extension
 from ai_dev_browser.remote.cdp import BrowserViewError
-from ai_dev_browser.remote.control import BrowserControl, ControlError, SharedViewer
+from ai_dev_browser.remote.control import (
+    BrowserControl,
+    ControlError,
+    SharedViewer,
+    check_effect_authorization,
+)
 from ai_dev_browser.remote.files import BrowserFiles
 from ai_dev_browser.remote.gesture import LiveDrag
 from ai_dev_browser.remote.page import drag_points
@@ -52,7 +58,11 @@ class Worker:
         extension_directory=None,
         chrome_args=(),
         existing_extension_root=None,
+        require_agent_authorization=False,
     ):
+        if type(require_agent_authorization) is not bool:
+            raise ValueError("Explicit agent authorization mode required")
+        self.require_agent_authorization = require_agent_authorization
         self.root = pathlib.Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.host_token, self.ai_token = host_token, ai_token
@@ -533,7 +543,7 @@ class Worker:
             if self.live_drag is context:
                 self.live_drag = None
 
-    async def start(self, action, actor):
+    async def start(self, action, actor, *, before_effect=None):
         async with self.changing_lifecycle():
             if not isinstance(action.get("isHeadless"), bool) or action.get(
                 "transport", "extension"
@@ -542,6 +552,10 @@ class Worker:
             if actor != "ai":
                 await self.control.take(actor)
                 self.save(state="pausing")
+            original = self.control.snapshot()
+            await check_effect_authorization(before_effect)
+            if self.control.snapshot() != original:
+                raise ControlError("stale_browser_operation")
             await self._start_browser(action, actor)
 
     async def _start_browser(self, action, actor):
@@ -739,7 +753,7 @@ class Worker:
             await self.display.close()
             self.display = None
 
-    async def lifecycle_action(self, actor, action):
+    async def lifecycle_action(self, actor, action, *, before_effect=None):
         if self.personal_reference is not None:
             raise ControlError("browser_existing_extension_requires_disconnect")
         kind = action.get("kind")
@@ -755,6 +769,8 @@ class Worker:
             # Accept the original lifecycle intent, then drain its own input.
             # The cancellation fences coordinates without invalidating that
             # same Stop/Restart intent or accepting another ownership change.
+            self.control._authorize(actor, epoch, target_epoch, False)
+            await check_effect_authorization(before_effect)
             self.control._authorize(actor, epoch, target_epoch, False)
             await self.close_live_drag()
             if self.control.target_epoch != target_epoch or self.control.epoch not in (
@@ -776,6 +792,10 @@ class Worker:
                 try:
                     await self._stop_browser()
                     if kind == "restart":
+                        original = self.control.snapshot()
+                        await check_effect_authorization(before_effect)
+                        if self.control.snapshot() != original:
+                            raise ControlError("stale_browser_operation")
                         await self._start_browser(action, actor)
                 except BaseException:
                     if self.control.state == "ai":
@@ -785,11 +805,15 @@ class Worker:
                     raise
                 self.save()
 
-            await self.control.run(actor, epoch, target_epoch, perform)
+            await self.control.run(
+                actor, epoch, target_epoch, perform, before_effect=before_effect
+            )
         reply = {"session": await self.state(actor if actor != "ai" else None)}
         if kind == "restart" and self.session:
             reply["observation"] = await self.session.observe(
-                self.control.epoch, self.control.target_epoch
+                self.control.epoch,
+                self.control.target_epoch,
+                before_effect=before_effect,
             )
         return reply
 
@@ -1068,20 +1092,67 @@ class Worker:
             self.save()
         return {"session": await self.state(controller), **extra}
 
-    async def agent(self, action):
+    async def _agent_state(self, before_effect):
+        # Session.state already owns the operation barrier while discovering
+        # externally closed tabs. Do not nest another operation lock around it.
+        async with self.lifecycle:
+            if self.session:
+                live = await self.session.state(before_effect=before_effect)
+                return self._state_reply(live, None)
+
+            async def stopped():
+                return self._state_reply(
+                    {**self.control.snapshot(), "activeTargetId": None, "tabs": []},
+                    None,
+                )
+
+            return await self.control.run(
+                "ai",
+                self.control.epoch,
+                self.control.target_epoch,
+                stopped,
+                observation=True,
+                before_effect=before_effect,
+            )
+
+    async def agent(self, action, *, before_effect=None):
+        """Run a host-bound invocation; tool arguments never supply its guard.
+
+        Managed hosts require a fresh callback on every call. It runs inside
+        the public input/lifecycle barrier, not just before an HTTP forwarding
+        wait. The callback supplies no browser ownership or native identity.
+        """
+        action = copy.deepcopy(action)
+        if self.require_agent_authorization and before_effect is None:
+            raise ControlError("browser_authorization_required")
+        if before_effect is not None and not callable(before_effect):
+            raise ControlError("invalid_browser_authorization")
         kind = action.get("kind")
         if kind in ("stop", "restart"):
-            return await self.lifecycle_action("ai", action)
+            return await self.lifecycle_action(
+                "ai", action, before_effect=before_effect
+            )
         if kind == "start":
-            await self.start(action, "ai")
+            await self.start(action, "ai", before_effect=before_effect)
             return {"session": await self.state()}
-        if kind == "state":
-            return {"session": await self.state()}
+        if kind == "state" or (kind == "observe" and not self.session):
+            state = await self._agent_state(before_effect)
+            return {"session": state}
         if not self.session:
             raise ControlError("browser_not_started")
-        epoch, target_epoch = self.epochs(action)
+        # The observe tool intentionally discovers the current target/version.
+        # It does not refresh stale versions supplied for an action.
+        if kind == "observe" and not {"controlEpoch", "targetEpoch"} & action.keys():
+            state = await self._agent_state(before_effect)
+            if not self.session:
+                raise ControlError("browser_not_started")
+            epoch, target_epoch = state["controlEpoch"], state["targetEpoch"]
+        else:
+            epoch, target_epoch = self.epochs(action)
         if kind == "observe":
-            observation = await self.session.observe(epoch, target_epoch)
+            observation = await self.session.observe(
+                epoch, target_epoch, before_effect=before_effect
+            )
             current = await self.state()
             if (
                 current["controlEpoch"] != epoch
@@ -1131,7 +1202,12 @@ class Worker:
             ):
                 raise ControlError("invalid_browser_command")
             result = await self.session.agent_command(
-                epoch, target_epoch, method, params, frame=frame
+                epoch,
+                target_epoch,
+                method,
+                params,
+                frame=frame,
+                before_effect=before_effect,
             )
         elif kind in {
             "input",
@@ -1144,7 +1220,9 @@ class Worker:
             "close-tab",
             "upload-files",
         }:
-            result = await self.session.action("ai", epoch, target_epoch, action)
+            result = await self.session.action(
+                "ai", epoch, target_epoch, action, before_effect=before_effect
+            )
         else:
             raise ControlError("invalid_agent_browser_action")
         self.save()
@@ -1192,7 +1270,14 @@ def mcp_error_text(code):
     return f"{code}: {hint}" if hint else code
 
 
-def application(worker):
+def application(worker, *, agent_authorization=None):
+    """Embed the Worker with an optional trusted per-invocation guard factory.
+
+    agent_authorization(request, action) returns an async None-or-raise callback
+    bound by the host to the original authenticated caller/run/resource. This
+    is server composition, not a tool/HTTP field or another credential issuer.
+    Managed Workers refuse missing guards even when their AI token is valid.
+    """
     reaper_key = web.AppKey("viewer_reaper", asyncio.Task)
 
     @web.middleware
@@ -1216,6 +1301,35 @@ def application(worker):
             request.headers.get("Authorization", ""), "Bearer " + token
         ):
             raise web.HTTPForbidden()
+
+    async def authorized_agent(request, action):
+        action = copy.deepcopy(action)
+        original_binding = copy.deepcopy(worker.binding)
+        before_effect = None
+        if agent_authorization is not None:
+            try:
+                before_effect = await agent_authorization(
+                    request, copy.deepcopy(action)
+                )
+            except PermissionError:
+                raise ControlError("browser_authorization_denied") from None
+            except Exception:
+                raise ControlError("browser_authorization_unavailable") from None
+            if not callable(before_effect):
+                raise ControlError("invalid_browser_authorization")
+
+            supplied_assertion = before_effect
+
+            async def bound_assertion():
+                if worker.binding != original_binding:
+                    raise PermissionError("Original browser binding changed")
+                result = await supplied_assertion()
+                if worker.binding != original_binding:
+                    raise PermissionError("Original browser binding changed")
+                return result
+
+            before_effect = bound_assertion
+        return await worker.agent(action, before_effect=before_effect)
 
     async def invoke(request):
         authorize(request, worker.host_token)
@@ -1320,7 +1434,7 @@ def application(worker):
         authorize(request, worker.ai_token)
         if worker.binding is None:
             raise ControlError("browser_binding_required")
-        return web.json_response(await worker.agent(await request.json()))
+        return web.json_response(await authorized_agent(request, await request.json()))
 
     tools = json.loads(
         pathlib.Path(__file__).with_name("mcp-tools.json").read_text(encoding="utf-8")
@@ -1356,24 +1470,19 @@ def application(worker):
             name, arguments = params.get("name"), params.get("arguments", {})
             try:
                 if name == "browser_launch":
-                    value = await worker.agent({**arguments, "kind": "start"})
-                elif name == "browser_stop":
-                    value = await worker.agent({**arguments, "kind": "stop"})
-                elif name == "browser_restart":
-                    value = await worker.agent({**arguments, "kind": "restart"})
-                elif name == "browser_observe":
-                    current = await worker.state()
-                    value = (
-                        await worker.agent(
-                            {
-                                "kind": "observe",
-                                "controlEpoch": current["controlEpoch"],
-                                "targetEpoch": current["targetEpoch"],
-                            }
-                        )
-                        if worker.session
-                        else {"session": current}
+                    value = await authorized_agent(
+                        request, {**arguments, "kind": "start"}
                     )
+                elif name == "browser_stop":
+                    value = await authorized_agent(
+                        request, {**arguments, "kind": "stop"}
+                    )
+                elif name == "browser_restart":
+                    value = await authorized_agent(
+                        request, {**arguments, "kind": "restart"}
+                    )
+                elif name == "browser_observe":
+                    value = await authorized_agent(request, {"kind": "observe"})
                 elif name == "browser_action" and arguments.get("kind") in {
                     "navigate",
                     "input",
@@ -1395,7 +1504,7 @@ def application(worker):
                         except ValueError:
                             raise ControlError("invalid_browser_command") from None
                         arguments = {**arguments, "params": command_params}
-                    value = await worker.agent(arguments)
+                    value = await authorized_agent(request, arguments)
                 else:
                     raise ControlError("invalid_agent_browser_action")
                 content = [

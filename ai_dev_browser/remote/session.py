@@ -159,7 +159,7 @@ class BrowserSession:
         self._size = int(viewport["clientWidth"]), int(viewport["clientHeight"])
         return self._size
 
-    async def state(self):
+    async def state(self, *, before_effect=None):
         # Refresh can discover an externally closed target, so construct the
         # snapshot after refreshing, not before it.
         async def current():
@@ -182,6 +182,7 @@ class BrowserSession:
             self.control.target_epoch,
             current,
             observation=True,
+            before_effect=before_effect,
         )
 
     def invalidate_frame(self):
@@ -278,9 +279,14 @@ class BrowserSession:
             },
         }
 
-    async def observe(self, epoch: int, target_epoch: int):
+    async def observe(self, epoch: int, target_epoch: int, *, before_effect=None):
         return await self.control.run(
-            "ai", epoch, target_epoch, self._observe, observation=True
+            "ai",
+            epoch,
+            target_epoch,
+            self._observe,
+            observation=True,
+            before_effect=before_effect,
         )
 
     async def selection(self, controller: str, epoch: int, target_epoch: int):
@@ -303,7 +309,15 @@ class BrowserSession:
             raise ControlError("stale_browser_operation")
         return await self.control.give_back(controller, self._observe)
 
-    async def action(self, actor: str, epoch: int, target_epoch: int, action: dict):
+    async def action(
+        self,
+        actor: str,
+        epoch: int,
+        target_epoch: int,
+        action: dict,
+        *,
+        before_effect=None,
+    ):
         async def perform():
             self._frame = None
             kind = action["kind"]
@@ -386,7 +400,9 @@ class BrowserSession:
             else:
                 raise ControlError("invalid_browser_action")
 
-        return await self.control.run(actor, epoch, target_epoch, perform)
+        return await self.control.run(
+            actor, epoch, target_epoch, perform, before_effect=before_effect
+        )
 
     async def open_authorized_page(self, controller, epoch, target_epoch, url, cookie):
         """Install a host session and open a new owned tab under the human barrier."""
@@ -463,7 +479,14 @@ class BrowserSession:
         return await self.control.run(controller, epoch, target_epoch, perform)
 
     async def agent_command(
-        self, epoch: int, target_epoch: int, method: str, params: dict, *, frame=None
+        self,
+        epoch: int,
+        target_epoch: int,
+        method: str,
+        params: dict,
+        *,
+        frame=None,
+        before_effect=None,
     ):
         """Trusted host-only agent command. Arbitrary evaluation counts as a write."""
 
@@ -504,7 +527,9 @@ class BrowserSession:
                 )
                 raise mapped from error
 
-        return await self.control.run("ai", epoch, target_epoch, perform)
+        return await self.control.run(
+            "ai", epoch, target_epoch, perform, before_effect=before_effect
+        )
 
     async def follow_foreground(self, controller: str, epoch: int, target_epoch: int):
         """Follow a native tab selection made by the authorized human viewer.

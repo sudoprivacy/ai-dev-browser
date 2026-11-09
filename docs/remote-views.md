@@ -374,6 +374,61 @@ them before Chrome starts. Remote exposure requires the application's
 authenticated gateway. `X-ADB-Browser-Context` scopes file transport and
 `X-ADB-Browser-Session` scopes MCP calls; existing Moss headers remain compatible.
 
+#### Current host authorization at the effect barrier
+
+Managed application hosts can require a host-bound assertion for each AI tool
+invocation, in addition to the private Worker token:
+
+```python
+worker = Worker(profile_root, host_token, ai_token, require_agent_authorization=True)
+app = application(worker, agent_authorization=resolve_invocation_authorization)
+```
+
+The embedding host implements `resolve_invocation_authorization(request, action)`.
+It returns an async zero-argument callback that completes with `None` or raises.
+The factory resolves the original authenticated invocation using the host's
+existing authority. The returned callback must check its **current** actor,
+session/run, action and resource grant each time it is called. An admission
+decision cached when the request arrived is insufficient. The Worker passes a
+separate copy of the action to the factory; neither credentials nor a callable
+can be supplied through tool arguments.
+The HTTP invocation also retains its original browser binding across factory
+and assertion waits; a later rebind cannot move that call onto another session.
+
+Both `/mcp` and `/agent` use this factory. A managed Worker with a missing
+callback refuses the invocation even if its AI token is valid. A trusted
+in-process caller can instead use `worker.agent(action, before_effect=assertion)`.
+The standalone mode keeps its existing host authentication behavior.
+
+The callback runs after waiting for the shared public operation lock and before
+page observation or effects. Launch checks after waiting for the lifecycle lock,
+before profile/browser creation; stop/restart check before their effects too.
+Restart checks again after stopping and before launching a replacement, and
+before observing the restarted page.
+After an awaited assertion, the Worker rechecks browser control/target versions
+and ownership so an overlapping Stop cannot admit an old queued input. Boolean
+and JSON completions are refused, including `False`; private authorization
+errors are replaced with stable public codes. Cancellation before submission
+does not execute an input. Once an input is sent, its existing drain/Unknown
+semantics remain in force.
+An authorization failure during restart can follow a completed stop. Do not
+interpret every authorization error as proof of zero effects or retry it as a
+new launch; reconcile the original operation and browser state first.
+
+This is an embedding port, not a native identity provider or an atomic native
+grant/effect fence. The host must supply those checks and keep raw endpoints and
+credentials private. Browser epochs, tool parameters and Worker tokens do not
+establish a native actor/run. The separately authenticated human/host viewer
+flow does not require allocating an Agent or chat merely to open a browser.
+
+`tests/integration/test_worker_authorization_live.py` exercises real MCP, Worker
+and Chrome with synthetic host assertions: revoke after a barrier wait, Stop
+during authorization, malformed completions, the same draft across human/child
+input, and a human-only browser while native authorization is unavailable.
+Additional cases cover binding changes during factory resolution and revocation
+between stop and replacement launch.
+Those component checks do not qualify a production authority or model journey.
+
 #### Agent commands in embedded pages
 
 `browser_action(kind="command", method=..., paramsJson=..., frame=...)` can

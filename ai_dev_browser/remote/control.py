@@ -19,6 +19,25 @@ class ControlError(RuntimeError):
         super().__init__(code)
 
 
+async def check_effect_authorization(before_effect):
+    """Consume a trusted host assertion without exposing its private errors.
+
+    The callback captures the original authenticated invocation; arguments and
+    browser epochs cannot construct it. None-or-raise is the only contract.
+    This check does not replace the native service's atomic effect fence.
+    """
+    if before_effect is None:
+        return
+    try:
+        result = await before_effect()
+    except PermissionError:
+        raise ControlError("browser_authorization_denied") from None
+    except Exception:
+        raise ControlError("browser_authorization_unavailable") from None
+    if result is not None:
+        raise ControlError("invalid_browser_authorization")
+
+
 class BrowserControl:
     """One lease shared by every agent, target and viewer of a browser.
 
@@ -62,6 +81,7 @@ class BrowserControl:
         operation: Callable[[], Awaitable[T]],
         *,
         observation: bool = False,
+        before_effect: Callable[[], Awaitable[None]] | None = None,
     ) -> T:
         """Check epochs again after queueing; never replay a rejected action.
 
@@ -71,6 +91,10 @@ class BrowserControl:
         """
         self._authorize(actor, epoch, target_epoch, observation)
         async with self._operations:
+            self._authorize(actor, epoch, target_epoch, observation)
+            await check_effect_authorization(before_effect)
+            # A Stop/target change can begin while the host assertion awaits.
+            # No operation has been submitted yet, so refuse it before input.
             self._authorize(actor, epoch, target_epoch, observation)
             pending: asyncio.Future[T] = asyncio.ensure_future(operation())
             try:
