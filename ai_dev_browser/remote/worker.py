@@ -1092,6 +1092,29 @@ class Worker:
             self.save()
         return {"session": await self.state(controller), **extra}
 
+    async def _agent_state(self, before_effect):
+        # Session.state already owns the operation barrier while discovering
+        # externally closed tabs. Do not nest another operation lock around it.
+        async with self.lifecycle:
+            if self.session:
+                live = await self.session.state(before_effect=before_effect)
+                return self._state_reply(live, None)
+
+            async def stopped():
+                return self._state_reply(
+                    {**self.control.snapshot(), "activeTargetId": None, "tabs": []},
+                    None,
+                )
+
+            return await self.control.run(
+                "ai",
+                self.control.epoch,
+                self.control.target_epoch,
+                stopped,
+                observation=True,
+                before_effect=before_effect,
+            )
+
     async def agent(self, action, *, before_effect=None):
         """Run a host-bound invocation; tool arguments never supply its guard.
 
@@ -1113,21 +1136,17 @@ class Worker:
             await self.start(action, "ai", before_effect=before_effect)
             return {"session": await self.state()}
         if kind == "state" or (kind == "observe" and not self.session):
-            state = await self.control.run(
-                "ai",
-                self.control.epoch,
-                self.control.target_epoch,
-                self.state,
-                observation=True,
-                before_effect=before_effect,
-            )
+            state = await self._agent_state(before_effect)
             return {"session": state}
         if not self.session:
             raise ControlError("browser_not_started")
         # The observe tool intentionally discovers the current target/version.
         # It does not refresh stale versions supplied for an action.
         if kind == "observe" and not {"controlEpoch", "targetEpoch"} & action.keys():
-            epoch, target_epoch = self.control.epoch, self.control.target_epoch
+            state = await self._agent_state(before_effect)
+            if not self.session:
+                raise ControlError("browser_not_started")
+            epoch, target_epoch = state["controlEpoch"], state["targetEpoch"]
         else:
             epoch, target_epoch = self.epochs(action)
         if kind == "observe":

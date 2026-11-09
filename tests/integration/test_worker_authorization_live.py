@@ -139,14 +139,21 @@ async def fixture(tmp_path, grants=None):
                 assert not result.get("isError"), text
                 return json.loads(text)
 
-        async def agent(action, error):
+        async def agent(action, error=None, *, actor=None):
             async with http.post(
                 origin + "/agent",
-                headers={"Authorization": "Bearer " + ai_token},
+                headers={
+                    "Authorization": "Bearer " + ai_token,
+                    **({"X-Fixture-Invocation": actor} if actor else {}),
+                },
                 json=action,
             ) as response:
                 body = await response.json()
-                assert response.status == 409 and body["error"] == error
+                if error:
+                    assert response.status == 409 and body["error"] == error
+                    return None
+                assert response.status == 200, body
+                return body
 
         try:
             await host(
@@ -352,3 +359,31 @@ async def test_factory_wait_cannot_move_an_old_call_to_rebound_browser(tmp_path)
         await pending
         assert worker.binding == changed
         assert worker.browser is None and grants.checked == []
+
+
+async def test_observe_discovers_remaining_real_tab_after_external_close(tmp_path):
+    grants = FixtureGrants()
+    async with fixture(tmp_path, grants) as (worker, _host, mcp, agent, website):
+        await mcp("browser_launch", {"isHeadless": True, "transport": "cdp"})
+        await mcp("browser_action", {"kind": "new-tab", **epochs(worker)})
+        await mcp(
+            "browser_action",
+            {"kind": "navigate", "url": website + "/", **epochs(worker)},
+        )
+        previous = worker.session.target_id
+        state = await agent({"kind": "state"}, actor="native-main")
+        assert state["session"]["activeTargetId"] == previous
+        # Simulate the separate native Chrome lifecycle, such as a person
+        # closing its tab. This is a real isolated-browser action outside the
+        # viewer/tool surface; assertions and subsequent input still use MCP.
+        browser = await worker.session._connect_browser()
+        await browser.call("Target.closeTarget", {"targetId": previous})
+        observed = await mcp("browser_observe", {})
+        assert observed["session"]["activeTargetId"] != previous
+        await mcp(
+            "browser_action",
+            {"kind": "navigate", "url": website + "/", **epochs(worker)},
+        )
+        page = await worker.session._connect_page()  # Read-only oracle.
+        assert await page.js("document.title") == "Original draft"
+        await mcp("browser_stop", epochs(worker))

@@ -159,7 +159,7 @@ class BrowserSession:
         self._size = int(viewport["clientWidth"]), int(viewport["clientHeight"])
         return self._size
 
-    async def state(self):
+    async def state(self, *, before_effect=None):
         # Refresh can discover an externally closed target, so construct the
         # snapshot after refreshing, not before it.
         async def current():
@@ -182,6 +182,7 @@ class BrowserSession:
             self.control.target_epoch,
             current,
             observation=True,
+            before_effect=before_effect,
         )
 
     def invalidate_frame(self):
