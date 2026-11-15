@@ -2,8 +2,10 @@
 
 import aiohttp
 from aiohttp import web
+import pytest
 
-from ai_dev_browser.remote.cdp import CDP
+from ai_dev_browser.cdp import runtime
+from ai_dev_browser.remote.cdp import CDP, send_command
 
 
 async def test_observer_does_not_replace_owner_or_close_its_socket():
@@ -52,3 +54,30 @@ async def test_observer_does_not_replace_owner_or_close_its_socket():
             assert page.reader.done() and not page.pending
     finally:
         await runner.cleanup()
+
+
+async def test_generated_sdk_codec_and_connection_failure_do_not_replay():
+    calls = []
+
+    async def call(method, params):
+        calls.append((method, params))
+        return {"result": {"type": "number", "value": 7}}
+
+    value, error = await send_command(call, runtime.evaluate("3+4"))
+    assert value.value == 7 and error is None and len(calls) == 1
+
+    async def lost(method, params):
+        calls.append((method, params))
+        raise ConnectionError("private fixture disconnect after submission")
+
+    with pytest.raises(ConnectionError):
+        await send_command(lost, runtime.evaluate("oneCall()"))
+    assert len(calls) == 2
+
+    def two_commands():
+        yield {"method": "Page.enable"}
+        yield {"method": "Page.close"}
+
+    with pytest.raises(TypeError, match="One SDK protocol command required"):
+        await send_command(call, two_commands())
+    assert len(calls) == 3 and calls[-1][0] == "Page.enable"

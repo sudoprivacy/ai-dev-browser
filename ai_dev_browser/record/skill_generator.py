@@ -39,9 +39,13 @@ class SkillGenerator:
         verification = self._verification_md()
         start_url = _md_escape(self.steps.start_url)
         target_hint = (
-            "Take a fresh ai-dev-browser DOM snapshot before resolving a recorded "
+            "In the standalone ai-dev-browser CLI, use `page_discover` for a fresh "
+            "snapshot before resolving a recorded "
             "target. Use a unique current target reference. If it is missing or "
-            "ambiguous, stop instead of reusing recorded coordinates or a stale reference."
+            "ambiguous, stop instead of reusing recorded coordinates or a stale reference. "
+            "In a managed application, use its advertised checked browser tools and "
+            "original operation identity; the host must admit this reviewed workflow "
+            "and its current inputs before execution. A Skill draft grants no authority."
         )
         privacy_note = (
             "Do not log passwords, tokens, one-time codes, cookies, session values, "

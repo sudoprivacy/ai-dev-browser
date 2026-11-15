@@ -572,6 +572,81 @@ File selection records a count without local paths or file bytes; draft
 compilation refuses it until an explicit authorized file binding is supplied.
 Keep the existing file/record/replay path until that integration is accepted.
 
+#### Checked parameterized replay
+
+`ai_dev_browser.record.replay.CheckedReplay` executes the original v1 step
+document on the host's existing `BrowserSession` and control lease. Supply the
+original durable operation ID, current actor/epochs, explicit recorded-to-current
+target bindings, mandatory current step assertions and original run/result
+admission callbacks. It never acquires control or resumes AI automatically.
+
+```python
+from ai_dev_browser.record.replay import CheckedReplay
+
+replay = CheckedReplay(
+    same_sdk_session, original_operation_id,
+    actor=original_authenticated_actor,
+    control_epoch=held_control_epoch, target_epoch=held_target_epoch,
+    target_bindings=host_approved_target_bindings,
+    authorize_step=resolve_original_replay_assertion,
+)
+report = await replay.run(
+    original_step_document, current_parameters,
+    before_run=claim_original_operation_current,
+    before_result=assert_original_result_read_current,
+)
+```
+
+`resolve_original_replay_assertion(recording_id, resolved_step, target_id,
+native_frame)` must return an async None-or-raise assertion for the SAME held
+principal and full intended action/source/DLP/file grants. A None frame requests
+preliminary target/metadata admission. Frame IDs, URL, native security origin and
+loader identity are resource facts. The callback must explicitly admit an owned
+new tab's staging document and intended destination when that lifecycle action
+is requested. An `about:blank` page alone grants no permission.
+
+Before effects, replay checks all step kinds, required parameters, duplicate
+step IDs, input sizes, URLs and verification types. It resolves a fresh SDK AX
+snapshot/backend reference for each element action, using the existing generated
+protocol codec, Element and actionability checks. Matching refuses weak, missing
+or tied candidates; recorded refs, coordinates and arbitrary recorded scripts
+are never executed. Current native document/lease/grant checks surround waits.
+Recorded field names, tags and input types constrain matching even when an ID
+is reused. Fill checks native document focus after authorization waits. Pointer
+input reuses the core actionability check and refuses a moved or covered hit
+point before dispatch. Trusted click/key input uses the existing SDK input
+primitives, with cleanup releases kept on the same connection.
+
+The implementation handles open/navigation, explicit new-tab/target mapping,
+fill, click, key, checkbox state, native select, original comma-form scroll
+positions, owned uploads and the six original verification kinds. Required
+parameters never silently become empty or use stored examples. Recorded search
+results use the new query on recognized search-engine domains. Reports contain
+step/outcome metadata without parameter values, page content or raw exceptions.
+An upload parameter is a JSON list of existing `BrowserFiles` upload IDs; the
+existing store verifies content and links before the authorized effect. It is
+never a local path. Binding a captured file-selection event into that parameter
+and admitting the file at the product boundary remain separate host work.
+
+Each runner accepts only one submission. After a possible effect, transport or
+post-authorization failure retains the original operation as unconfirmed. True
+cancellation drains the original control barrier and remains cancellation. No
+fallback click, reconnect, changed operation ID or automatic workflow retry is
+performed. The host still owns durable operation admission, same-operation
+recovery, recording/report persistence and its native atomic effect fence.
+A passed report describes the admitted SDK sequence and requested verification;
+it does not by itself prove a business transaction or production authority.
+
+The real CDP journey covers staged file bytes, new tabs, ambiguous or semantically
+changed fields, native focus/button movement during authorization, and one actual
+write followed by withdrawal. The real extension journey captures trusted human
+input across navigation, compiles that recording, replays it with new ordinary
+and secret parameters on the same session, and verifies a second actual HTTP
+submission. Both supported WebSocket implementations run in CI. The extension's
+personal-profile file-transfer restriction stays enforced. These journeys use
+explicit grant and website fixtures. OOPIF assembly, full captured-file binding
+and the Mosswork route/default-provider integration remain unqualified.
+
 #### Agent commands in embedded pages
 
 `browser_action(kind="command", method=..., paramsJson=..., frame=...)` can

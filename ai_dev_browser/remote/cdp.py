@@ -1,10 +1,29 @@
 """Async CDP transport extracted from Ladder's remote checkout viewer."""
 
 import asyncio
+from collections.abc import Awaitable, Callable, Generator
 import json
 import logging
+from typing import Any
 
 import aiohttp
+
+
+async def send_command(
+    call: Callable[..., Awaitable[Any]],
+    command: Generator[dict[str, Any], dict[str, Any], Any],
+) -> Any:
+    """One existing generated SDK codec on the supplied current connection."""
+    try:
+        request = next(command)
+        response = await call(request["method"], request.get("params"))
+        try:
+            command.send(response)
+        except StopIteration as done:
+            return done.value
+        raise TypeError("One SDK protocol command required")
+    finally:
+        command.close()
 
 
 class BrowserViewError(Exception):
@@ -89,6 +108,14 @@ class CDP:
             raise self.error_factory("disconnected") from error
         finally:
             self.pending.pop(seq, None)
+
+    async def send(self, command):
+        """Run one existing generated SDK command on this exact connection.
+
+        Reuse the protocol module's request/response codec. This bridge does
+        not resolve sessions, reconnect, retry or accept a second command.
+        """
+        return await send_command(self.call, command)
 
     def add_event_handler(self, handler):
         """Observe this existing socket without replacing its owner's handler.
