@@ -4,7 +4,7 @@ import asyncio
 import math
 from contextlib import suppress
 
-from .control import ControlError
+from .control import ControlError, check_effect_authorization
 
 
 class LiveDrag:
@@ -29,18 +29,29 @@ class LiveDrag:
         self.task = None
         self.sending = False
         self.closed = False
+        self._performing = False
         self.on_finish = on_finish
 
-    async def start(self):
+    async def start(self, *, before_effect=None):
         self.task = asyncio.create_task(
             self.control.run(
-                self.controller, self.epoch, self.target_epoch, self._perform
+                self.controller,
+                self.epoch,
+                self.target_epoch,
+                self._perform,
+                before_effect=before_effect,
             )
         )
         # Retrieve errors even if the HTTP client has disappeared. They still
         # propagate to start/send; they must not become unobserved task errors.
         self.task.add_done_callback(self._finished)
-        await asyncio.shield(self.ready)
+        try:
+            await asyncio.shield(self.ready)
+        except asyncio.CancelledError:
+            # A canceled authorization/queue wait has not pressed anything.
+            # Once input starts, normal close still balances its release.
+            await self.close()
+            raise
 
     def _finished(self, task):
         self.closed = True
@@ -52,13 +63,14 @@ class LiveDrag:
         if not self.ready.done():
             self.ready.set_exception(error or ControlError("browser_drag_closed"))
         while not self.queue.empty():
-            _, _, acknowledged = self.queue.get_nowait()
+            _, _, acknowledged, _ = self.queue.get_nowait()
             if not acknowledged.done():
                 acknowledged.set_exception(error or ControlError("browser_drag_closed"))
         if self.on_finish is not None:
             self.on_finish()
 
     async def _perform(self):
+        self._performing = True
         acknowledged = None
         failure = None
         first_motion = True
@@ -70,7 +82,7 @@ class LiveDrag:
             # to AI. The control state and its owner survive an expired gesture.
             deadline = asyncio.get_running_loop().time() + 30
             while True:
-                phase, point, acknowledged = await asyncio.wait_for(
+                phase, point, acknowledged, before_effect = await asyncio.wait_for(
                     self.queue.get(),
                     max(0, min(5, deadline - asyncio.get_running_loop().time())),
                 )
@@ -78,6 +90,10 @@ class LiveDrag:
                     self.controller, self.epoch, self.target_epoch, False
                 )
                 if phase != "cancel":
+                    await check_effect_authorization(before_effect)
+                    self.control._authorize(
+                        self.controller, self.epoch, self.target_epoch, False
+                    )
                     if (
                         first_motion
                         and math.hypot(
@@ -96,6 +112,10 @@ class LiveDrag:
                             }
                         )
                         await asyncio.sleep(0.01)
+                        await check_effect_authorization(before_effect)
+                        self.control._authorize(
+                            self.controller, self.epoch, self.target_epoch, False
+                        )
                     await self.view.move(point)
                     first_motion = False
                 if phase in ("end", "cancel"):
@@ -131,7 +151,7 @@ class LiveDrag:
                     else:
                         acknowledged.set_result(None)
 
-    async def send(self, phase, point):
+    async def send(self, phase, point, *, before_effect=None):
         if self.task.done():
             await self.task
             raise ControlError("browser_drag_closed")
@@ -142,7 +162,7 @@ class LiveDrag:
         self.sending = True
         acknowledged = asyncio.get_running_loop().create_future()
         try:
-            self.queue.put_nowait((phase, point, acknowledged))
+            self.queue.put_nowait((phase, point, acknowledged, before_effect))
             await asyncio.wait(
                 (acknowledged, self.task), return_when=asyncio.FIRST_COMPLETED
             )
@@ -163,15 +183,21 @@ class LiveDrag:
     async def close(self):
         if self.closed:
             if self.task is not None:
+                if self.task.cancelled():
+                    return
                 with suppress(Exception):
                     await asyncio.shield(self.task)
             return
         self.closed = True
         if self.task is not None and not self.task.done():
+            if not self._performing:
+                self.task.cancel()
+                await asyncio.gather(self.task, return_exceptions=True)
+                return
             # A packet already in progress owns its acknowledgement. Let its
             # bounded driver finish, then the queue accepts the cancellation.
             acknowledged = asyncio.get_running_loop().create_future()
-            await self.queue.put(("cancel", None, acknowledged))
+            await self.queue.put(("cancel", None, acknowledged, None))
             await asyncio.wait(
                 (acknowledged, self.task), return_when=asyncio.FIRST_COMPLETED
             )

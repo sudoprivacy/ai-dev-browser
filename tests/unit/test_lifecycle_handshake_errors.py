@@ -224,6 +224,51 @@ def test_mac_clone_requires_same_birth_profile_and_live_session(monkeypatch):
     assert not _session.same_process(record)
 
 
+@pytest.mark.parametrize(
+    "birth,expected_code", [(1.0, "transient"), (2.0, "session_changed")]
+)
+async def test_missing_debugger_identity_keeps_live_process_uncertain_without_granting_ownership(
+    monkeypatch, birth, expected_code
+):
+    """A paused macOS clone cannot answer the additional ownership proof."""
+    from ai_dev_browser.core import port
+
+    record = {
+        "session_id": "cdp-original",
+        "transport": "cdp",
+        "port": 9355,
+        "pid": 1234,
+        "process_created": 1.0,
+        "chrome_path": "/private/var/folders/test/X/com.google.Chrome.code_sign_clone/code_sign_clone.ABC123/Google Chrome.app.bundle/Contents/MacOS/Google Chrome",
+        "start_options": {
+            "chrome_path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        },
+        "user_data_dir": "/test/owned-profile",
+    }
+    current = {
+        "pid": 1234,
+        "process_created": birth,
+        "chrome_path": record["start_options"]["chrome_path"],
+        "launch_args": ["Google Chrome", "--user-data-dir=/test/owned-profile"],
+    }
+    monkeypatch.setattr(_session.sys, "platform", "darwin")
+    monkeypatch.setattr(_session, "read", lambda identity: record.copy())
+    monkeypatch.setattr(_session, "process_info", lambda pid: current)
+    monkeypatch.setattr(browser, "_query_chrome_guid", lambda number: None)
+    monkeypatch.setattr(port, "_query_chrome_guid", lambda number: None)
+    assert not _session.same_process(record)
+
+    async def forbidden_connection(*args, **kwargs):
+        raise AssertionError("Unconfirmed identity must never acquire a page")
+
+    monkeypatch.setattr(browser, "connect_browser", forbidden_connection)
+    result = await browser.browser_connect(transport="cdp", session_id="cdp-original")
+    assert result["error_code"] == expected_code
+    assert result["connected"] is False
+    assert result["session_id"] == record["session_id"]
+    assert result["retryable"] is (expected_code == "transient")
+
+
 def test_profile_scan_uses_current_pid_identity_after_process_cache_reuse(
     monkeypatch, tmp_path
 ):

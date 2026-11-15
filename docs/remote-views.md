@@ -429,6 +429,64 @@ Additional cases cover binding changes during factory resolution and revocation
 between stop and replacement launch.
 Those component checks do not qualify a production authority or model journey.
 
+#### Current human/host assertions
+
+An embedding host can also require a current assertion on the private human
+operation, file and view routes:
+
+```python
+worker = Worker(
+    profile_root, host_token, ai_token,
+    require_agent_authorization=True,
+    require_host_authorization=True,
+)
+app = application(
+    worker,
+    agent_authorization=resolve_invocation_authorization,
+    host_authorization=resolve_host_authorization,
+)
+```
+
+`resolve_host_authorization(request, binding, controller, action)` returns an
+async zero-argument None-or-raise callback using the host's original
+authenticated principal and current full resource/action grants. The factory
+receives detached copies. A supplied binding or controller is a requested
+scope, not authentication. The Worker verifies its original binding before
+and after every assertion await. Missing or malformed callbacks refuse before
+the first binding journal write when host authorization is required. Existing
+standalone hosts retain their previous behavior unless they enable this mode.
+
+The same assertion crosses the actual operation/lifecycle/view locks. Taking
+control rechecks after draining sent input; returning control rechecks after
+fresh observation before releasing AI. A refused return retains human control.
+Frame, selection, state and stream replies are withheld if their current
+assertion fails after a read. Live drag packets check before motion; cancellation
+and refusal still balance the original release without replaying input.
+New view adapters created across withdrawal are closed. Failed cleanup remains
+tracked and must retire before another owner can use an adapter.
+
+File factories receive server-generated `receive-file` or `read-file` action
+descriptors with the original context fields; uploads also include the decoded
+filename. No file bytes are passed to the factory. Uploads recheck after body
+waits and inside the operation lock, and downloads recheck before releasing
+bytes. Window-stream assertions run before acceptance, on forwarded packets
+and during idle validation. Existing private route names, context headers and
+control/target epochs are unchanged.
+
+For `bind-session`, the factory receives the destination binding and original
+`previousSessionId`. Its callback must cover the original and destination
+authority. The Worker checks the old binding before its journal change and the
+new binding afterward. Post-change refusal preserves the actual committed
+binding and withholds acknowledgment; it does not roll back or authorize retry.
+The private `GET /binding` allocation-discovery capability remains outside this
+factory so an assertion can use it without recursion.
+
+Trusted in-process hosts may pass `before_effect` directly to
+`Worker.invoke` and `Worker.receive_file`. `Worker.rebind` accepts
+`before_effect` for the old binding and `after_bind` for the destination;
+both are required in managed host mode. These ports supply no principal,
+credential, production grant provider or atomic native effect fence.
+
 #### Agent commands in embedded pages
 
 `browser_action(kind="command", method=..., paramsJson=..., frame=...)` can

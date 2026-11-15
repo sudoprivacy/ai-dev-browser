@@ -17,7 +17,12 @@ from ai_dev_browser.core._transport import MAX_SIZE, ProtocolException
 
 from .authorized_page import navigation_cookie
 from .cdp import CDP, BrowserViewError
-from .control import BrowserControl, ControlError, SharedViewer
+from .control import (
+    BrowserControl,
+    ControlError,
+    SharedViewer,
+    check_effect_authorization,
+)
 from .page import PageDrag, PageView
 
 
@@ -48,8 +53,8 @@ class BrowserSession:
     async def _close_view(self, _view):
         self._frame = None
 
-    async def attach(self, viewer: str):
-        await self._view.attach(viewer)
+    async def attach(self, viewer: str, *, before_effect=None):
+        await self._view.attach(viewer, before_effect=before_effect)
         self._viewers.add(viewer)
 
     async def detach(self, viewer: str):
@@ -164,6 +169,7 @@ class BrowserSession:
         # snapshot after refreshing, not before it.
         async def current():
             tabs = await self._refresh()
+            await check_effect_authorization(before_effect)
             return {
                 **self.control.snapshot(),
                 "activeTargetId": self.target_id,
@@ -189,7 +195,9 @@ class BrowserSession:
         self._frame_generation += 1
         self._frame = None
 
-    async def drag_view(self, viewer: str, controller, epoch, target_epoch):
+    async def drag_view(
+        self, viewer: str, controller, epoch, target_epoch, *, before_effect=None
+    ):
         async def prepare():
             if viewer not in self._viewers:
                 raise ControlError("browser_viewer_not_attached")
@@ -197,22 +205,34 @@ class BrowserSession:
                 raise ControlError("browser_dialog_open")
             page = await self._connect_page()
             width, height = await self._dimensions(page)
+            await check_effect_authorization(before_effect)
+            self.control._authorize(controller, epoch, target_epoch, False)
             return PageDrag(page, width, height)
 
-        return await self.control.run(controller, epoch, target_epoch, prepare)
+        return await self.control.run(
+            controller, epoch, target_epoch, prepare, before_effect=before_effect
+        )
 
     async def frame(
-        self, viewer: str, epoch: int, target_epoch: int, *, during_drag=False
+        self,
+        viewer: str,
+        epoch: int,
+        target_epoch: int,
+        *,
+        during_drag=False,
+        before_effect=None,
     ):
         async def capture():
             if viewer not in self._viewers:
                 raise ControlError("browser_viewer_not_attached")
-            view = await self._view.attach(viewer)
+            view = await self._view.attach(viewer, before_effect=before_effect)
             # Live page input already owns this connection and the write
             # barrier. Only pixel/layout reads may run alongside that press.
             page = self._page if during_drag else await self._connect_page()
             if page is None or page.disconnected:
                 raise ControlError("browser_disconnected")
+            await check_effect_authorization(before_effect)
+            self.control._authorize("ai", epoch, target_epoch, True)
             if (
                 self._frame is None
                 or time.monotonic() - self._frame_time >= 0.25
@@ -221,7 +241,10 @@ class BrowserSession:
             ):
                 generation = self._frame_generation
                 width, height = await self._dimensions(page)
+                await check_effect_authorization(before_effect)
+                self.control._authorize("ai", epoch, target_epoch, True)
                 data = await view.capture(page, dialog=self._dialog)
+                await check_effect_authorization(before_effect)
                 if not data:
                     raise ControlError("browser_dialog_requires_response")
                 frame = {
@@ -247,15 +270,25 @@ class BrowserSession:
                 # Reject a read that crossed a target/lease change, and never
                 # stamp its old pixels with the new operation version.
                 self.control._authorize("ai", epoch, target_epoch, True)
+                await check_effect_authorization(before_effect)
                 frame = await capture()
                 self.control._authorize("ai", epoch, target_epoch, True)
                 return frame
             return await self.control.run(
-                "ai", epoch, target_epoch, capture, observation=True
+                "ai",
+                epoch,
+                target_epoch,
+                capture,
+                observation=True,
+                before_effect=before_effect,
             )
 
     async def _observe(self):
         tabs = await self._refresh()
+        # Discovery may legitimately retire an externally closed target. Bind
+        # pixels to the version actually selected by this observation, before
+        # awaiting layout/accessibility/capture on that exact page.
+        observed = self.control.snapshot()
         page = await self._connect_page()
         if self._dialog:
             raise ControlError("browser_dialog_requires_response")
@@ -264,6 +297,9 @@ class BrowserSession:
         # A return always captures current pixels, even with no viewer open.
         view = PageView()
         data = await view.capture(page, dialog=self._dialog)
+        self.control._authorize(
+            "ai", observed["controlEpoch"], observed["targetEpoch"], True
+        )
         return {
             "activeTargetId": self.target_id,
             "tabs": tabs,
@@ -274,40 +310,61 @@ class BrowserSession:
                 "data": data,
                 "width": width,
                 "height": height,
-                "controlEpoch": self.control.epoch,
-                "targetEpoch": self.control.target_epoch,
+                "controlEpoch": observed["controlEpoch"],
+                "targetEpoch": observed["targetEpoch"],
             },
         }
 
     async def observe(self, epoch: int, target_epoch: int, *, before_effect=None):
+        async def current():
+            observation = await self._observe()
+            await check_effect_authorization(before_effect)
+            self.control._authorize(
+                "ai", epoch, observation["frame"]["targetEpoch"], True
+            )
+            return observation
+
         return await self.control.run(
             "ai",
             epoch,
             target_epoch,
-            self._observe,
+            current,
             observation=True,
             before_effect=before_effect,
         )
 
-    async def selection(self, controller: str, epoch: int, target_epoch: int):
+    async def selection(
+        self, controller: str, epoch: int, target_epoch: int, *, before_effect=None
+    ):
         """Read only the selected text under the current human input barrier."""
 
         async def read():
             if self._dialog:
                 raise ControlError("browser_dialog_open")
-            return await PageView().selection(await self._connect_page())
+            selected = await PageView().selection(await self._connect_page())
+            await check_effect_authorization(before_effect)
+            self.control._authorize(controller, epoch, target_epoch, False)
+            return selected
 
-        return await self.control.run(controller, epoch, target_epoch, read)
+        return await self.control.run(
+            controller, epoch, target_epoch, read, before_effect=before_effect
+        )
 
-    async def take(self, controller: str, epoch: int, target_epoch: int):
+    async def take(
+        self, controller: str, epoch: int, target_epoch: int, *, before_effect=None
+    ):
         if epoch != self.control.epoch or target_epoch != self.control.target_epoch:
             raise ControlError("stale_browser_operation")
-        return await self.control.take(controller)
+        return await self.control.take(controller, before_effect=before_effect)
 
-    async def give_back(self, controller: str, epoch: int, target_epoch: int):
+    async def give_back(
+        self, controller: str, epoch: int, target_epoch: int, *, before_effect=None
+    ):
         if epoch != self.control.epoch or target_epoch != self.control.target_epoch:
             raise ControlError("stale_browser_operation")
-        return await self.control.give_back(controller, self._observe)
+        return await self.control.give_back(
+            controller, self._observe, before_effect=before_effect
+        )
 
     async def action(
         self,
@@ -324,25 +381,37 @@ class BrowserSession:
             if kind in ("new-tab", "select-tab", "close-tab"):
                 browser = await self._connect_browser()
                 tabs = await self._refresh()
+                await check_effect_authorization(before_effect)
+                self.control._authorize(actor, epoch, target_epoch, False)
                 if kind == "new-tab":
                     created = await browser.call(
                         "Target.createTarget", {"url": "about:blank"}
                     )
                     await self.browser.update_targets()
                     await self._select(created["targetId"])
-                    await (await self._connect_page()).call("Page.bringToFront")
+                    selected_epoch = self.control.target_epoch
+                    page = await self._connect_page()
+                    await check_effect_authorization(before_effect)
+                    self.control._authorize(actor, epoch, selected_epoch, False)
+                    await page.call("Page.bringToFront")
                 else:
                     target = action["targetId"]
                     if target not in {tab["id"] for tab in tabs}:
                         raise ControlError("browser_target_closed")
                     if kind == "select-tab":
                         await self._select(target)
-                        await (await self._connect_page()).call("Page.bringToFront")
+                        selected_epoch = self.control.target_epoch
+                        page = await self._connect_page()
+                        await check_effect_authorization(before_effect)
+                        self.control._authorize(actor, epoch, selected_epoch, False)
+                        await page.call("Page.bringToFront")
                     else:
                         await browser.call("Target.closeTarget", {"targetId": target})
                         await self._refresh()
                 return
             page = await self._connect_page()
+            await check_effect_authorization(before_effect)
+            self.control._authorize(actor, epoch, target_epoch, False)
             if kind == "upload-files":
                 chooser = self._file_chooser
                 if (
@@ -372,6 +441,8 @@ class BrowserSession:
                 self._file_chooser = None
             elif kind == "input":
                 width, height = await self._dimensions(page)
+                await check_effect_authorization(before_effect)
+                self.control._authorize(actor, epoch, target_epoch, False)
                 if not await PageView().input(
                     page,
                     action["input"],
@@ -393,6 +464,8 @@ class BrowserSession:
                 history = await page.call("Page.getNavigationHistory")
                 index = history["currentIndex"] + (-1 if kind == "back" else 1)
                 if 0 <= index < len(history["entries"]):
+                    await check_effect_authorization(before_effect)
+                    self.control._authorize(actor, epoch, target_epoch, False)
                     await page.call(
                         "Page.navigateToHistoryEntry",
                         {"entryId": history["entries"][index]["id"]},
@@ -404,7 +477,9 @@ class BrowserSession:
             actor, epoch, target_epoch, perform, before_effect=before_effect
         )
 
-    async def open_authorized_page(self, controller, epoch, target_epoch, url, cookie):
+    async def open_authorized_page(
+        self, controller, epoch, target_epoch, url, cookie, *, before_effect=None
+    ):
         """Install a host session and open a new owned tab under the human barrier."""
         params = navigation_cookie(url, cookie)
 
@@ -413,6 +488,8 @@ class BrowserSession:
                 raise ControlError("browser_dialog_open")
             previous = self.target_id
             browser = await self._connect_browser()
+            await check_effect_authorization(before_effect)
+            self.control._authorize(controller, epoch, target_epoch, False)
             created = await browser.call(
                 "Target.createTarget", {"url": "about:blank", "background": True}
             )
@@ -420,10 +497,15 @@ class BrowserSession:
             try:
                 await self.browser.update_targets()
                 await self._select(created["targetId"])
+                selected_epoch = self.control.target_epoch
                 page = await self._connect_page()
+                await check_effect_authorization(before_effect)
+                self.control._authorize(controller, epoch, selected_epoch, False)
                 installed = await page.call("Network.setCookie", params)
                 if not installed.get("success"):
                     raise ControlError("browser_authorized_page_failed")
+                await check_effect_authorization(before_effect)
+                self.control._authorize(controller, epoch, selected_epoch, False)
                 navigation = await page.call("Page.navigate", {"url": url})
                 if navigation.get("errorText"):
                     raise ControlError("browser_authorized_page_failed")
@@ -434,6 +516,8 @@ class BrowserSession:
                     or document.get("mimeType") != "text/html"
                 ):
                     raise ControlError("browser_authorized_page_failed")
+                await check_effect_authorization(before_effect)
+                self.control._authorize(controller, epoch, selected_epoch, False)
                 await page.call("Page.bringToFront")
                 self._frame = None
             except BaseException:
@@ -476,7 +560,9 @@ class BrowserSession:
                     )
                 raise
 
-        return await self.control.run(controller, epoch, target_epoch, perform)
+        return await self.control.run(
+            controller, epoch, target_epoch, perform, before_effect=before_effect
+        )
 
     async def agent_command(
         self,
@@ -531,7 +617,9 @@ class BrowserSession:
             "ai", epoch, target_epoch, perform, before_effect=before_effect
         )
 
-    async def follow_foreground(self, controller: str, epoch: int, target_epoch: int):
+    async def follow_foreground(
+        self, controller: str, epoch: int, target_epoch: int, *, before_effect=None
+    ):
         """Follow a native tab selection made by the authorized human viewer.
 
         Managed extension profiles expose their isolated tabs by machine policy.
@@ -569,7 +657,9 @@ class BrowserSession:
                 if len(focused) == 1:
                     await self._select(focused[0])
 
-        return await self.control.run(controller, epoch, target_epoch, select)
+        return await self.control.run(
+            controller, epoch, target_epoch, select, before_effect=before_effect
+        )
 
     async def close(self):
         for viewer in list(self._viewers):
