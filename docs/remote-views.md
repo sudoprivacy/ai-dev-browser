@@ -567,10 +567,10 @@ malformed events, missing context identity, event gaps, disconnects or bounded
 queue/data limits fail the recording. Cleanup discards pending DOM reads after
 revocation, preserves actual cancellation and reports uncertain retirement.
 
-The supplied capture transport covers attached page connections. Separate
-out-of-process iframe and personal-extension connection assembly remain host
-integration work. Capture does not claim complete manual input coverage during
-asynchronous new-document admission. The session integration below waits for
+The capture transport uses attached page connections. The Worker integration
+below reuses existing CDP and extension connections. OOPIF assembly and complete
+manual input coverage during asynchronous admission remain unqualified.
+The session integration waits for
 current document admission before sending SDK input and binds Worker commands
 to the host-owned durable sink. Checked replay uses its own current step grants.
 File selection records a count without local paths or file bytes; draft
@@ -668,8 +668,9 @@ next existing page socket is admitted with the original held recording/frame
 callbacks. SDK input waits for all current native document contexts to finish
 recording admission; the control epoch and host input assertion are checked
 again after that wait. Permission withdrawal fails capture without sending that
-SDK input. Manual OS input during asynchronous admission and separate OOPIF/
-personal-extension assembly still require qualification.
+SDK input. Real CDP and installed personal-extension fixtures cover the Worker
+path on both WebSocket implementations. Manual OS input during asynchronous
+admission, OOPIF and product profile/environment assembly require qualification.
 
 `application` accepts two server-only storage callbacks:
 
