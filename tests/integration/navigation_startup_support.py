@@ -209,10 +209,12 @@ async def startup_target_journey(
                     timeout=10,
                 )
                 timeline.append({"phase": "actor-document-ready"})
-                if slow_initial:
+                if slow_initial or cookie_probe_unavailable:
                     # A CookieManager request on the cold actor itself timed
                     # out in Windows CI. Observe a real independent response
-                    # before starting the three-second held-document scenario.
+                    # before starting either three-second fault scenario. Cold
+                    # network-service startup is independent of the withheld
+                    # cookie RPC and must finish before that measured boundary.
                     warmup = await actor.call(
                         "Page.navigate",
                         {"url": url.replace("/first", "/network-ready")},
@@ -254,6 +256,10 @@ async def startup_target_journey(
                     == initial_timeout["automation_target_id"]
                 )
             assert "error" not in browser, browser
+            if cookie_probe_unavailable:
+                assert not any(
+                    item.get("phase") == "cookie-probe-withheld" for item in timeline
+                )
             assert browser["pid"] == process.pid
             controller = await connect_browser(
                 port=port, session_id=browser["session_id"]
