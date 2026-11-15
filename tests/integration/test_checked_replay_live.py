@@ -77,6 +77,7 @@ async def test_original_sdk_checked_replay_parameters_files_tabs_and_single_writ
     requests = []
     focus_race = {"after_select": False, "armed": False, "moved": False}
     pointer_race = {"enabled": False, "armed": False, "moved": False}
+    meaning_race = {"after_select": False, "armed": False, "changed": False}
 
     async def current():
         if not grant["allowed"]:
@@ -96,6 +97,10 @@ async def test_original_sdk_checked_replay_parameters_files_tabs_and_single_writ
                 button.style.cssText=`position:fixed;left:${r.left+300}px;top:${r.top}px`;
                 document.body.append(trap);
             })()""")
+        if meaning_race["armed"]:
+            meaning_race["armed"] = False
+            meaning_race["changed"] = True
+            await page.js("document.querySelector('#query').type='password'")
 
     async def authorize(recording, step, target, frame):
         assert recording == "original-recording" and target
@@ -487,6 +492,49 @@ async def test_original_sdk_checked_replay_parameters_files_tabs_and_single_writ
                 monkeypatch.setattr(page, "call", original_call)
                 checks.append(
                     "actual focus movement during current authorization refuses secret input without retry"
+                )
+
+                async def change_meaning_during_authorization(
+                    method, params=None, timeout=20
+                ):
+                    response = await original_call(method, params, timeout=timeout)
+                    params = params or {}
+                    if (
+                        method == "Input.dispatchKeyEvent"
+                        and params.get("type") == "keyUp"
+                    ):
+                        meaning_race["after_select"] = True
+                    if (
+                        meaning_race["after_select"]
+                        and not meaning_race["changed"]
+                        and method == "Runtime.callFunctionOn"
+                        and "activeElement" in params.get("functionDeclaration", "")
+                    ):
+                        meaning_race["armed"] = True
+                    return response
+
+                monkeypatch.setattr(page, "call", change_meaning_during_authorization)
+                changed_field = replay("field-type-changed-during-authorization")
+                focus_doc["steps"][0]["target"]["type"] = "text"
+                with pytest.raises(
+                    ControlError, match="^browser_replay_write_unconfirmed$"
+                ):
+                    await changed_field.run(
+                        focus_doc, {}, before_run=current, before_result=current
+                    )
+                assert meaning_race["changed"]
+                assert (
+                    changed_field.status()["error"] == "browser_replay_target_changed"
+                )
+                assert (
+                    await page.js("document.querySelector('#query').value")
+                    == before["value"]
+                )
+                assert len(writes) == 1
+                await page.js("document.querySelector('#query').type='text'")
+                monkeypatch.setattr(page, "call", original_call)
+                checks.append(
+                    "actual input type mutation during authorization refuses fill on the same native node"
                 )
                 # Hold the actual release acknowledgement after the real site
                 # commits, then withdraw the explicit host grant. No request,

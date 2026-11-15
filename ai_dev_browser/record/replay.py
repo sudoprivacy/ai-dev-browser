@@ -19,11 +19,11 @@ import time
 from typing import Any, cast
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
-from ..cdp import dom, runtime
+from ..cdp import accessibility, dom, runtime
 from ..core._actionability import element_actionability
 from ..core._element import Element
 from ..core._ref import node_id_of
-from ..core.snapshot import _get_frame_nodes, _node_attr
+from ..core.snapshot import _format_ax_node, _get_frame_nodes, _node_attr
 from ..remote.control import ControlError, check_effect_authorization
 from ..remote.cdp import send_command
 from ..remote.page import PageDrag, PageView
@@ -492,6 +492,7 @@ class CheckedReplay:
         focused: Element | None = None
         pointer: dict[str, float] | None = None
         element: Any = None
+        selected_backend: int | None = None
 
         async def check_target() -> None:
             session.control._authorize(self.actor, self.epoch, self.target_epoch, False)
@@ -504,6 +505,10 @@ class CheckedReplay:
             fresh = await self._frame(page, step.data.get("target") or {})
             if fresh != frame:
                 raise ControlError("browser_replay_document_changed")
+            if selected_backend is not None:
+                await self._check_selected_target(
+                    page, frame, step.data["target"], selected_backend
+                )
             if (
                 focused is not None
                 and await focused.apply(
@@ -585,6 +590,7 @@ class CheckedReplay:
                 ref = match_current_target(step.data["target"], nodes)
                 backend = node_id_of(ref)
                 assert backend is not None
+                selected_backend = backend
                 element = await Element.from_backend_node(cast(Any, page), backend)
                 state = await cast(Any, element_actionability)(element)
                 if not isinstance(state, dict) or not state.get("actionable"):
@@ -703,25 +709,58 @@ class CheckedReplay:
         if not isinstance(nodes, list) or len(nodes) > 2000:
             raise ControlError("browser_replay_target_limit")
         for node in nodes:
-            backend = node_id_of(node["ref"])
-            if backend is not None:
-                native = await page.send(
-                    dom.describe_node(
-                        backend_node_id=dom.BackendNodeId(backend), depth=0
-                    )
-                )
-                tag = str(getattr(native, "node_name", "") or "").lower()
-                node.update(
-                    id=_node_attr(native, "id"),
-                    nameAttr=_node_attr(native, "name"),
-                    testId=_node_attr(native, "data-testid")
-                    or _node_attr(native, "data-test")
-                    or _node_attr(native, "data-cy"),
-                    tag=tag,
-                    type=_node_attr(native, "type")
-                    or ("text" if tag == "input" else ""),
-                )
+            await self._describe_node(page, node)
         return cast(list[dict[str, Any]], nodes)
+
+    async def _describe_node(self, page: Any, node: dict[str, Any]) -> None:
+        backend = node_id_of(node["ref"])
+        if backend is None:
+            return
+        native = await page.send(
+            dom.describe_node(backend_node_id=dom.BackendNodeId(backend), depth=0)
+        )
+        tag = str(getattr(native, "node_name", "") or "").lower()
+        node.update(
+            id=_node_attr(native, "id"),
+            nameAttr=_node_attr(native, "name"),
+            testId=_node_attr(native, "data-testid")
+            or _node_attr(native, "data-test")
+            or _node_attr(native, "data-cy"),
+            tag=tag,
+            type=_node_attr(native, "type") or ("text" if tag == "input" else ""),
+        )
+
+    async def _check_selected_target(
+        self, page: Any, frame: dict[str, Any], target: dict[str, Any], backend: int
+    ) -> None:
+        # Reuse the core AX formatter and matcher on this one native node. A
+        # current authority callback can yield while labels or input types
+        # change; a live backend ID alone does not preserve field meaning.
+        native_nodes = await page.send(
+            accessibility.get_partial_ax_tree(
+                backend_node_id=dom.BackendNodeId(backend), fetch_relatives=False
+            )
+        )
+        candidates = []
+        for native in native_nodes:
+            if getattr(native, "backend_dom_node_id", None) == backend:
+                candidates.extend(cast(Any, _format_ax_node)(native, [0], 0))
+        if not candidates:
+            # Preserve the existing core's ARIA-less DOM discovery fallback.
+            candidates = [
+                node
+                for node in await self._nodes(page, frame)
+                if node_id_of(node["ref"]) == backend
+            ]
+        else:
+            for candidate in candidates:
+                await self._describe_node(page, candidate)
+        try:
+            ref = match_current_target(target, candidates)
+        except ControlError:
+            raise ControlError("browser_replay_target_changed") from None
+        if node_id_of(ref) != backend:
+            raise ControlError("browser_replay_target_changed")
 
     async def _verify(
         self, recording: str, specification: dict[str, Any], inputs: dict[str, str]
