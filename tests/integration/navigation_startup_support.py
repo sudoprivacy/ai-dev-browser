@@ -209,26 +209,27 @@ async def startup_target_journey(
                     timeout=10,
                 )
                 timeline.append({"phase": "actor-document-ready"})
-                if slow_initial or cookie_probe_unavailable:
-                    # A CookieManager request on the cold actor itself timed
-                    # out in Windows CI. Observe a real independent response
-                    # before starting either three-second fault scenario. Cold
-                    # network-service startup is independent of the withheld
-                    # cookie RPC and must finish before that measured boundary.
-                    warmup = await actor.call(
-                        "Page.navigate",
-                        {"url": url.replace("/first", "/network-ready")},
+                # Establish the independent actor's network context before the
+                # owned-target race. Windows netlog showed the first /first
+                # navigation waiting for cold cookie-store initialization until
+                # after its HTTP-request deadline. DOMContentLoaded on blank
+                # alone does not establish this precondition. This remains
+                # inside the original ten-second actor preparation budget;
+                # owned-target navigation and all fault deadlines stay intact.
+                warmup = await actor.call(
+                    "Page.navigate",
+                    {"url": url.replace("/first", "/network-ready")},
+                )
+                assert not warmup.get("errorText"), warmup
+                await actor.wait_navigation(warmup, timeout=10)
+                assert (
+                    await actor.js(
+                        "document.querySelector('#network-ready')?.textContent"
                     )
-                    assert not warmup.get("errorText"), warmup
-                    await actor.wait_navigation(warmup, timeout=10)
-                    assert (
-                        await actor.js(
-                            "document.querySelector('#network-ready')?.textContent"
-                        )
-                        == "Ready"
-                    )
-                    assert setup_requests == ["/network-ready"]
-                    timeline.append({"phase": "actor-network-response-ready"})
+                    == "Ready"
+                )
+                assert setup_requests == ["/network-ready"] and requests == []
+                timeline.append({"phase": "actor-network-response-ready"})
                 return version
 
             version = await asyncio.wait_for(
