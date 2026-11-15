@@ -16,6 +16,7 @@ import pytest
 from aiohttp import web
 
 from ai_dev_browser.remote.worker import Worker, application
+from tests.integration.test_remote_view import wait_for
 
 pytestmark = pytest.mark.asyncio
 
@@ -406,6 +407,17 @@ async def test_observe_follows_close_between_discovery_and_pixel_capture(tmp_pat
             if not closed:
                 closed = True
                 await browser.call("Target.closeTarget", {"targetId": previous})
+                # Close acknowledges dispatch before the native target has
+                # disappeared. Confirm this precondition through an independent
+                # real browser read, retaining the original published tab list.
+                await wait_for(
+                    lambda: browser.call("Target.getTargets"),
+                    lambda value: previous
+                    not in {target["targetId"] for target in value["targetInfos"]},
+                )
+                assert previous in {
+                    str(tab._target.target_id) for tab in worker.session.browser.tabs
+                }
 
         worker.session.browser.update_targets = close_after_original_list
         try:
