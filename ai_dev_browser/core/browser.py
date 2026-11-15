@@ -1208,8 +1208,22 @@ async def browser_connect(
             )
         port = expected["port"]
         observed_guid = _query_chrome_guid(port)
+        # Liveness is not ownership. A paused Chrome (including a macOS image
+        # alias) cannot answer the additional CDP identity proof. Its original
+        # PID birth still makes this an unavailable identity, rather than proof
+        # of a replacement. This branch never connects, grants input, or relaxes
+        # same_process checks used by stop/restart and successful attachment.
+        observed_process = (
+            _session.process_info(expected.get("pid")) if not observed_guid else None
+        )
         if not observed_guid and (
-            not expected.get("pid") or _session.same_process(expected)
+            not expected.get("pid")
+            or (
+                observed_process is not None
+                and expected.get("process_created") is not None
+                and observed_process.get("process_created")
+                == expected.get("process_created")
+            )
         ):
             return _session.failure(
                 "transient",
