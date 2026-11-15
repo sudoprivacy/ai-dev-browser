@@ -19,7 +19,6 @@ from ai_dev_browser.record.replay import CheckedReplay
 from ai_dev_browser.remote.control import ControlError
 from ai_dev_browser.remote.files import BrowserFiles
 from ai_dev_browser.remote.session import BrowserSession
-from tests.integration.test_remote_view import wait_for
 
 
 async def test_original_sdk_checked_replay_parameters_files_tabs_and_single_write(
@@ -27,9 +26,7 @@ async def test_original_sdk_checked_replay_parameters_files_tabs_and_single_writ
 ):
     writes = []
     committed = asyncio.Event()
-    navigation_pending = asyncio.Event()
-    release_navigation = asyncio.Event()
-    navigation_transition = {"admitted": False}
+    navigation_transition = {"enabled": False, "admitted": False}
 
     async def form(request):
         return web.Response(
@@ -64,8 +61,6 @@ async def test_original_sdk_checked_replay_parameters_files_tabs_and_single_writ
     app.router.add_post("/commit", commit)
 
     async def done(request):
-        navigation_pending.set()
-        await release_navigation.wait()
         return web.Response(
             text="<title>Done</title><h1>Committed</h1>", content_type="text/html"
         )
@@ -124,19 +119,16 @@ async def test_original_sdk_checked_replay_parameters_files_tabs_and_single_writ
             assert frame["origin"] == origin or own_blank
         requests.append((step["kind"], frame is not None))
         if (
-            step["kind"] == "verify"
+            navigation_transition["enabled"]
+            and step["kind"] == "verify"
             and frame is not None
             and not navigation_transition["admitted"]
             and frame["url"].startswith(origin + "/form")
         ):
-            # The first real verification has observed the old document. The
-            # current factory yields while the actual pending navigation commits.
-            await asyncio.wait_for(navigation_pending.wait(), 10)
-            release_navigation.set()
-            await wait_for(
-                lambda: page.call("Page.getFrameTree"),
-                lambda value: value["frameTree"]["frame"]["url"] == origin + "/done",
-            )
+            # The verifier has observed the old document. An independent native
+            # navigation commits during the actual current-authority await.
+            navigation = await page.call("Page.navigate", {"url": origin + "/done"})
+            await page.wait_navigation(navigation)
             navigation_transition["admitted"] = True
         return current
 
@@ -282,9 +274,16 @@ async def test_original_sdk_checked_replay_parameters_files_tabs_and_single_writ
                     (tmp_path / "replay-failure-status.json").write_text(
                         json.dumps(positive.status(), indent=2), encoding="utf-8"
                     )
-                    observed = await page.js(
-                        "(()=>{const q=document.querySelector('#query'),f=document.querySelector('#file'),b=document.querySelector('#commit');return {path:location.pathname,query:q?.value,enabled:document.querySelector('#enabled')?.checked,choice:document.querySelector('#choice')?.value,files:f?[...f.files].map(f=>({bytes:f.size})):[],active:document.activeElement?.id,button:b?(()=>{const r=b.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}})():null,errorName:window.fixtureErrorName||null};})()"
-                    )
+                    try:
+                        observed = await page.js(
+                            "(()=>{const q=document.querySelector('#query'),f=document.querySelector('#file'),b=document.querySelector('#commit');return {path:location.pathname,query:q?.value,enabled:document.querySelector('#enabled')?.checked,choice:document.querySelector('#choice')?.value,files:f?[...f.files].map(f=>({bytes:f.size})):[],active:document.activeElement?.id,button:b?(()=>{const r=b.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}})():null,errorName:window.fixtureErrorName||null};})()"
+                        )
+                    except Exception as observation_error:
+                        observed = {
+                            "pageObservationUnavailable": type(
+                                observation_error
+                            ).__name__
+                        }
                     value = observed.pop("query", None)
                     observed.update(
                         querySha256=hashlib.sha256(str(value).encode()).hexdigest(),
@@ -295,7 +294,6 @@ async def test_original_sdk_checked_replay_parameters_files_tabs_and_single_writ
                     )
                     raise
                 assert result["status"] == "passed" and len(result["steps"]) == 7
-                assert navigation_transition["admitted"]
                 assert writes == [
                     {
                         "query": "新参数 & preserved",
@@ -622,6 +620,32 @@ async def test_original_sdk_checked_replay_parameters_files_tabs_and_single_writ
                 assert len(writes) == 2
                 checks.append(
                     "actual one-write/post-return withdrawal retains original operation without replay"
+                )
+                grant["allowed"] = True
+                monkeypatch.setattr(page, "call", original_call)
+                navigation = await page.call("Page.navigate", {"url": origin + "/form"})
+                await page.wait_navigation(navigation)
+                navigation_transition["enabled"] = True
+                coherent = replay("original-coherent-verification-operation")
+                report = await coherent.run(
+                    {
+                        "schemaVersion": "1.0",
+                        "recordingId": "original-recording",
+                        "steps": [
+                            {"id": "scroll", "kind": "scroll_to", "value": "0,0"}
+                        ],
+                        "verification": [{"type": "url_contains", "value": "/done"}],
+                    },
+                    {},
+                    before_run=current,
+                    before_result=current,
+                )
+                assert (
+                    report["status"] == "passed" and navigation_transition["admitted"]
+                )
+                assert len(writes) == 2
+                checks.append(
+                    "actual navigation during current verification admission discards old observation without repeating effects"
                 )
                 safe = {
                     "checks": checks,
