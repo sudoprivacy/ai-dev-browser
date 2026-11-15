@@ -11,7 +11,7 @@ Ways to inspect and capture pages:
 - **Accessibility tree** (`page_discover`): semantic element discovery with refs for clicking/typing
 - **Screenshots** (`page_screenshot` + `mouse_click --screenshot`): visual coordinate-based interaction with automatic scaling
 - **Interaction recordings** (`page_record_start` / `page_record_stop`): record a tab across CLI calls and save a shareable animated GIF
-- **Embedded semantic workflows** ([SDK guide](docs/remote-views.md#semantic-recording-drafts-optional)): capture human actions, review parameterized steps and a Skill draft, then replay under the host's current authorization on the same session. Install `[record]`; the GIF tools keep their existing purpose.
+- **Embedded semantic workflows** ([SDK guide](docs/remote-views.md#semantic-recording-drafts-optional)): capture human actions, review parameterized steps and a Skill draft, then replay under the host's current authorization on the same session. Install `ai-dev-browser[remote,record]`; the GIF tools keep their existing purpose.
 
 ```bash
 # AI discovers elements

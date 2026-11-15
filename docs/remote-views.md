@@ -526,6 +526,10 @@ actual replay admission remain host responsibilities.
 
 #### Capture on an existing SDK page connection
 
+Install `ai-dev-browser[remote,record]` when embedding live capture and replay
+with a `BrowserSession`. The `record` extra alone supports pure draft compilation;
+the session and replay transport also require the `remote` extra.
+
 `ai_dev_browser.record.capture.EventRecording` collects semantic events on an
 existing SDK page connection. It does not launch, reconnect, select or close a
 browser, take control, resume an agent or write a recording file:
