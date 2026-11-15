@@ -10,7 +10,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp import web
 
-from .control import ControlError
+from .control import ControlError, check_effect_authorization
 from .vnc import VncView
 
 
@@ -84,14 +84,20 @@ class WindowStream:
         if self.directory:
             self.directory.cleanup()
 
-    async def proxy(self, request, http, validate):
+    async def proxy(self, request, http, validate, *, before_effect=None):
         """Forward binary RFB only while this exact viewer context remains valid.
 
         Validation has no browser side effects: no target discovery, lease
         release, profile claim or automatic retry. The host must separately
         revalidate the end user's live authentication on its public gateway.
         """
-        validate()
+
+        async def current():
+            validate()
+            await check_effect_authorization(before_effect)
+            validate()
+
+        await current()
         if not self.view or not self.view.running:
             raise ControlError("browser_window_stream_unavailable")
         socket = web.WebSocketResponse(
@@ -103,13 +109,13 @@ class WindowStream:
             protocols=("binary",),
             max_msg_size=16 * 1024 * 1024,
         ) as upstream:
-            validate()
+            await current()
             await socket.prepare(request)
             self.connections.add(socket)
 
             async def forward(source, destination):
                 async for message in source:
-                    validate()
+                    await current()
                     if message.type == aiohttp.WSMsgType.BINARY:
                         await destination.send_bytes(message.data)
                     else:
@@ -118,7 +124,7 @@ class WindowStream:
             async def guard():
                 while True:
                     await asyncio.sleep(0.25)
-                    validate()
+                    await current()
 
             tasks = [
                 asyncio.create_task(forward(socket, upstream)),

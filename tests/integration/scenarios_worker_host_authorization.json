@@ -1,0 +1,53 @@
+{
+  "config": {
+    "imports": [
+      "from tests.integration.worker_host_authorization_support import host_journey, extension_host_journey"
+    ],
+    "call_style": "function",
+    "extract_style": "dict",
+    "required_env_vars": [],
+    "smoke_test_assertions": [
+      "callable(host_journey)",
+      "callable(extension_host_journey)"
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "host_wait_revoke_recover_submit_once",
+      "title": "Host launch waits -> revoke -> explicit launch -> trusted input -> revoke queued/layout/history work -> resume -> one submit -> guarded file upload -> stop",
+      "workflow": "Launch -> observe -> edit -> withdraw -> refuse -> restore -> submit -> verify -> stop",
+      "user_problem": "A human operation waiting on the browser must not use withdrawn permissions or be resent after recovery.",
+      "fixtures": [
+        "tmp_path"
+      ],
+      "async": true,
+      "steps": [
+        {
+          "description": "Exercise real Worker HTTP, Chrome input and server receipt plus held streaming upload",
+          "raw_code": [
+            "await host_journey(tmp_path)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "extension_host_wait_revoke_recover_submit_once",
+      "title": "Connect existing extension -> trusted input -> revoke pending effects -> refuse -> recover on same browser -> one submit -> disconnect",
+      "workflow": "Connect -> observe -> edit -> withdraw -> refuse -> restore -> submit -> disconnect",
+      "user_problem": "Personal Chrome must enforce the same host assertion without replacing the browser or replaying a rejected input.",
+      "fixtures": [
+        "live_extension",
+        "tmp_path"
+      ],
+      "async": true,
+      "steps": [
+        {
+          "description": "Run production extension connection and managed Worker in a fresh correctly configured process; verify trusted input and one real HTTP receipt",
+          "raw_code": [
+            "await extension_host_journey(live_extension, tmp_path)"
+          ]
+        }
+      ]
+    }
+  ]
+}

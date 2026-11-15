@@ -59,10 +59,14 @@ class Worker:
         chrome_args=(),
         existing_extension_root=None,
         require_agent_authorization=False,
+        require_host_authorization=False,
     ):
         if type(require_agent_authorization) is not bool:
             raise ValueError("Explicit agent authorization mode required")
         self.require_agent_authorization = require_agent_authorization
+        if type(require_host_authorization) is not bool:
+            raise ValueError("Explicit host authorization mode required")
+        self.require_host_authorization = require_host_authorization
         self.root = pathlib.Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.host_token, self.ai_token = host_token, ai_token
@@ -172,32 +176,71 @@ class Worker:
             ).encode()
         ).hexdigest()[:16]
 
-    async def rebind(self, binding, previous_session, controller):
+    def require_host_assertion(self, before_effect):
+        if self.require_host_authorization and before_effect is None:
+            raise ControlError("browser_authorization_required")
+        if before_effect is not None and not callable(before_effect):
+            raise ControlError("invalid_browser_authorization")
+
+    async def rebind(
+        self,
+        binding,
+        previous_session,
+        controller,
+        *,
+        before_effect=None,
+        after_bind=None,
+    ):
         """Move a profile only after the host verifies the old session ended."""
+        self.require_host_assertion(before_effect)
+        self.require_host_assertion(after_bind)
+        binding = copy.deepcopy(binding)
+        original_binding = copy.deepcopy(self.binding)
         self.validate_binding(binding)
+        await check_effect_authorization(before_effect)
+        if self.binding != original_binding:
+            raise ControlError("browser_session_changed")
         if self.binding is None or self.binding == binding:
             self.bind(binding)
+            await check_effect_authorization(after_bind)
             return
         if self.binding["sessionId"] != previous_session or any(
             self.binding[key] != binding.get(key) for key in ("orgId", "userId")
         ):
             raise ControlError("browser_profile_in_use")
         async with self.changing_lifecycle():
+            await check_effect_authorization(before_effect)
+            if self.binding != original_binding:
+                raise ControlError("browser_session_changed")
             was_ai = self.control.state == "ai"
             if self.session and was_ai:
                 self.save(controller=controller, state="pausing")
                 await self.session.take(
-                    controller, self.control.epoch, self.control.target_epoch
+                    controller,
+                    self.control.epoch,
+                    self.control.target_epoch,
+                    **(
+                        {"before_effect": before_effect}
+                        if before_effect is not None
+                        else {}
+                    ),
                 )
+            await check_effect_authorization(before_effect)
+            if self.binding != original_binding:
+                raise ControlError("browser_session_changed")
             self.binding = binding.copy()
             self.handoff = None
             self.control.target_epoch += 1
             self.save()
+            await check_effect_authorization(after_bind)
             # A human lease survives conversation changes. An AI lease can
             # move only after draining old commands and observing this page.
             if self.session and was_ai:
                 await self.session.give_back(
-                    controller, self.control.epoch, self.control.target_epoch
+                    controller,
+                    self.control.epoch,
+                    self.control.target_epoch,
+                    **({"before_effect": after_bind} if after_bind is not None else {}),
                 )
                 self.save()
 
@@ -210,7 +253,8 @@ class Worker:
         finally:
             self.lifecycle_changes -= 1
 
-    async def state(self, controller=None):
+    async def state(self, controller=None, *, before_effect=None):
+        await check_effect_authorization(before_effect)
         if self.lifecycle_changes:
             # Closing/replacing a browser invalidates its driver before all
             # resources have drained. Status stays responsive and never queries
@@ -239,15 +283,24 @@ class Worker:
                 "isHumanControlHeld": snapshot["controller"] is not None,
             }
         async with self.lifecycle:
-            return await self._current_state(controller)
+            await check_effect_authorization(before_effect)
+            return await self._current_state(controller, before_effect=before_effect)
 
-    async def _current_state(self, controller):
+    async def _current_state(self, controller, *, before_effect=None):
         live = (
-            await self.session.state()
+            await self.session.state(
+                **(
+                    {"before_effect": before_effect}
+                    if before_effect is not None
+                    else {}
+                )
+            )
             if self.session
             else {**self.control.snapshot(), "activeTargetId": None, "tabs": []}
         )
-        return self._state_reply(live, controller)
+        reply = self._state_reply(live, controller)
+        await check_effect_authorization(before_effect)
+        return reply
 
     def _state_reply(self, live, controller, *, is_transitioning=False):
         return {
@@ -363,11 +416,12 @@ class Worker:
             raise ControlError("invalid_browser_surface")
         return surface
 
-    async def capture_window(self, viewer, epoch, target_epoch):
+    async def capture_window(self, viewer, epoch, target_epoch, *, before_effect=None):
         async def capture():
             if viewer not in self.window_viewers:
                 raise ControlError("browser_viewer_not_attached")
-            view = await self.window_view.attach(viewer)
+            view = await self.window_view.attach(viewer, before_effect=before_effect)
+            self.control._authorize("ai", epoch, target_epoch, True)
             key = (self.control.epoch, self.control.target_epoch)
             if (
                 self.window_frame is None
@@ -375,8 +429,13 @@ class Worker:
                 or self.window_frame["targetEpoch"] != key[1]
                 or time.monotonic() - self.window_frame_time > 0.25
             ):
+                captured = await view.capture()
+                await check_effect_authorization(before_effect)
+                self.control._authorize("ai", epoch, target_epoch, True)
+                if viewer not in self.window_viewers:
+                    raise ControlError("browser_viewer_not_attached")
                 self.window_frame = {
-                    **await view.capture(),
+                    **captured,
                     "controlEpoch": key[0],
                     "targetEpoch": key[1],
                     "surface": "window",
@@ -385,36 +444,66 @@ class Worker:
             return self.window_frame
 
         return await self.control.run(
-            "ai", epoch, target_epoch, capture, observation=True
+            "ai",
+            epoch,
+            target_epoch,
+            capture,
+            observation=True,
+            before_effect=before_effect,
         )
 
-    async def input_window(self, controller, epoch, target_epoch, event):
+    async def input_window(
+        self, controller, epoch, target_epoch, event, *, before_effect=None
+    ):
         async def perform():
             await self.session._connect_page()
             if not self.window_viewers:
                 raise ControlError("browser_viewer_not_attached")
-            view = await self.window_view.attach(next(iter(self.window_viewers)))
+            view = await self.window_view.attach(
+                next(iter(self.window_viewers)), before_effect=before_effect
+            )
+            self.control._authorize(controller, epoch, target_epoch, False)
             if not await view.input(event):
                 raise ControlError("invalid_browser_input")
             self.window_frame = None
 
-        await self.control.run(controller, epoch, target_epoch, perform)
-        await self.session.follow_foreground(controller, epoch, target_epoch)
+        await self.control.run(
+            controller, epoch, target_epoch, perform, before_effect=before_effect
+        )
+        await self.session.follow_foreground(
+            controller,
+            epoch,
+            target_epoch,
+            **({"before_effect": before_effect} if before_effect is not None else {}),
+        )
 
     async def input_live_drag(
-        self, controller, epoch, target_epoch, event, *, surface="window"
+        self,
+        controller,
+        epoch,
+        target_epoch,
+        event,
+        *,
+        surface="window",
+        before_effect=None,
     ):
         # Reject concurrent packets rather than queueing positions that may
         # outlive their sender. Preparation also belongs to this guard.
         if self.drag_packets.locked():
             raise ControlError("browser_drag_packet_in_progress")
         async with self.drag_packets:
+            await check_effect_authorization(before_effect)
             return await self._input_live_drag(
-                controller, epoch, target_epoch, event, surface=surface
+                controller,
+                epoch,
+                target_epoch,
+                event,
+                surface=surface,
+                before_effect=before_effect,
             )
 
     async def _input_live_drag(
-        self, controller, epoch, target_epoch, event, *, surface
+        self, controller, epoch, target_epoch, event, *, surface, before_effect=None
     ):
         if not isinstance(event, dict) or set(event) != {
             "kind",
@@ -453,10 +542,18 @@ class Worker:
             if self.live_drag and not self.live_drag["gesture"].task.done():
                 raise ControlError("browser_drag_in_progress")
             view = (
-                await self.window_view.attach(owned)
+                await self.window_view.attach(owned, before_effect=before_effect)
                 if surface == "window"
                 else await self.session.drag_view(
-                    owned, controller, epoch, target_epoch
+                    owned,
+                    controller,
+                    epoch,
+                    target_epoch,
+                    **(
+                        {"before_effect": before_effect}
+                        if before_effect is not None
+                        else {}
+                    ),
                 )
             )
         else:
@@ -486,7 +583,7 @@ class Worker:
                     raise ControlError("browser_drag_in_progress")
                 await self.live_drag["gesture"].close()
                 self.live_drag = None
-            state = await self.state(controller)
+            state = await self.state(controller, before_effect=before_effect)
             if owned not in self.viewers or (
                 owned not in self.window_viewers
                 if surface == "window"
@@ -514,14 +611,14 @@ class Worker:
                 "surface": surface,
                 "view": view,
             }
-            await gesture.start()
+            await gesture.start(before_effect=before_effect)
         else:
             if sequence != context["sequence"] + 1:
                 raise ControlError("invalid_browser_drag_sequence")
             # Consume a sequence before awaiting its native acknowledgement.
             # A disconnected caller cannot replay a packet already sent.
             context["sequence"] = sequence
-            await context["gesture"].send(phase, points[0])
+            await context["gesture"].send(phase, points[0], before_effect=before_effect)
             if phase in ("end", "cancel"):
                 self.live_drag = None
                 if (
@@ -529,12 +626,19 @@ class Worker:
                     and self.control.controller == controller
                 ):
                     await self.session.follow_foreground(
-                        controller, self.control.epoch, self.control.target_epoch
+                        controller,
+                        self.control.epoch,
+                        self.control.target_epoch,
+                        **(
+                            {"before_effect": before_effect}
+                            if before_effect is not None
+                            else {}
+                        ),
                     )
         self.viewers[owned] = time.monotonic()
         self.session.invalidate_frame()
         self.window_frame = None
-        return {"session": await self.state(controller)}
+        return {"session": await self.state(controller, before_effect=before_effect)}
 
     async def close_live_drag(self, viewer=None):
         context = self.live_drag
@@ -550,15 +654,23 @@ class Worker:
             ) not in {"cdp", "extension"}:
                 raise ControlError("explicit_browser_launch_mode_required")
             if actor != "ai":
-                await self.control.take(actor)
+                await self.control.take(actor, before_effect=before_effect)
                 self.save(state="pausing")
             original = self.control.snapshot()
             await check_effect_authorization(before_effect)
             if self.control.snapshot() != original:
                 raise ControlError("stale_browser_operation")
-            await self._start_browser(action, actor)
+            await self._start_browser(
+                action,
+                actor,
+                **(
+                    {"before_effect": before_effect}
+                    if before_effect is not None
+                    else {}
+                ),
+            )
 
-    async def _start_browser(self, action, actor):
+    async def _start_browser(self, action, actor, *, before_effect=None):
         if self.personal_reference is not None:
             raise ControlError("browser_existing_extension_requires_disconnect")
         is_headless, transport = (
@@ -578,6 +690,14 @@ class Worker:
             )
         if actor != "ai" and self.control.controller not in (None, actor):
             raise ControlError("browser_control_not_owned")
+        original = self.control.snapshot()
+
+        async def current():
+            await check_effect_authorization(before_effect)
+            if self.control.snapshot() != original:
+                raise ControlError("stale_browser_operation")
+
+        await current()
         if self.session:
             if (
                 self.browser["headless"] != is_headless
@@ -591,6 +711,7 @@ class Worker:
             if self.display is None:
                 self.display = XDisplay()
                 await self.display.start()
+        await current()
         profile = self.root / "chrome"
         profile.mkdir(exist_ok=True)
         if not self.pending_launch:
@@ -625,6 +746,7 @@ class Worker:
             if identity is not None and identity.exists():
                 installed_identity = json.loads(identity.read_text())
                 try:
+                    await current()
                     await prepare_managed_extension_profile(
                         str(profile),
                         extension_id=installed_identity["id"],
@@ -632,6 +754,7 @@ class Worker:
                         chrome_path=self.chrome_path,
                         extra_args=arguments["extra_args"],
                     )
+                    await current()
                     if not self.file_permission_prepared:
                         await configure_managed_extension_file_access(
                             str(profile),
@@ -641,6 +764,7 @@ class Worker:
                             extra_args=arguments["extra_args"],
                         )
                         self.file_permission_prepared = True
+                        await current()
                 except ControlError as error:
                     diagnostic = self.root / "launch-failure.json"
                     diagnostic.write_text(
@@ -657,6 +781,7 @@ class Worker:
                 "--disable-extensions": None,
                 "--disable-background-networking": None,
             }
+        await current()
         if self.pending_launch:
             # Explicitly reconnect an owned late launch. Never start a
             # second Chrome or replay an uncertain browser input.
@@ -707,6 +832,15 @@ class Worker:
             )
         self.browser = {**launched, "headless": is_headless, "transport": transport}
         self.pending_launch = None
+        try:
+            await current()
+        except BaseException:
+            # The owned launch may have happened. Retain its identity for
+            # explicit cleanup/recovery and never acknowledge it as Ready.
+            self.control.state = "error"
+            self.control.error = "browser_restart_requires_observation"
+            self.save()
+            raise
         client = await (
             connect_extension(launched["session_id"])
             if transport == "extension"
@@ -715,8 +849,16 @@ class Worker:
         self.session = BrowserSession(
             client, self.http, control=self.control, files=self.files
         )
+        try:
+            await current()
+        except BaseException:
+            self.control.state = "error"
+            self.control.error = "browser_restart_requires_observation"
+            self.save()
+            raise
         if not is_headless:
             page = await self.session._connect_page()
+            await current()
             await page.call("Page.bringToFront")
         if self.control.state == "error" and actor != "ai":
             self.control.state = "human"
@@ -796,7 +938,15 @@ class Worker:
                         await check_effect_authorization(before_effect)
                         if self.control.snapshot() != original:
                             raise ControlError("stale_browser_operation")
-                        await self._start_browser(action, actor)
+                        await self._start_browser(
+                            action,
+                            actor,
+                            **(
+                                {"before_effect": before_effect}
+                                if before_effect is not None
+                                else {}
+                            ),
+                        )
                 except BaseException:
                     if self.control.state == "ai":
                         self.control.state = "error"
@@ -808,7 +958,11 @@ class Worker:
             await self.control.run(
                 actor, epoch, target_epoch, perform, before_effect=before_effect
             )
-        reply = {"session": await self.state(actor if actor != "ai" else None)}
+        reply = {
+            "session": await self.state(
+                actor if actor != "ai" else None, before_effect=before_effect
+            )
+        }
         if kind == "restart" and self.session:
             reply["observation"] = await self.session.observe(
                 self.control.epoch,
@@ -817,14 +971,21 @@ class Worker:
             )
         return reply
 
-    async def give_back(self, controller, action):
+    async def give_back(self, controller, action, *, before_effect=None):
         epoch, target_epoch = self.epochs(action)
         note = action.get("note")
         if note is not None and (not isinstance(note, str) or len(note) > 2000):
             raise ControlError("invalid_browser_handoff_note")
         if self.session:
             _, observation = await self.session.give_back(
-                controller, epoch, target_epoch
+                controller,
+                epoch,
+                target_epoch,
+                **(
+                    {"before_effect": before_effect}
+                    if before_effect is not None
+                    else {}
+                ),
             )
         else:
             if self.browser or self.pending_launch or self.display:
@@ -840,14 +1001,19 @@ class Worker:
                     "tabs": [],
                 }
 
-            _, observation = await self.control.give_back(controller, observe_stopped)
+            _, observation = await self.control.give_back(
+                controller, observe_stopped, before_effect=before_effect
+            )
         self.handoff = {
             "controlEpoch": self.control.epoch,
             "note": note or "",
             "returnedAt": time.time(),
         }
         self.save()
-        return {"session": await self.state(controller), "observation": observation}
+        return {
+            "session": await self.state(controller, before_effect=before_effect),
+            "observation": observation,
+        }
 
     @staticmethod
     def epochs(action):
@@ -856,7 +1022,7 @@ class Worker:
             raise ControlError("invalid_browser_epoch")
         return values
 
-    async def prepare_native_window(self, controller, action):
+    async def prepare_native_window(self, controller, action, *, before_effect=None):
         """Describe only the selected, human-owned native window for the UI helper."""
         if set(action) != {"kind", "targetId", "controlEpoch", "targetEpoch"}:
             raise ControlError("invalid_browser_action")
@@ -882,20 +1048,34 @@ class Worker:
             except NativeWindowError as error:
                 raise ControlError(str(error), details=error.details) from None
             page = await self.session._connect_page()
+            await check_effect_authorization(before_effect)
+            self.control._authorize(controller, epoch, target_epoch, False)
             await page.call("Page.bringToFront")
             title = await page.js("document.title")
+            await check_effect_authorization(before_effect)
             if not isinstance(title, str) or len(title) > 4096:
                 raise ControlError("native_window_target_unavailable")
             return {"process": identity, "title": title}
 
-        descriptor = await self.control.run(controller, epoch, target_epoch, prepare)
-        return {"session": await self.state(controller), "nativeWindow": descriptor}
+        descriptor = await self.control.run(
+            controller, epoch, target_epoch, prepare, before_effect=before_effect
+        )
+        return {
+            "session": await self.state(controller, before_effect=before_effect),
+            "nativeWindow": descriptor,
+        }
 
-    async def invoke(self, controller, action):
+    async def invoke(self, controller, action, *, before_effect=None):
+        self.require_host_assertion(before_effect)
+        action = copy.deepcopy(action)
+        await check_effect_authorization(before_effect)
+        authorization = (
+            {"before_effect": before_effect} if before_effect is not None else {}
+        )
         kind = action.get("kind")
         extra = {}
         if kind == "prepare-native-window":
-            return await self.prepare_native_window(controller, action)
+            return await self.prepare_native_window(controller, action, **authorization)
         if kind == "state":
             pass
         elif kind == "inspect-existing-extension":
@@ -922,10 +1102,11 @@ class Worker:
                     for key, value in expected.items()
                 ):
                     raise ControlError("browser_existing_extension_changed")
-                await self.control.take(controller)
+                await self.control.take(controller, **authorization)
                 self.control.epoch += 1
                 self.control.target_epoch += 1
                 self.save(state="pausing")
+                await check_effect_authorization(before_effect)
                 client, reference = await self.existing_extension.connect(expected)
                 self.personal_reference = reference
                 self.browser = {
@@ -937,6 +1118,7 @@ class Worker:
                 self.session = BrowserSession(client, self.http, control=self.control)
                 self.save()
                 page = await self.session._connect_page()
+                await check_effect_authorization(before_effect)
                 await page.call("Page.bringToFront")
         elif kind == "disconnect-existing-extension":
             if self.existing_extension is None or self.personal_reference is None:
@@ -953,7 +1135,7 @@ class Worker:
                     # no live driver or human controller. The authenticated
                     # host may explicitly take its stopped lease to disconnect
                     # that reference; it never starts or switches Chrome.
-                    await self.control.take(controller)
+                    await self.control.take(controller, **authorization)
                     epoch = self.control.epoch
                     self.save()
 
@@ -964,13 +1146,15 @@ class Worker:
                     self.personal_reference = None
                     self.save()
 
-                await self.control.run(controller, epoch, target_epoch, disconnect)
+                await self.control.run(
+                    controller, epoch, target_epoch, disconnect, **authorization
+                )
         elif kind == "start":
-            await self.start(action, controller)
+            await self.start(action, controller, **authorization)
         elif kind in ("stop", "restart"):
-            return await self.lifecycle_action(controller, action)
+            return await self.lifecycle_action(controller, action, **authorization)
         elif kind == "return":
-            return await self.give_back(controller, action)
+            return await self.give_back(controller, action, **authorization)
         elif kind in ("attach", "detach"):
             viewer = action.get("viewerId")
             if not isinstance(viewer, str) or len(viewer) > 128:
@@ -978,18 +1162,18 @@ class Worker:
             owned = controller + ":" + viewer
             if self.session:
                 if kind == "attach":
-                    self.viewers[owned] = time.monotonic()
+                    await self.close_live_drag(owned)
+                    await check_effect_authorization(before_effect)
                     if self.surface(action) == "window":
-                        await self.close_live_drag(owned)
-                        self.window_viewers.add(owned)
                         await self.session.detach(owned)
-                        await self.window_view.attach(owned)
+                        await self.window_view.attach(owned, **authorization)
+                        self.window_viewers.add(owned)
                     else:
-                        await self.close_live_drag(owned)
                         self.window_viewers.discard(owned)
                         await self.window_stream.detach(owned)
                         await self.window_view.detach(owned)
-                        await self.session.attach(owned)
+                        await self.session.attach(owned, **authorization)
+                    self.viewers[owned] = time.monotonic()
                 else:
                     self.viewers.pop(owned, None)
                     self.window_viewers.discard(owned)
@@ -1014,9 +1198,13 @@ class Worker:
                 if self.control.state not in ("ai", "error", "human"):
                     raise ControlError("browser_control_transfer_in_progress")
                 self.save(controller=controller, state="pausing")
-                await self.session.take(controller, epoch, target_epoch)
+                await self.session.take(
+                    controller, epoch, target_epoch, **authorization
+                )
             elif kind == "observe":
-                extra["observation"] = await self.session.observe(epoch, target_epoch)
+                extra["observation"] = await self.session.observe(
+                    epoch, target_epoch, **authorization
+                )
             elif kind == "open-authorized-page":
                 if self.personal_reference is not None or self.browser[
                     "transport"
@@ -1031,12 +1219,17 @@ class Worker:
                 }:
                     raise ControlError("invalid_browser_authorized_page")
                 await self.session.open_authorized_page(
-                    controller, epoch, target_epoch, action["url"], action["cookie"]
+                    controller,
+                    epoch,
+                    target_epoch,
+                    action["url"],
+                    action["cookie"],
+                    **authorization,
                 )
             elif kind == "window-stream":
                 async with self.lifecycle:
                     owned = self.check_window_stream(self.binding, controller, action)
-                    stream = await self.window_stream.attach(owned)
+                    stream = await self.window_stream.attach(owned, **authorization)
                     extra["stream"] = {
                         "protocol": "rfb",
                         "isViewOnly": True,
@@ -1049,7 +1242,7 @@ class Worker:
                 self.viewers[owned] = time.monotonic()
                 if self.surface(action) == "window":
                     extra["frame"] = await self.capture_window(
-                        owned, epoch, target_epoch
+                        owned, epoch, target_epoch, **authorization
                     )
                 else:
                     extra["frame"] = {
@@ -1060,6 +1253,7 @@ class Worker:
                             during_drag=bool(
                                 self.live_drag and self.live_drag["surface"] == "page"
                             ),
+                            **authorization,
                         ),
                         "surface": "page",
                     }
@@ -1069,7 +1263,7 @@ class Worker:
                 and action["input"].get("kind") == "copy-selection"
             ):
                 extra["selection"] = await self.session.selection(
-                    controller, epoch, target_epoch
+                    controller, epoch, target_epoch, **authorization
                 )
             elif (
                 kind == "input"
@@ -1082,15 +1276,20 @@ class Worker:
                     target_epoch,
                     action["input"],
                     surface=self.surface(action),
+                    **authorization,
                 )
             elif kind == "input" and self.surface(action) == "window":
                 await self.input_window(
-                    controller, epoch, target_epoch, action["input"]
+                    controller, epoch, target_epoch, action["input"], **authorization
                 )
             else:
-                await self.session.action(controller, epoch, target_epoch, action)
+                await self.session.action(
+                    controller, epoch, target_epoch, action, **authorization
+                )
             self.save()
-        return {"session": await self.state(controller), **extra}
+        reply = {"session": await self.state(controller, **authorization), **extra}
+        await check_effect_authorization(before_effect)
+        return reply
 
     async def _agent_state(self, before_effect):
         # Session.state already owns the operation barrier while discovering
@@ -1245,11 +1444,19 @@ class Worker:
         await self._stop_browser()
         self.profile_lease.close()
 
-    async def receive_file(self, controller, epoch, target_epoch, name, data):
+    async def receive_file(
+        self, controller, epoch, target_epoch, name, data, *, before_effect=None
+    ):
+        self.require_host_assertion(before_effect)
+
         async def receive():
             return self.files.receive(name, data)
 
-        return await self.control.run(controller, epoch, target_epoch, receive)
+        received = await self.control.run(
+            controller, epoch, target_epoch, receive, before_effect=before_effect
+        )
+        await check_effect_authorization(before_effect)
+        return received
 
 
 RECOVERY_HINTS = {
@@ -1270,13 +1477,21 @@ def mcp_error_text(code):
     return f"{code}: {hint}" if hint else code
 
 
-def application(worker, *, agent_authorization=None):
-    """Embed the Worker with an optional trusted per-invocation guard factory.
+def application(worker, *, agent_authorization=None, host_authorization=None):
+    """Use when embedding a Worker: supply trusted current AI and host assertions.
 
     agent_authorization(request, action) returns an async None-or-raise callback
     bound by the host to the original authenticated caller/run/resource. This
     is server composition, not a tool/HTTP field or another credential issuer.
     Managed Workers refuse missing guards even when their AI token is valid.
+
+    host_authorization(request, binding, controller, action) supplies the same
+    contract for human operations and host file/view routes. It is mandatory
+    when require_host_authorization=True. Each factory receives detached
+    copies; the returned assertion is bound to the original Worker binding.
+    A bind-session assertion must cover the original and destination session.
+    GET /binding remains the private allocation-discovery capability, so a
+    grant assertion may use it without recursively invoking itself.
     """
     reaper_key = web.AppKey("viewer_reaper", asyncio.Task)
 
@@ -1331,19 +1546,68 @@ def application(worker, *, agent_authorization=None):
             before_effect = bound_assertion
         return await worker.agent(action, before_effect=before_effect)
 
+    async def authorized_host(request, binding, controller, action):
+        worker.validate_binding(binding)
+        original_binding = copy.deepcopy(worker.binding)
+        assertion = None
+        if host_authorization is not None:
+            try:
+                assertion = await host_authorization(
+                    request, copy.deepcopy(binding), controller, copy.deepcopy(action)
+                )
+            except PermissionError:
+                raise ControlError("browser_authorization_denied") from None
+            except Exception:
+                raise ControlError("browser_authorization_unavailable") from None
+            if not callable(assertion):
+                raise ControlError("invalid_browser_authorization")
+        worker.require_host_assertion(assertion)
+
+        def at_binding(expected):
+            if assertion is None:
+                return None
+            expected = copy.deepcopy(expected)
+
+            async def current():
+                if worker.binding != expected:
+                    raise PermissionError("Original browser binding changed")
+                result = await assertion()
+                if worker.binding != expected:
+                    raise PermissionError("Original browser binding changed")
+                return result
+
+            return current
+
+        original = at_binding(original_binding)
+        await check_effect_authorization(original)
+        if worker.binding != original_binding:
+            raise ControlError("browser_session_changed")
+        return original, at_binding(binding)
+
     async def invoke(request):
         authorize(request, worker.host_token)
-        body = await request.json()
+        body = copy.deepcopy(await request.json())
         controller = body["controller"]
         if not isinstance(controller, str) or not controller.startswith("user-"):
             raise ControlError("invalid_browser_controller")
+        before_bind, before_effect = await authorized_host(
+            request, body["binding"], controller, body["action"]
+        )
         if body["action"].get("kind") == "bind-session":
             await worker.rebind(
-                body["binding"], body["action"].get("previousSessionId"), controller
+                body["binding"],
+                body["action"].get("previousSessionId"),
+                controller,
+                before_effect=before_bind,
+                after_bind=before_effect,
             )
-            return web.json_response({"session": await worker.state(controller)})
+            return web.json_response(
+                {"session": await worker.state(controller, before_effect=before_effect)}
+            )
         worker.bind(body["binding"])
-        return web.json_response(await worker.invoke(controller, body["action"]))
+        return web.json_response(
+            await worker.invoke(controller, body["action"], before_effect=before_effect)
+        )
 
     async def binding(request):
         authorize(request, worker.host_token)
@@ -1357,7 +1621,7 @@ def application(worker, *, agent_authorization=None):
             }
         )
 
-    def file_context(request):
+    async def file_context(request, action):
         authorize(request, worker.host_token)
         header = request.headers.get("X-ADB-Browser-Context") or request.headers.get(
             "X-Moss-Browser-Context", ""
@@ -1368,30 +1632,52 @@ def application(worker, *, agent_authorization=None):
         controller = context["controller"]
         if not isinstance(controller, str) or not controller.startswith("user-"):
             raise ControlError("invalid_browser_controller")
+        _, before_effect = await authorized_host(
+            request,
+            context["binding"],
+            controller,
+            {
+                **{
+                    key: value
+                    for key, value in context.items()
+                    if key not in {"binding", "controller"}
+                },
+                **action,
+            },
+        )
         worker.bind(context["binding"])
-        return context
+        return context, before_effect
 
     async def receive_file(request):
-        context = file_context(request)
-        epoch, target_epoch = worker.epochs(context)
         name = unquote(
             request.headers.get("X-ADB-Browser-File-Name")
             or request.headers.get("X-Moss-Browser-File-Name", "")
         )
+        context, before_effect = await file_context(
+            request, {"kind": "receive-file", "name": name}
+        )
+        epoch, target_epoch = worker.epochs(context)
         payload = bytearray()
         async for chunk in request.content.iter_chunked(64 * 1024):
+            await check_effect_authorization(before_effect)
             payload.extend(chunk)
             if len(payload) > worker.files.max_file_bytes:
                 raise ControlError("browser_files_too_large")
         uploaded = await worker.receive_file(
-            context["controller"], epoch, target_epoch, name, bytes(payload)
+            context["controller"],
+            epoch,
+            target_epoch,
+            name,
+            bytes(payload),
+            before_effect=before_effect,
         )
         return web.json_response({"file": uploaded})
 
     async def read_file(request):
-        context = file_context(request)
+        context, before_effect = await file_context(request, {"kind": "read-file"})
         if not isinstance(context.get("fileId"), str):
             raise ControlError("browser_file_not_found")
+        await check_effect_authorization(before_effect)
         path = worker.files.path(context["fileId"], kind="download")
         data = path.read_bytes()
         metadata = worker.files.metadata(context["fileId"])
@@ -1400,6 +1686,7 @@ def application(worker, *, agent_authorization=None):
             or hashlib.sha256(data).hexdigest() != metadata["sha256"]
         ):
             raise ControlError("browser_file_changed")
+        await check_effect_authorization(before_effect)
         return web.Response(body=data, content_type="application/octet-stream")
 
     async def window_stream(request):
@@ -1413,18 +1700,36 @@ def application(worker, *, agent_authorization=None):
         controller = context["controller"]
         if not isinstance(controller, str) or not controller.startswith("user-"):
             raise ControlError("invalid_browser_controller")
+        _, before_effect = await authorized_host(
+            request,
+            context["binding"],
+            controller,
+            {**context, "kind": "window-stream"},
+        )
 
         def validate():
             return worker.check_window_stream(context["binding"], controller, context)
 
         async with worker.lifecycle:
+            await check_effect_authorization(before_effect)
             owned = validate()
             if owned in worker.window_stream_connections:
                 raise ControlError("browser_viewer_already_streaming")
-            stream = await worker.window_stream.attach(owned)
+            stream = await worker.window_stream.attach(
+                owned, before_effect=before_effect
+            )
             worker.window_stream_connections.add(owned)
         try:
-            return await stream.proxy(request, worker.http, validate)
+            return await stream.proxy(
+                request,
+                worker.http,
+                validate,
+                **(
+                    {"before_effect": before_effect}
+                    if before_effect is not None
+                    else {}
+                ),
+            )
         finally:
             worker.window_stream_connections.discard(owned)
             await worker.close_live_drag(owned)

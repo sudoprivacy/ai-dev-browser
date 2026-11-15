@@ -111,7 +111,16 @@ class BrowserControl:
                 pending.result()
                 raise
 
-    async def take(self, controller: str) -> dict[str, Any]:
+    async def take(
+        self,
+        controller: str,
+        *,
+        before_effect: Callable[[], Awaitable[None]] | None = None,
+    ) -> dict[str, Any]:
+        original = self.snapshot()
+        await check_effect_authorization(before_effect)
+        if self.snapshot() != original:
+            raise ControlError("stale_browser_operation")
         if not controller or controller == "ai":
             raise ControlError("invalid_browser_controller")
         if self.state == "human" and self.controller == controller:
@@ -124,8 +133,12 @@ class BrowserControl:
         self.controller = controller
         self.epoch += 1
         self.error = None
+        transfer = self.snapshot()
         try:
             async with self._operations:
+                await check_effect_authorization(before_effect)
+                if self.snapshot() != transfer:
+                    raise ControlError("browser_control_transfer_interrupted")
                 self.state = "human"
         except BaseException:
             self.state = "error"
@@ -134,23 +147,34 @@ class BrowserControl:
         return self.snapshot()
 
     async def give_back(
-        self, controller: str, observe: Callable[[], Awaitable[T]]
+        self,
+        controller: str,
+        observe: Callable[[], Awaitable[T]],
+        *,
+        before_effect: Callable[[], Awaitable[None]] | None = None,
     ) -> tuple[dict[str, Any], T]:
+        original = self.snapshot()
+        await check_effect_authorization(before_effect)
+        if self.snapshot() != original:
+            raise ControlError("stale_browser_operation")
         if self.state != "human" or self.controller != controller:
             raise ControlError("browser_control_not_owned")
         self.state = "observing"
         self.epoch += 1
-        return_epoch = self.epoch
         self.error = None
+        transfer = self.snapshot()
         try:
             async with self._operations:
-                if (
-                    self.state != "observing"
-                    or self.controller != controller
-                    or self.epoch != return_epoch
-                ):
+                await check_effect_authorization(before_effect)
+                if self.snapshot() != transfer:
                     raise ControlError("browser_control_transfer_interrupted")
                 observation = await observe()
+                # Do not release AI or return pixels after a held observation
+                # crossed a grant/target change. An unsuccessful return keeps
+                # the human lease and requires another explicit observation.
+                await check_effect_authorization(before_effect)
+                if self.snapshot() != transfer:
+                    raise ControlError("browser_control_transfer_interrupted")
                 self.state = "ai"
                 self.controller = None
         except BaseException:
@@ -183,14 +207,37 @@ class SharedViewer:
         self._close = close
         self._lock = asyncio.Lock()
         self._view = None
+        self._retiring = False
         self._owners: set[str] = set()
 
-    async def attach(self, viewer: str):
+    async def attach(self, viewer: str, *, before_effect=None):
         if not viewer:
             raise ValueError("Viewer identity required")
         async with self._lock:
+            await check_effect_authorization(before_effect)
+            if self._retiring:
+                await self._close(self._view)
+                self._view = None
+                self._retiring = False
+                await check_effect_authorization(before_effect)
             if self._view is None:
                 self._view = await self._create()
+                try:
+                    await check_effect_authorization(before_effect)
+                except BaseException:
+                    self._retiring = True
+                    # Ownership has not been released to this caller. Close
+                    # only the newly created adapter, never an existing view.
+                    # If cleanup itself fails, retain the resource so normal
+                    # detach/worker cleanup can still find and retire it.
+                    try:
+                        await self._close(self._view)
+                    except BaseException:
+                        pass
+                    else:
+                        self._view = None
+                        self._retiring = False
+                    raise
             self._owners.add(viewer)
             return self._view
 
@@ -199,5 +246,7 @@ class SharedViewer:
             self._owners.discard(viewer)
             if not self._owners and self._view is not None:
                 view = self._view
+                self._retiring = True
                 await self._close(view)
                 self._view = None
+                self._retiring = False
