@@ -60,7 +60,9 @@ class PoolState:
         return {
             "version": self.version,
             "last_updated": self.last_updated.isoformat(),
-            "completed": {job_id: result.to_dict() for job_id, result in self.completed.items()},
+            "completed": {
+                job_id: result.to_dict() for job_id, result in self.completed.items()
+            },
             "pending": [job.to_dict() for job in self.pending],
             "in_progress": [job.to_dict() for job in self.in_progress],
         }

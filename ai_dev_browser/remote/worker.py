@@ -1065,7 +1065,9 @@ class Worker:
             "nativeWindow": descriptor,
         }
 
-    async def invoke(self, controller, action, *, before_effect=None):
+    async def invoke(
+        self, controller, action, *, before_effect=None, recording_hooks=None
+    ):
         self.require_host_assertion(before_effect)
         action = copy.deepcopy(action)
         await check_effect_authorization(before_effect)
@@ -1201,6 +1203,56 @@ class Worker:
                 await self.session.take(
                     controller, epoch, target_epoch, **authorization
                 )
+            elif kind in ("record-start", "record-stop", "record-status"):
+                hooks = recording_hooks or {}
+                if kind == "record-start":
+                    if set(action) - {
+                        "kind",
+                        "recordingId",
+                        "privacy",
+                        "controlEpoch",
+                        "targetEpoch",
+                    }:
+                        raise ControlError("invalid_browser_request")
+                    extra["recording"] = await self.session.start_recording(
+                        controller,
+                        epoch,
+                        target_epoch,
+                        action.get("recordingId"),
+                        before_effect=before_effect,
+                        authorize_frame=hooks.get("frame"),
+                        before_read=hooks.get("read"),
+                        persist=hooks.get("persist"),
+                        reconcile=hooks.get("reconcile"),
+                        privacy=action.get("privacy"),
+                    )
+                else:
+                    if set(action) - {
+                        "kind",
+                        "recordingId",
+                        "controlEpoch",
+                        "targetEpoch",
+                    }:
+                        raise ControlError("invalid_browser_request")
+                    active = self.session._recording
+                    if (
+                        not active
+                        or action.get("recordingId") != active.capture.recording_id
+                    ):
+                        raise ControlError("browser_recording_not_started")
+                    if kind == "record-stop":
+                        extra["recording"] = await self.session.stop_recording(
+                            controller,
+                            epoch,
+                            target_epoch,
+                            before_effect=before_effect,
+                            before_read=hooks.get("read"),
+                            reconcile=hooks.get("reconcile"),
+                        )
+                    else:
+                        extra["recording"] = await self.session.recording_status(
+                            controller, epoch, target_epoch, before_effect=before_effect
+                        )
             elif kind == "observe":
                 extra["observation"] = await self.session.observe(
                     epoch, target_epoch, **authorization
@@ -1477,7 +1529,14 @@ def mcp_error_text(code):
     return f"{code}: {hint}" if hint else code
 
 
-def application(worker, *, agent_authorization=None, host_authorization=None):
+def application(
+    worker,
+    *,
+    agent_authorization=None,
+    host_authorization=None,
+    recording_sink=None,
+    recording_reconcile=None,
+):
     """Use when embedding a Worker: supply trusted current AI and host assertions.
 
     agent_authorization(request, action) returns an async None-or-raise callback
@@ -1492,6 +1551,13 @@ def application(worker, *, agent_authorization=None, host_authorization=None):
     A bind-session assertion must cover the original and destination session.
     GET /binding remains the private allocation-discovery capability, so a
     grant assertion may use it without recursively invoking itself.
+
+    recording_sink(request, original_binding, controller, terminal_payload)
+    is an optional host-owned durable writer, mandatory before record-start.
+    It must check its actual writer/exclusion capability and return None only
+    after durable persistence. recording_reconcile receives the same facts
+    plus the payload digest and must prove that exact original write already
+    committed. It performs reads only. Neither port is an HTTP/body setting.
     """
     reaper_key = web.AppKey("viewer_reaper", asyncio.Task)
 
@@ -1605,8 +1671,89 @@ def application(worker, *, agent_authorization=None, host_authorization=None):
                 {"session": await worker.state(controller, before_effect=before_effect)}
             )
         worker.bind(body["binding"])
+        recording_hooks = None
+        if body["action"].get("kind") in {
+            "record-start",
+            "record-stop",
+            "record-status",
+        }:
+            captured_binding = copy.deepcopy(worker.binding)
+            recording_id = body["action"].get("recordingId")
+
+            async def frame(target, frame_id, context_id, unique_id, origin):
+                _, assertion = await authorized_host(
+                    request,
+                    captured_binding,
+                    controller,
+                    {
+                        "kind": "record-frame",
+                        "recordingId": recording_id,
+                        "targetId": target,
+                        "frameId": frame_id,
+                        "contextId": context_id,
+                        "contextUniqueId": unique_id,
+                        "origin": origin,
+                    },
+                )
+                return assertion
+
+            async def read():
+                scopes = worker.session.recording_scopes() if worker.session else []
+                _, assertion = await authorized_host(
+                    request,
+                    captured_binding,
+                    controller,
+                    {
+                        "kind": "record-read",
+                        "recordingId": recording_id,
+                        "sources": scopes,
+                    },
+                )
+                worker.require_host_assertion(assertion)
+                if assertion is None:
+                    raise ControlError("browser_authorization_required")
+                await check_effect_authorization(assertion)
+
+            async def persist(payload):
+                if worker.binding != captured_binding:
+                    raise ControlError("browser_session_changed")
+                result = await recording_sink(
+                    request,
+                    copy.deepcopy(captured_binding),
+                    controller,
+                    copy.deepcopy(payload),
+                )
+                if worker.binding != captured_binding:
+                    raise ControlError("browser_session_changed")
+                return result
+
+            async def reconcile(payload, digest):
+                if worker.binding != captured_binding:
+                    raise ControlError("browser_session_changed")
+                result = await recording_reconcile(
+                    request,
+                    copy.deepcopy(captured_binding),
+                    controller,
+                    copy.deepcopy(payload),
+                    digest,
+                )
+                if worker.binding != captured_binding:
+                    raise ControlError("browser_session_changed")
+                return result
+
+            recording_hooks = {
+                "frame": frame,
+                "read": read,
+                "persist": persist if callable(recording_sink) else None,
+                "reconcile": reconcile if callable(recording_reconcile) else None,
+            }
         return web.json_response(
-            await worker.invoke(controller, body["action"], before_effect=before_effect)
+            await worker.invoke(
+                controller,
+                body["action"],
+                before_effect=before_effect,
+                **({"recording_hooks": recording_hooks} if recording_hooks else {}),
+            )
         )
 
     async def binding(request):

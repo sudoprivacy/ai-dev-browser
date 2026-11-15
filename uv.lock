@@ -31,6 +31,9 @@ fuzzy = [
 osinput = [
     { name = "pyautogui" },
 ]
+record = [
+    { name = "pydantic" },
+]
 remote = [
     { name = "aiohttp" },
 ]
@@ -44,6 +47,7 @@ requires-dist = [
     { name = "psutil", specifier = ">=5.9" },
     { name = "pyautogui", marker = "extra == 'osinput'", specifier = ">=0.9" },
     { name = "pydantic", marker = "extra == 'dev'", specifier = ">=2.0" },
+    { name = "pydantic", marker = "extra == 'record'", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21" },
     { name = "pywinauto", marker = "sys_platform == 'win32' and extra == 'dev'", specifier = ">=0.6.9" },
@@ -51,7 +55,7 @@ requires-dist = [
     { name = "websocket-client", specifier = ">=1.0" },
     { name = "websockets", specifier = ">=13.0" },
 ]
-provides-extras = ["remote", "dev", "fuzzy", "cleanup", "osinput"]
+provides-extras = ["remote", "record", "dev", "fuzzy", "cleanup", "osinput"]
 
 [[package]]
 name = "aiohappyeyeballs"

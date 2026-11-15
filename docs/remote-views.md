@@ -487,6 +487,246 @@ Trusted in-process hosts may pass `before_effect` directly to
 both are required in managed host mode. These ports supply no principal,
 credential, production grant provider or atomic native effect fence.
 
+#### Semantic recording drafts (optional)
+
+GIF capture through `page_record_start` and `page_record_stop` remains unchanged.
+The separate `ai-dev-browser[record]` extra supports the original Mosswork
+event-to-step schema and reviewable Skill drafts:
+
+```python
+from ai_dev_browser.record.draft import build_recording_draft
+
+draft = build_recording_draft(original_recording_id, already_captured_events)
+steps = draft["steps"]       # Original schemaVersion/recordingId/startUrl fields.
+skill_text = draft["skillDraft"]
+```
+
+This is a pure data transformation. It does not connect a browser, capture new
+events, resolve a current target, execute steps, write a file or install a Skill.
+Live capture and checked replay still require the host's current original
+principal/resource/action assertions and the existing Worker/control barrier.
+Recorded target IDs, selectors and coordinates are data for matching, not a
+current reference or grant. Keep the current capture/replay implementation until
+those operations are actually integrated and accepted.
+
+The donor's typed models, event coalescing, input parameters, tab/navigation
+semantics and two original Skill cases are retained with the MIT notice shipped
+in `ai_dev_browser/record/MIT-LICENSE.txt`. Default masking now also removes
+Basic-auth userinfo and sensitive URL fragment values, and mask-all applies to
+all query/fragment values. Malformed URLs refuse before draft release.
+An explicit privacy policy of none preserves the original opt-out contract.
+The pure draft entry accepts at most 10,000 JSON events and 4 MiB and leaves its
+caller's input unchanged.
+
+Skill frontmatter quotes untrusted descriptions as one scalar. Generated text
+requires a fresh unique current target reference, omits legacy executable
+commands and recorded-coordinate fallback, and does not declare a tool grant.
+Host content/DLP policy, explicit human review, owned recording persistence and
+actual replay admission remain host responsibilities.
+
+#### Capture on an existing SDK page connection
+
+Install `ai-dev-browser[remote,record]` when embedding live capture and replay
+with a `BrowserSession`. The `record` extra alone supports pure draft compilation;
+the session and replay transport also require the `remote` extra.
+
+`ai_dev_browser.record.capture.EventRecording` collects semantic events on an
+existing SDK page connection. It does not launch, reconnect, select or close a
+browser, take control, resume an agent or write a recording file:
+
+```python
+from ai_dev_browser.record.capture import EventRecording
+
+capture = EventRecording(original_recording_id, privacy=host_privacy_policy)
+await capture.attach_source(
+    original_target_id,
+    existing_page_connection,
+    before_effect=assert_original_record_action_current,
+    authorize_frame=resolve_original_frame_assertion,
+)
+# After the user's existing browser workflow:
+status = await capture.close()  # Retires only this recorder's instrumentation.
+snapshot = await capture.snapshot(before_read=assert_full_recording_read_current)
+```
+
+`resolve_original_frame_assertion(target_id, frame_id, context_id,
+context_unique_id, origin)` returns an async zero-argument None-or-raise
+assertion for the SAME held principal and current allocation, full source/action
+grant and content/DLP policy. It is mandatory for every frame and new document;
+these native IDs and origin are resource facts. An isolated helper starts its
+DOM listeners only after that assertion succeeds. Each queued event rechecks
+it. Native `uniqueContextId` and a per-document event tag prevent reused numeric
+context IDs or late retired-document events from entering a new document's
+recording. The tag grants no authority. Owner CDP callbacks remain installed.
+
+The snapshot assertion must cover this captured recording and ALL scopes
+returned by `source_scopes()`, including previously captured documents. It is a
+separate current human/resource read assertion; it does not require an Agent or
+native Ready state. Scope changes across waits refuse release. Revocation,
+malformed events, missing context identity, event gaps, disconnects or bounded
+queue/data limits fail the recording. Cleanup discards pending DOM reads after
+revocation, preserves actual cancellation and reports uncertain retirement.
+
+The capture transport uses attached page connections. The Worker integration
+below reuses existing CDP and extension connections. OOPIF assembly and complete
+manual input coverage during asynchronous admission remain unqualified.
+The session integration waits for
+current document admission before sending SDK input and binds Worker commands
+to the host-owned durable sink. Checked replay uses its own current step grants.
+File selection records a count without local paths or file bytes; draft
+compilation refuses it until an explicit authorized file binding is supplied.
+Keep the existing file/record/replay path until that integration is accepted.
+
+#### Checked parameterized replay
+
+`ai_dev_browser.record.replay.CheckedReplay` executes the original v1 step
+document on the host's existing `BrowserSession` and control lease. Supply the
+original durable operation ID, current actor/epochs, explicit recorded-to-current
+target bindings, mandatory current step assertions and original run/result
+admission callbacks. It never acquires control or resumes AI automatically.
+
+```python
+from ai_dev_browser.record.replay import CheckedReplay
+
+replay = CheckedReplay(
+    same_sdk_session, original_operation_id,
+    actor=original_authenticated_actor,
+    control_epoch=held_control_epoch, target_epoch=held_target_epoch,
+    target_bindings=host_approved_target_bindings,
+    authorize_step=resolve_original_replay_assertion,
+)
+report = await replay.run(
+    original_step_document, current_parameters,
+    before_run=claim_original_operation_current,
+    before_result=assert_original_result_read_current,
+)
+```
+
+`resolve_original_replay_assertion(recording_id, resolved_step, target_id,
+native_frame)` must return an async None-or-raise assertion for the SAME held
+principal and full intended action/source/DLP/file grants. A None frame requests
+preliminary target/metadata admission. Frame IDs, URL, native security origin and
+loader identity are resource facts. The callback must explicitly admit an owned
+new tab's staging document and intended destination when that lifecycle action
+is requested. An `about:blank` page alone grants no permission.
+
+Before effects, replay checks all step kinds, required parameters, duplicate
+step IDs, input sizes, URLs and verification types. It resolves a fresh SDK AX
+snapshot/backend reference for each element action, using the existing generated
+protocol codec, Element and actionability checks. Matching refuses weak, missing
+or tied candidates; recorded refs, coordinates and arbitrary recorded scripts
+are never executed. Current native document/lease/grant checks surround waits.
+Recorded field names, tags and input types constrain matching even when an ID
+is reused. Fill checks native document focus after authorization waits. Pointer
+input reuses the core actionability check and refuses a moved or covered hit
+point before dispatch. Trusted click/key input uses the existing SDK input
+primitives, with cleanup releases kept on the same connection.
+
+The implementation handles open/navigation, explicit new-tab/target mapping,
+fill, click, key, checkbox state, native select, original comma-form scroll
+positions, owned uploads and the six original verification kinds. Required
+parameters never silently become empty or use stored examples. Recorded search
+results use the new query on recognized search-engine domains. Reports contain
+step/outcome metadata without parameter values, page content or raw exceptions.
+An upload parameter is a JSON list of existing `BrowserFiles` upload IDs; the
+existing store verifies content and links before the authorized effect. It is
+never a local path. Binding a captured file-selection event into that parameter
+and admitting the file at the product boundary remain separate host work.
+
+Each runner accepts only one submission. After a possible effect, transport or
+post-authorization failure retains the original operation as unconfirmed. True
+cancellation drains the original control barrier and remains cancellation. No
+fallback click, reconnect, changed operation ID or automatic workflow retry is
+performed. The host still owns durable operation admission, same-operation
+recovery, recording/report persistence and its native atomic effect fence.
+A passed report describes the admitted SDK sequence and requested verification;
+it does not by itself prove a business transaction or production authority.
+
+The real CDP journey covers staged file bytes, new tabs, ambiguous or semantically
+changed fields, native focus/button movement during authorization, and one actual
+write followed by withdrawal. The real extension journey captures trusted human
+input across navigation, compiles that recording, replays it with new ordinary
+and secret parameters on the same session, and verifies a second actual HTTP
+submission. Both supported WebSocket implementations run in CI. The extension's
+personal-profile file-transfer restriction stays enforced. These journeys use
+explicit grant and website fixtures. OOPIF assembly, full captured-file binding
+and the Mosswork route/default-provider integration remain unqualified.
+
+#### Session recording and durable completion
+
+The existing `BrowserSession` now has `start_recording`, `stop_recording`,
+`recording_status` and private `recording_scopes` operations. The original Worker
+`/invoke` route accepts `record-start`, `record-stop` and `record-status` with the
+same host credential, authenticated controller, binding and current epochs.
+These commands never create another browser or acquire AI control. Recording
+operations always require current host assertions, including on legacy Workers
+whose unrelated host actions retain token-only compatibility.
+
+Recording follows the original selected target. Before retiring its socket it
+flushes admitted pending input and detaches only its own instrumentation. The
+next existing page socket is admitted with the original held recording/frame
+callbacks. SDK input waits for all current native document contexts to finish
+recording admission; the control epoch and host input assertion are checked
+again after that wait. Permission withdrawal fails capture without sending that
+SDK input. Real CDP and installed personal-extension fixtures cover the Worker
+path on both WebSocket implementations. Manual OS input during asynchronous
+admission, OOPIF and product profile/environment assembly require qualification.
+
+`application` accepts two server-only storage callbacks:
+
+```python
+app = application(
+    same_worker, host_authorization=resolve_current_original_host_assertion,
+    recording_sink=persist_original_recording,
+    recording_reconcile=assert_original_recording_already_committed,
+)
+```
+
+`recording_sink(request, original_binding, controller, terminal_payload)` must
+enforce the real current writer/filesystem exclusion contract and return None
+only after durable persistence. The payload retains the original recording ID,
+timestamps, status, source provenance, redacted snapshot and reviewable draft.
+A missing explicit file binding preserves the raw recording with an unavailable
+draft; it never silently omits the file step and publishes a partial workflow.
+The callback owns the existing host store, path/owner checks and transaction;
+the SDK creates no recording directory, authority or parallel store. A failed
+recording supplies terminal metadata without a partial event stream. Cleanup
+can persist that metadata under the host's original operational writer even
+when human read permission has been withdrawn; it grants no new read access.
+
+Stop reports saved only after this callback completes. A possible commit,
+malformed callback result, cancellation or post-return authorization refusal
+retains the original recording and write outcome. Another Stop never repeats
+the persistence call. With an unknown result,
+`recording_reconcile(request, original_binding, controller, terminal_payload,
+payload_sha256)` must prove by current authorized reads that the exact original
+payload is already durable, then return None. The digest is SHA256 of UTF8 JSON
+with sorted keys, compact separators, literal Unicode and non-finite values
+refused. IDs and digest are comparison facts, never a writer/read grant. Missing
+or refusing reconciliation leaves storage unknown; it does not authorize a new
+write, new recording or replay. Current binding checks also run after callbacks.
+Canceled Stop and cleanup callers drain the same original persistence task
+before propagating true cancellation. Concurrent Stop never starts another write.
+
+Until this original completion is confirmed, a new recording cannot replace it
+and lifecycle cleanup does not claim joined completion. Existing host storage,
+same-operation reconciliation and production capability installation remain the
+host's responsibility. The connected fixture uses actual Worker HTTP, Chrome
+and private file fsync with synthetic authority/writer callbacks. It does not
+install the Mosswork store/factory or prove canonical/native/production access.
+
+Owned Windows uploads use the native extended spelling of the same verified
+store file. File IDs, content hashes and root/link checks still run before the
+path reaches Chrome. Checked replay also verifies the selected file's actual
+name and size before completing its upload step. An acknowledged CDP command
+alone cannot prove Chrome opened the staged bytes.
+
+For an explicit owned files store, normal CDP sessions configure the same
+download directory through Browser.setDownloadBehavior before page input.
+The SDK's existing None transport marker and explicit cdp marker both use this
+path. Fresh host and controller/target epoch checks surround the configuration.
+Personal extension sessions retain their existing download preferences.
+
 #### Agent commands in embedded pages
 
 `browser_action(kind="command", method=..., paramsJson=..., frame=...)` can

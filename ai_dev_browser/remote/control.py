@@ -19,7 +19,9 @@ class ControlError(RuntimeError):
         super().__init__(code)
 
 
-async def check_effect_authorization(before_effect):
+async def check_effect_authorization(
+    before_effect: Callable[[], Awaitable[object]] | None,
+) -> None:
     """Consume a trusted host assertion without exposing its private errors.
 
     The callback captures the original authenticated invocation; arguments and

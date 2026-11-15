@@ -52,7 +52,9 @@ class MatchResult:
     index: int  # Index in the original candidates list
 
 
-def _match_score(query: str, target: str, case_sensitive: bool = False) -> tuple[float, str]:
+def _match_score(
+    query: str, target: str, case_sensitive: bool = False
+) -> tuple[float, str]:
     """Score how well query matches target.
 
     Uses parallel scoring: all strategies run independently,
@@ -174,12 +176,14 @@ def _all_matches(
             continue
         score, strategy = _match_score(query, candidate, case_sensitive)
         if score >= threshold:
-            results.append(MatchResult(
-                text=candidate,
-                score=score,
-                strategy=strategy,
-                index=i,
-            ))
+            results.append(
+                MatchResult(
+                    text=candidate,
+                    score=score,
+                    strategy=strategy,
+                    index=i,
+                )
+            )
 
     results.sort(key=lambda r: r.score, reverse=True)
     return results[:limit]

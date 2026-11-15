@@ -1,10 +1,29 @@
 """Async CDP transport extracted from Ladder's remote checkout viewer."""
 
 import asyncio
+from collections.abc import Awaitable, Callable, Generator
 import json
 import logging
+from typing import Any
 
 import aiohttp
+
+
+async def send_command(
+    call: Callable[..., Awaitable[Any]],
+    command: Generator[dict[str, Any], dict[str, Any], Any],
+) -> Any:
+    """One existing generated SDK codec on the supplied current connection."""
+    try:
+        request = next(command)
+        response = await call(request["method"], request.get("params"))
+        try:
+            command.send(response)
+        except StopIteration as done:
+            return done.value
+        raise TypeError("One SDK protocol command required")
+    finally:
+        command.close()
 
 
 class BrowserViewError(Exception):
@@ -26,6 +45,7 @@ class CDP:
 
     def __init__(self, ws, on_event=None, *, error_factory=BrowserViewError):
         self.ws, self.on_event = ws, on_event
+        self._event_handlers = set()
         self.error_factory = error_factory
         self.seq, self.pending = 0, {}
         self.closing = False
@@ -52,6 +72,9 @@ class CDP:
                         future.set_result(value.get("result", {}))
                 elif self.on_event and value.get("method"):
                     self.on_event(value["method"], value.get("params", {}))
+                if value.get("method"):
+                    for handler in tuple(self._event_handlers):
+                        handler(value["method"], value.get("params", {}))
         except Exception as error:  # noqa: BLE001 - Reader boundary fails every pending command.
             failure = type(error).__name__
         finally:
@@ -85,6 +108,30 @@ class CDP:
             raise self.error_factory("disconnected") from error
         finally:
             self.pending.pop(seq, None)
+
+    async def send(self, command):
+        """Run one existing generated SDK command on this exact connection.
+
+        Reuse the protocol module's request/response codec. This bridge does
+        not resolve sessions, reconnect, retry or accept a second command.
+        """
+        return await send_command(self.call, command)
+
+    def add_event_handler(self, handler):
+        """Observe this existing socket without replacing its owner's handler.
+
+        Observers must return synchronously and handle their own errors. They
+        do not gain authority to select a target or reconnect this transport.
+        """
+        if not callable(handler):
+            raise TypeError("An event callback is required")
+        self._event_handlers.add(handler)
+
+    def remove_event_handler(self, handler):
+        if handler not in self._event_handlers:
+            return False
+        self._event_handlers.remove(handler)
+        return True
 
     async def js(self, expression):
         value = await self.call(
