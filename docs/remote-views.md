@@ -487,6 +487,91 @@ Trusted in-process hosts may pass `before_effect` directly to
 both are required in managed host mode. These ports supply no principal,
 credential, production grant provider or atomic native effect fence.
 
+#### Semantic recording drafts (optional)
+
+GIF capture through `page_record_start` and `page_record_stop` remains unchanged.
+The separate `ai-dev-browser[record]` extra supports the original Mosswork
+event-to-step schema and reviewable Skill drafts:
+
+```python
+from ai_dev_browser.record.draft import build_recording_draft
+
+draft = build_recording_draft(original_recording_id, already_captured_events)
+steps = draft["steps"]       # Original schemaVersion/recordingId/startUrl fields.
+skill_text = draft["skillDraft"]
+```
+
+This is a pure data transformation. It does not connect a browser, capture new
+events, resolve a current target, execute steps, write a file or install a Skill.
+Live capture and checked replay still require the host's current original
+principal/resource/action assertions and the existing Worker/control barrier.
+Recorded target IDs, selectors and coordinates are data for matching, not a
+current reference or grant. Keep the current capture/replay implementation until
+those operations are actually integrated and accepted.
+
+The donor's typed models, event coalescing, input parameters, tab/navigation
+semantics and two original Skill cases are retained with the MIT notice shipped
+in `ai_dev_browser/record/MIT-LICENSE.txt`. Default masking now also removes
+Basic-auth userinfo and sensitive URL fragment values, and mask-all applies to
+all query/fragment values. Malformed URLs refuse before draft release.
+An explicit privacy policy of none preserves the original opt-out contract.
+The pure draft entry accepts at most 10,000 JSON events and 4 MiB and leaves its
+caller's input unchanged.
+
+Skill frontmatter quotes untrusted descriptions as one scalar. Generated text
+requires a fresh unique current target reference, omits legacy executable
+commands and recorded-coordinate fallback, and does not declare a tool grant.
+Host content/DLP policy, explicit human review, owned recording persistence and
+actual replay admission remain host responsibilities.
+
+#### Capture on an existing SDK page connection
+
+`ai_dev_browser.record.capture.EventRecording` collects semantic events on an
+existing SDK page connection. It does not launch, reconnect, select or close a
+browser, take control, resume an agent or write a recording file:
+
+```python
+from ai_dev_browser.record.capture import EventRecording
+
+capture = EventRecording(original_recording_id, privacy=host_privacy_policy)
+await capture.attach_source(
+    original_target_id,
+    existing_page_connection,
+    before_effect=assert_original_record_action_current,
+    authorize_frame=resolve_original_frame_assertion,
+)
+# After the user's existing browser workflow:
+status = await capture.close()  # Retires only this recorder's instrumentation.
+snapshot = await capture.snapshot(before_read=assert_full_recording_read_current)
+```
+
+`resolve_original_frame_assertion(target_id, frame_id, context_id,
+context_unique_id, origin)` returns an async zero-argument None-or-raise
+assertion for the SAME held principal and current allocation, full source/action
+grant and content/DLP policy. It is mandatory for every frame and new document;
+these native IDs and origin are resource facts. An isolated helper starts its
+DOM listeners only after that assertion succeeds. Each queued event rechecks
+it. Native `uniqueContextId` and a per-document event tag prevent reused numeric
+context IDs or late retired-document events from entering a new document's
+recording. The tag grants no authority. Owner CDP callbacks remain installed.
+
+The snapshot assertion must cover this captured recording and ALL scopes
+returned by `source_scopes()`, including previously captured documents. It is a
+separate current human/resource read assertion; it does not require an Agent or
+native Ready state. Scope changes across waits refuse release. Revocation,
+malformed events, missing context identity, event gaps, disconnects or bounded
+queue/data limits fail the recording. Cleanup discards pending DOM reads after
+revocation, preserves actual cancellation and reports uncertain retirement.
+
+The supplied capture transport covers attached page connections. Separate
+out-of-process iframe and personal-extension connection assembly remain host
+integration work. Capture does not claim complete manual input coverage during
+asynchronous new-document admission. Worker/session recording commands,
+persist-before-ACK storage and checked replay are not installed by this class.
+File selection records a count without local paths or file bytes; draft
+compilation refuses it until an explicit authorized file binding is supplied.
+Keep the existing file/record/replay path until that integration is accepted.
+
 #### Agent commands in embedded pages
 
 `browser_action(kind="command", method=..., paramsJson=..., frame=...)` can
