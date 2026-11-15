@@ -19,6 +19,7 @@ from ai_dev_browser.record.replay import CheckedReplay
 from ai_dev_browser.remote.control import ControlError
 from ai_dev_browser.remote.files import BrowserFiles
 from ai_dev_browser.remote.session import BrowserSession
+from tests.integration.test_remote_view import wait_for
 
 
 async def test_original_sdk_checked_replay_parameters_files_tabs_and_single_write(
@@ -26,6 +27,9 @@ async def test_original_sdk_checked_replay_parameters_files_tabs_and_single_writ
 ):
     writes = []
     committed = asyncio.Event()
+    navigation_pending = asyncio.Event()
+    release_navigation = asyncio.Event()
+    navigation_transition = {"admitted": False}
 
     async def form(request):
         return web.Response(
@@ -39,6 +43,7 @@ async def test_original_sdk_checked_replay_parameters_files_tabs_and_single_writ
         <label>Upload<input id="file" type="file"></label>
         <button id="commit">Commit once</button><button>Repeat</button><button>Repeat</button>
         <script>window.replayInputEvents=[];
+        window.addEventListener('unhandledrejection',e=>{window.fixtureErrorName=e.reason?.name||'unknown'});
         for(const kind of ['focusin','beforeinput','input','keydown','keyup','change']) document.addEventListener(kind,e=>replayInputEvents.push({kind:e.type,id:e.target.id}),true);
         document.querySelector('#commit').onclick=async()=>{
           const file=document.querySelector('#file').files[0];
@@ -57,12 +62,15 @@ async def test_original_sdk_checked_replay_parameters_files_tabs_and_single_writ
     app = web.Application()
     app.router.add_get("/form", form)
     app.router.add_post("/commit", commit)
-    app.router.add_get(
-        "/done",
-        lambda request: web.Response(
+
+    async def done(request):
+        navigation_pending.set()
+        await release_navigation.wait()
+        return web.Response(
             text="<title>Done</title><h1>Committed</h1>", content_type="text/html"
-        ),
-    )
+        )
+
+    app.router.add_get("/done", done)
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)
@@ -115,6 +123,21 @@ async def test_original_sdk_checked_replay_parameters_files_tabs_and_single_writ
             )
             assert frame["origin"] == origin or own_blank
         requests.append((step["kind"], frame is not None))
+        if (
+            step["kind"] == "verify"
+            and frame is not None
+            and not navigation_transition["admitted"]
+            and frame["url"].startswith(origin + "/form")
+        ):
+            # The first real verification has observed the old document. The
+            # current factory yields while the actual pending navigation commits.
+            await asyncio.wait_for(navigation_pending.wait(), 10)
+            release_navigation.set()
+            await wait_for(
+                lambda: page.call("Page.getFrameTree"),
+                lambda value: value["frameTree"]["frame"]["url"] == origin + "/done",
+            )
+            navigation_transition["admitted"] = True
         return current
 
     with tempfile.TemporaryDirectory(
@@ -259,8 +282,20 @@ async def test_original_sdk_checked_replay_parameters_files_tabs_and_single_writ
                     (tmp_path / "replay-failure-status.json").write_text(
                         json.dumps(positive.status(), indent=2), encoding="utf-8"
                     )
+                    observed = await page.js(
+                        "(()=>{const q=document.querySelector('#query'),f=document.querySelector('#file'),b=document.querySelector('#commit');return {path:location.pathname,query:q?.value,enabled:document.querySelector('#enabled')?.checked,choice:document.querySelector('#choice')?.value,files:f?[...f.files].map(f=>({bytes:f.size})):[],active:document.activeElement?.id,button:b?(()=>{const r=b.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}})():null,errorName:window.fixtureErrorName||null};})()"
+                    )
+                    value = observed.pop("query", None)
+                    observed.update(
+                        querySha256=hashlib.sha256(str(value).encode()).hexdigest(),
+                        writesObserved=len(writes),
+                    )
+                    (tmp_path / "replay-failure-page-observation.json").write_text(
+                        json.dumps(observed, indent=2), encoding="utf-8"
+                    )
                     raise
                 assert result["status"] == "passed" and len(result["steps"]) == 7
+                assert navigation_transition["admitted"]
                 assert writes == [
                     {
                         "query": "新参数 & preserved",

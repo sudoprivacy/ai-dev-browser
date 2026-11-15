@@ -670,7 +670,7 @@ class CheckedReplay:
                     paths = [
                         str(
                             await asyncio.to_thread(
-                                session.files.path, item, kind="upload"
+                                session.files.browser_path, item, kind="upload"
                             )
                         )
                         for item in file_ids
@@ -680,6 +680,18 @@ class CheckedReplay:
                             paths, backend_node_id=dom.BackendNodeId(backend)
                         )
                     )
+                    actual = await element.apply(
+                        "el=>Array.from(el.files||[]).map(f=>({name:f.name,bytes:f.size}))"
+                    )
+                    expected = [
+                        {
+                            key: session.files.metadata(item)[key]
+                            for key in ("name", "bytes")
+                        }
+                        for item in file_ids
+                    ]
+                    if actual != expected:
+                        raise ControlError("browser_replay_file_unconfirmed")
             await check_effect_authorization(current)
             session.control._authorize(self.actor, self.epoch, self.target_epoch, False)
             actual_frame = await self._frame(page, step.data.get("target") or {})
@@ -812,16 +824,22 @@ class CheckedReplay:
                 self.session.control._authorize(
                     self.actor, self.epoch, self.target_epoch, True
                 )
-                if (
-                    self.session._page is not page
-                    or self.session.target_id != target
-                    or await self._frame(page, {}) != frame
-                ):
+                if self.session._page is not page or self.session.target_id != target:
                     raise ControlError("browser_replay_document_changed")
-                if passed:
-                    return
+                fresh = await self._frame(page, {})
+                self.session.control._authorize(
+                    self.actor, self.epoch, self.target_epoch, True
+                )
                 if time.monotonic() >= deadline:
                     raise ControlError("browser_replay_verification_failed")
+                if fresh != frame:
+                    # Navigation can commit during the current assertion/read.
+                    # Discard this observation and admit the next native document
+                    # on the next iteration. Never replay the preceding effect.
+                    await asyncio.sleep(0.05)
+                    continue
+                if passed:
+                    return
                 await asyncio.sleep(0.05)
 
         await self.session.control.run(
@@ -841,7 +859,7 @@ class CheckedReplay:
         before_run: Assertion,
         before_result: Assertion,
     ) -> dict[str, Any]:
-        """Submit this original operation once and return a value-free outcome report.
+        """Submit this original operation once; returns metadata without input values.
 
         Args:
             document: Reviewed StepsDocument or its JSON-compatible dictionary.

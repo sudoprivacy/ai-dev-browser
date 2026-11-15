@@ -58,6 +58,7 @@ def build_assets(dist: Path, output: Path, expected_version: str | None = None) 
             "record/capture.js",
             "record/draft.py",
             "record/replay.py",
+            "record/session.py",
             "record/MIT-LICENSE.txt",
         ):
             if f"ai_dev_browser/{name}" not in archive.namelist():

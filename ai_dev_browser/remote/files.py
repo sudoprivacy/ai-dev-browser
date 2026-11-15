@@ -18,6 +18,17 @@ from ..core._session import profile_processes
 from .control import ControlError
 
 
+def _native_browser_path(path):
+    value = str(path)
+    if os.name == "nt" and not value.startswith("\\\\?\\"):
+        return (
+            "\\\\?\\UNC\\" + value[2:]
+            if value.startswith("\\\\")
+            else "\\\\?\\" + value
+        )
+    return value
+
+
 class BrowserFiles:
     def __init__(self, root, *, max_file_bytes=16 * 1024 * 1024):
         if type(max_file_bytes) is not int or max_file_bytes < 1:
@@ -169,6 +180,24 @@ class BrowserFiles:
             raise ControlError("browser_file_changed") from None
         return path
 
+    def browser_path(self, file_id, *, kind=None):
+        """Represent the SAME verified owned file for the native browser.
+
+        Chromium on Windows can acknowledge a long ordinary path but expose
+        a zero-byte, unreadable File. Use the native extended spelling, with
+        no copy, alternate lookup, grant change or filesystem setting change.
+        """
+        return _native_browser_path(self.path(file_id, kind=kind))
+
+    def download_directory(self):
+        """Return this same checked directory for Browser.setDownloadBehavior.
+
+        That protocol expects the ordinary absolute spelling on Windows;
+        extended file spellings are only for DOM.setFileInputFiles.
+        """
+        self._check_directories()
+        return str(self.downloads)
+
     def collect_downloads(self, *, settle_seconds=0.5):
         """List completed Chrome downloads; partial and changing files stay hidden."""
         self._check_directories()
@@ -256,7 +285,8 @@ class BrowserFiles:
         except (OSError, ValueError, TypeError):
             raise ControlError("browser_profile_preferences_require_recovery") from None
         data.setdefault("download", {}).update(
-            default_directory=str(self.downloads), prompt_for_download=False
+            default_directory=str(self.downloads),
+            prompt_for_download=False,
         )
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", dir=default, prefix=".download-", delete=False

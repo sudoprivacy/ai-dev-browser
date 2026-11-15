@@ -46,6 +46,8 @@ class BrowserSession:
         self._frame_lock = asyncio.Lock()
         self._frame_generation = 0
         self._view = SharedViewer(self._create_view, self._close_view)
+        self._recording = None
+        self._downloads_ready = False
 
     async def _create_view(self):
         return PageView()
@@ -108,6 +110,8 @@ class BrowserSession:
         if target_id == self.target_id:
             return
         if self._page:
+            if self._recording:
+                await self._recording.detach()
             await self._page.close()
             self._page = None
         self.target_id = target_id
@@ -146,7 +150,155 @@ class BrowserSession:
             await self._page.call(
                 "Page.setInterceptFileChooserDialog", {"enabled": True}
             )
+        if self._recording:
+            await self._recording.attach(self.target_id, self._page)
         return self._page
+
+    def recording_scopes(self):
+        return self._recording.capture.source_scopes() if self._recording else []
+
+    async def start_recording(
+        self,
+        actor,
+        epoch,
+        target_epoch,
+        recording_id,
+        *,
+        before_effect,
+        authorize_frame,
+        before_read,
+        persist,
+        reconcile=None,
+        privacy=None,
+    ):
+        """Use to capture actions on this session; returns recording metadata.
+
+        Capture follows the selected target and uses the existing page connection.
+        SDK input waits for current document admission. For a viewer GIF, choose
+        page_record_start. This operation does not acquire input control.
+
+        Args:
+            actor: Original authenticated recording owner.
+            epoch: Current control version.
+            target_epoch: Current selected-target version.
+            recording_id: Original recording identity retained through completion.
+            before_effect: Current capture assertion; returns None or raises.
+            authorize_frame: Current assertion factory for each native document.
+            before_read: Current assertion covering the recording and all sources.
+            persist: Host writer that returns None after durable persistence.
+            reconcile: Host reader proving that exact original write committed.
+            privacy: mask-sensitive (default), mask-all, or none.
+
+        Returns:
+            Capture and storage metadata. Durable completion is confirmed by Stop.
+
+        Failure:
+            Refuses missing capabilities before registration. Retain an existing
+            unfinished recording and finish or reconcile its original outcome.
+        """
+        try:
+            from ..record.models import PrivacySettings
+            from ..record.session import SessionRecording
+        except ImportError:
+            raise ControlError("browser_recording_not_installed") from None
+        # Validate every required capability before any page registration.
+        recording = SessionRecording(
+            recording_id,
+            actor,
+            before_capture=before_effect,
+            authorize_frame=authorize_frame,
+            before_read=before_read,
+            persist=persist,
+            reconcile=reconcile,
+            privacy=PrivacySettings(input_policy=privacy or "mask-sensitive"),
+        )
+
+        async def start():
+            if self._recording and self._recording.phase != "saved":
+                raise ControlError("browser_recording_pending")
+            page = await self._connect_page()
+            await check_effect_authorization(before_effect)
+            self.control._authorize(actor, epoch, target_epoch, True)
+            self._recording = recording
+            await recording.attach(self.target_id, page)
+            await check_effect_authorization(before_effect)
+            self.control._authorize(actor, epoch, target_epoch, True)
+            return recording.status()
+
+        return await self.control.run(
+            actor,
+            epoch,
+            target_epoch,
+            start,
+            observation=True,
+            before_effect=before_effect,
+        )
+
+    async def stop_recording(
+        self, actor, epoch, target_epoch, *, before_effect, before_read, reconcile=None
+    ):
+        """Use to finish the original recording; confirms storage after the host ACK.
+
+        Flushes admitted final input, compiles a reviewable draft and waits for
+        the original host save. Returns metadata without events or parameter
+        values. Repeated Stop never repeats that persistence call.
+
+        Args:
+            actor: Original authenticated recording owner.
+            epoch: Current control version.
+            target_epoch: Current selected-target version.
+            before_effect: Current assertion admitting this Stop.
+            before_read: Current assertion permitting its outcome metadata.
+            reconcile: Authorized reader proving the exact original write exists.
+
+        Failure:
+            An uncertain write keeps its original identity. Reconcile that write
+            through Stop before starting a new recording; do not resend its save.
+        """
+        if before_effect is None:
+            raise ControlError("browser_authorization_required")
+        if self._recording is None:
+            raise ControlError("browser_recording_not_started")
+
+        async def stop():
+            return await self._recording.finish(
+                actor, before_read=before_read, reconcile=reconcile
+            )
+
+        return await self.control.run(
+            actor,
+            epoch,
+            target_epoch,
+            stop,
+            observation=True,
+            before_effect=before_effect,
+        )
+
+    async def recording_status(self, actor, epoch, target_epoch, *, before_effect):
+        """Use to inspect recording metadata; does not read events or take control.
+
+        Returns capture/storage status for the original owner, or None if no
+        recording exists. Requires current read authority and session versions.
+        """
+        if before_effect is None:
+            raise ControlError("browser_authorization_required")
+
+        async def read():
+            if not self._recording:
+                return None
+            self._recording.assert_owner(actor)
+            result = self._recording.status()
+            await check_effect_authorization(before_effect)
+            return result
+
+        return await self.control.run(
+            actor,
+            epoch,
+            target_epoch,
+            read,
+            observation=True,
+            before_effect=before_effect,
+        )
 
     async def _connect_browser(self):
         if self._browser is None:
@@ -155,6 +307,29 @@ class BrowserSession:
             )
             self._browser = CDP(ws)
         return self._browser
+
+    async def _configure_downloads(
+        self, actor, epoch, target_epoch, *, before_effect=None
+    ):
+        # An explicit files store belongs to this host-owned isolated profile.
+        # Personal extension sessions have no store; retain their settings.
+        if (
+            self.files is None
+            or self._downloads_ready
+            or self.browser.transport not in (None, "cdp")
+        ):
+            return
+        browser = await self._connect_browser()
+        directory = await asyncio.to_thread(self.files.download_directory)
+        await check_effect_authorization(before_effect)
+        self.control._authorize(actor, epoch, target_epoch, False)
+        await browser.call(
+            "Browser.setDownloadBehavior",
+            {"behavior": "allow", "downloadPath": directory},
+        )
+        self._downloads_ready = True
+        await check_effect_authorization(before_effect)
+        self.control._authorize(actor, epoch, target_epoch, False)
 
     async def _dimensions(self, page):
         if self._dialog:
@@ -410,6 +585,9 @@ class BrowserSession:
                         await self._refresh()
                 return
             page = await self._connect_page()
+            await self._configure_downloads(
+                actor, epoch, target_epoch, before_effect=before_effect
+            )
             await check_effect_authorization(before_effect)
             self.control._authorize(actor, epoch, target_epoch, False)
             if kind == "upload-files":
@@ -432,14 +610,23 @@ class BrowserSession:
                 if chooser["mode"] == "selectSingle" and len(file_ids) != 1:
                     raise ControlError("browser_files_invalid_selection")
                 paths = [
-                    str(self.files.path(file_id, kind="upload")) for file_id in file_ids
+                    await asyncio.to_thread(
+                        self.files.browser_path, file_id, kind="upload"
+                    )
+                    for file_id in file_ids
                 ]
+                await check_effect_authorization(before_effect)
+                self.control._authorize(actor, epoch, target_epoch, False)
+                if self._file_chooser is not chooser:
+                    raise ControlError("browser_file_chooser_changed")
                 await page.call(
                     "DOM.setFileInputFiles",
                     {"backendNodeId": chooser["node"], "files": paths},
                 )
                 self._file_chooser = None
             elif kind == "input":
+                if self._recording:
+                    await self._recording.prepare_input(self.target_id, page)
                 width, height = await self._dimensions(page)
                 await check_effect_authorization(before_effect)
                 self.control._authorize(actor, epoch, target_epoch, False)
@@ -579,6 +766,15 @@ class BrowserSession:
         async def perform():
             self._frame = None
             page = await self._connect_page()
+            await self._configure_downloads(
+                "ai", epoch, target_epoch, before_effect=before_effect
+            )
+            await check_effect_authorization(before_effect)
+            self.control._authorize("ai", epoch, target_epoch, False)
+            if self._recording:
+                await self._recording.prepare_input(self.target_id, page)
+                await check_effect_authorization(before_effect)
+                self.control._authorize("ai", epoch, target_epoch, False)
             if frame is None:
                 return await page.call(method, params)
             tab = next(
@@ -603,6 +799,8 @@ class BrowserSession:
                     session = await tab.frame_session(frame)
                 except ValueError:
                     raise ControlError("invalid_browser_frame") from None
+                await check_effect_authorization(before_effect)
+                self.control._authorize("ai", epoch, target_epoch, False)
                 return await tab.send(command(), session_id=session, timeout=20)
             except ProtocolException as error:
                 mapped = BrowserViewError("operation_failed")
@@ -662,6 +860,8 @@ class BrowserSession:
         )
 
     async def close(self):
+        if self._recording:
+            await self._recording.interrupt()
         for viewer in list(self._viewers):
             await self.detach(viewer)
         if self._page:

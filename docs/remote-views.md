@@ -570,8 +570,9 @@ revocation, preserves actual cancellation and reports uncertain retirement.
 The supplied capture transport covers attached page connections. Separate
 out-of-process iframe and personal-extension connection assembly remain host
 integration work. Capture does not claim complete manual input coverage during
-asynchronous new-document admission. Worker/session recording commands,
-persist-before-ACK storage and checked replay are not installed by this class.
+asynchronous new-document admission. The session integration below waits for
+current document admission before sending SDK input and binds Worker commands
+to the host-owned durable sink. Checked replay uses its own current step grants.
 File selection records a count without local paths or file bytes; draft
 compilation refuses it until an explicit authorized file binding is supplied.
 Keep the existing file/record/replay path until that integration is accepted.
@@ -650,6 +651,80 @@ submission. Both supported WebSocket implementations run in CI. The extension's
 personal-profile file-transfer restriction stays enforced. These journeys use
 explicit grant and website fixtures. OOPIF assembly, full captured-file binding
 and the Mosswork route/default-provider integration remain unqualified.
+
+#### Session recording and durable completion
+
+The existing `BrowserSession` now has `start_recording`, `stop_recording`,
+`recording_status` and private `recording_scopes` operations. The original Worker
+`/invoke` route accepts `record-start`, `record-stop` and `record-status` with the
+same host credential, authenticated controller, binding and current epochs.
+These commands never create another browser or acquire AI control. Recording
+operations always require current host assertions, including on legacy Workers
+whose unrelated host actions retain token-only compatibility.
+
+Recording follows the original selected target. Before retiring its socket it
+flushes admitted pending input and detaches only its own instrumentation. The
+next existing page socket is admitted with the original held recording/frame
+callbacks. SDK input waits for all current native document contexts to finish
+recording admission; the control epoch and host input assertion are checked
+again after that wait. Permission withdrawal fails capture without sending that
+SDK input. Manual OS input during asynchronous admission and separate OOPIF/
+personal-extension assembly still require qualification.
+
+`application` accepts two server-only storage callbacks:
+
+```python
+app = application(
+    same_worker, host_authorization=resolve_current_original_host_assertion,
+    recording_sink=persist_original_recording,
+    recording_reconcile=assert_original_recording_already_committed,
+)
+```
+
+`recording_sink(request, original_binding, controller, terminal_payload)` must
+enforce the real current writer/filesystem exclusion contract and return None
+only after durable persistence. The payload retains the original recording ID,
+timestamps, status, source provenance, redacted snapshot and reviewable draft.
+A missing explicit file binding preserves the raw recording with an unavailable
+draft; it never silently omits the file step and publishes a partial workflow.
+The callback owns the existing host store, path/owner checks and transaction;
+the SDK creates no recording directory, authority or parallel store. A failed
+recording supplies terminal metadata without a partial event stream. Cleanup
+can persist that metadata under the host's original operational writer even
+when human read permission has been withdrawn; it grants no new read access.
+
+Stop reports saved only after this callback completes. A possible commit,
+malformed callback result, cancellation or post-return authorization refusal
+retains the original recording and write outcome. Another Stop never repeats
+the persistence call. With an unknown result,
+`recording_reconcile(request, original_binding, controller, terminal_payload,
+payload_sha256)` must prove by current authorized reads that the exact original
+payload is already durable, then return None. The digest is SHA256 of UTF8 JSON
+with sorted keys, compact separators, literal Unicode and non-finite values
+refused. IDs and digest are comparison facts, never a writer/read grant. Missing
+or refusing reconciliation leaves storage unknown; it does not authorize a new
+write, new recording or replay. Current binding checks also run after callbacks.
+Canceled Stop and cleanup callers drain the same original persistence task
+before propagating true cancellation. Concurrent Stop never starts another write.
+
+Until this original completion is confirmed, a new recording cannot replace it
+and lifecycle cleanup does not claim joined completion. Existing host storage,
+same-operation reconciliation and production capability installation remain the
+host's responsibility. The connected fixture uses actual Worker HTTP, Chrome
+and private file fsync with synthetic authority/writer callbacks. It does not
+install the Mosswork store/factory or prove canonical/native/production access.
+
+Owned Windows uploads use the native extended spelling of the same verified
+store file. File IDs, content hashes and root/link checks still run before the
+path reaches Chrome. Checked replay also verifies the selected file's actual
+name and size before completing its upload step. An acknowledged CDP command
+alone cannot prove Chrome opened the staged bytes.
+
+For an explicit owned files store, normal CDP sessions configure the same
+download directory through Browser.setDownloadBehavior before page input.
+The SDK's existing None transport marker and explicit cdp marker both use this
+path. Fresh host and controller/target epoch checks surround the configuration.
+Personal extension sessions retain their existing download preferences.
 
 #### Agent commands in embedded pages
 

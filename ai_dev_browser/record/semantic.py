@@ -96,6 +96,8 @@ def _target_key(target: dict[str, Any] | None) -> str:
 def _same_target(a: dict[str, Any] | None, b: dict[str, Any] | None) -> bool:
     if not a or not b:
         return False
+    if a.get("targetId") and b.get("targetId") and a["targetId"] != b["targetId"]:
+        return False
     if _target_key(a) and _target_key(a) == _target_key(b):
         return True
     a_sel = set(a.get("selectorCandidates") or [])
@@ -446,6 +448,11 @@ class SemanticProcessor:
                 if (
                     nxt
                     and nxt.get("kind") in {"input", "change"}
+                    and not (
+                        _event_target_id(e)
+                        and _event_target_id(nxt)
+                        and _event_target_id(e) != _event_target_id(nxt)
+                    )
                     and _same_target(e.get("target"), nxt.get("target"))
                 ):
                     target = _compact_target(
@@ -527,6 +534,7 @@ class SemanticProcessor:
                         steps
                         and steps[-1].url == url
                         and steps[-1].kind in {"open", "navigate", "new_tab"}
+                        and not (target_id and target_id not in known_targets)
                     )
                     if (
                         target_id
@@ -552,11 +560,20 @@ class SemanticProcessor:
                 "hashchange",
             }:
                 url = str(e.get("urlAfter") or e.get("url") or "")
-                if url and url != start_url and is_replayable_page_url(url):
+                target_id = _event_target_id(e)
+                if (
+                    url
+                    and is_replayable_page_url(url)
+                    and (
+                        url != start_url
+                        or (target_id and target_id not in known_targets)
+                    )
+                ):
                     duplicate_of_previous = (
                         steps
                         and steps[-1].url == url
                         and steps[-1].kind in {"open", "navigate", "new_tab"}
+                        and not (target_id and target_id not in known_targets)
                     )
                     if not duplicate_of_previous:
                         if (
@@ -568,7 +585,6 @@ class SemanticProcessor:
                             )
                             if nxt_url == url:
                                 i += 1
-                        target_id = _event_target_id(e)
                         if target_id and target_id not in known_targets:
                             steps.append(
                                 SemanticStep(
@@ -634,6 +650,12 @@ class SemanticProcessor:
                 step.kind == "navigate"
                 and result
                 and result[-1].kind in {"click", "press", "submit"}
+                and not (
+                    (step.target or {}).get("targetId")
+                    and (result[-1].target or {}).get("targetId")
+                    and (step.target or {})["targetId"]
+                    != (result[-1].target or {})["targetId"]
+                )
             ):
                 prev = result[-1]
                 expect = dict(prev.expect or {})
