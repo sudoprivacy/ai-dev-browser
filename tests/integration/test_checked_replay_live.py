@@ -569,6 +569,32 @@ async def test_original_sdk_checked_replay_parameters_files_tabs_and_single_writ
                 checks.append(
                     "actual input type mutation during authorization refuses fill on the same native node"
                 )
+                grant["allowed"] = True
+                monkeypatch.setattr(page, "call", original_call)
+                navigation_transition["enabled"] = True
+                coherent = replay("original-coherent-verification-operation")
+                report = await coherent.run(
+                    {
+                        "schemaVersion": "1.0",
+                        "recordingId": "original-recording",
+                        "steps": [
+                            {"id": "scroll", "kind": "scroll_to", "value": "0,0"}
+                        ],
+                        "verification": [{"type": "url_contains", "value": "/done"}],
+                    },
+                    {},
+                    before_run=current,
+                    before_result=current,
+                )
+                assert (
+                    report["status"] == "passed" and navigation_transition["admitted"]
+                )
+                assert len(writes) == 1
+                checks.append(
+                    "actual navigation during current verification admission discards old observation without repeating effects"
+                )
+                navigation = await page.call("Page.navigate", {"url": origin + "/form"})
+                await page.wait_navigation(navigation)
                 # Hold the actual release acknowledgement after the real site
                 # commits, then withdraw the explicit host grant. No request,
                 # response body, protocol result or input is substituted.
@@ -620,32 +646,6 @@ async def test_original_sdk_checked_replay_parameters_files_tabs_and_single_writ
                 assert len(writes) == 2
                 checks.append(
                     "actual one-write/post-return withdrawal retains original operation without replay"
-                )
-                grant["allowed"] = True
-                monkeypatch.setattr(page, "call", original_call)
-                navigation = await page.call("Page.navigate", {"url": origin + "/form"})
-                await page.wait_navigation(navigation)
-                navigation_transition["enabled"] = True
-                coherent = replay("original-coherent-verification-operation")
-                report = await coherent.run(
-                    {
-                        "schemaVersion": "1.0",
-                        "recordingId": "original-recording",
-                        "steps": [
-                            {"id": "scroll", "kind": "scroll_to", "value": "0,0"}
-                        ],
-                        "verification": [{"type": "url_contains", "value": "/done"}],
-                    },
-                    {},
-                    before_run=current,
-                    before_result=current,
-                )
-                assert (
-                    report["status"] == "passed" and navigation_transition["admitted"]
-                )
-                assert len(writes) == 2
-                checks.append(
-                    "actual navigation during current verification admission discards old observation without repeating effects"
                 )
                 safe = {
                     "checks": checks,
