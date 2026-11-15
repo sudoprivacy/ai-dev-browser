@@ -285,6 +285,10 @@ class BrowserSession:
 
     async def _observe(self):
         tabs = await self._refresh()
+        # Discovery may legitimately retire an externally closed target. Bind
+        # pixels to the version actually selected by this observation, before
+        # awaiting layout/accessibility/capture on that exact page.
+        observed = self.control.snapshot()
         page = await self._connect_page()
         if self._dialog:
             raise ControlError("browser_dialog_requires_response")
@@ -293,6 +297,9 @@ class BrowserSession:
         # A return always captures current pixels, even with no viewer open.
         view = PageView()
         data = await view.capture(page, dialog=self._dialog)
+        self.control._authorize(
+            "ai", observed["controlEpoch"], observed["targetEpoch"], True
+        )
         return {
             "activeTargetId": self.target_id,
             "tabs": tabs,
@@ -303,8 +310,8 @@ class BrowserSession:
                 "data": data,
                 "width": width,
                 "height": height,
-                "controlEpoch": self.control.epoch,
-                "targetEpoch": self.control.target_epoch,
+                "controlEpoch": observed["controlEpoch"],
+                "targetEpoch": observed["targetEpoch"],
             },
         }
 
@@ -312,7 +319,9 @@ class BrowserSession:
         async def current():
             observation = await self._observe()
             await check_effect_authorization(before_effect)
-            self.control._authorize("ai", epoch, target_epoch, True)
+            self.control._authorize(
+                "ai", epoch, observation["frame"]["targetEpoch"], True
+            )
             return observation
 
         return await self.control.run(

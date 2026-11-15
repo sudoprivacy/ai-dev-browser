@@ -1355,7 +1355,7 @@ class Worker:
             current = await self.state()
             if (
                 current["controlEpoch"] != epoch
-                or current["targetEpoch"] != target_epoch
+                or current["targetEpoch"] != observation["frame"]["targetEpoch"]
             ):
                 raise ControlError("stale_browser_operation")
             return {"session": current, "observation": observation}

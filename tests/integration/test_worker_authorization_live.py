@@ -387,3 +387,42 @@ async def test_observe_discovers_remaining_real_tab_after_external_close(tmp_pat
         page = await worker.session._connect_page()  # Read-only oracle.
         assert await page.js("document.title") == "Original draft"
         await mcp("browser_stop", epochs(worker))
+
+
+async def test_observe_follows_close_between_discovery_and_pixel_capture(tmp_path):
+    """A real target can close after the first list, before observe refreshes."""
+    grants = FixtureGrants()
+    async with fixture(tmp_path, grants) as (worker, _host, mcp, agent, website):
+        await mcp("browser_launch", {"isHeadless": True, "transport": "cdp"})
+        await mcp("browser_action", {"kind": "new-tab", **epochs(worker)})
+        previous = worker.session.target_id
+        browser = await worker.session._connect_browser()
+        update_targets = worker.session.browser.update_targets
+        closed = False
+
+        async def close_after_original_list():
+            nonlocal closed
+            await update_targets()
+            if not closed:
+                closed = True
+                await browser.call("Target.closeTarget", {"targetId": previous})
+
+        worker.session.browser.update_targets = close_after_original_list
+        try:
+            observed = await agent({"kind": "observe"}, actor="native-main")
+        finally:
+            worker.session.browser.update_targets = update_targets
+        assert closed and observed["session"]["activeTargetId"] != previous
+        assert (
+            observed["observation"]["activeTargetId"]
+            == observed["session"]["activeTargetId"]
+        )
+        for field in ("controlEpoch", "targetEpoch"):
+            assert observed["observation"]["frame"][field] == observed["session"][field]
+        await mcp(
+            "browser_action",
+            {"kind": "navigate", "url": website + "/", **epochs(worker)},
+        )
+        page = await worker.session._connect_page()
+        assert await page.js("document.title") == "Original draft"
+        await mcp("browser_stop", epochs(worker))
