@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import sys
 
 import aiohttp
 from aiohttp import web
@@ -64,7 +65,8 @@ async def test_original_chrome_unicode_and_held_key_cleanup_after_grant_withdraw
             headless=True,
             stealth=False,
             profile=str(tmp_path / "original-profile"),
-            extra_args=["--disable-gpu", "--no-first-run"],
+            extra_args=["--disable-gpu", "--no-first-run"]
+            + (["--no-sandbox"] if sys.platform == "linux" else []),
         )
         assert "error" not in record, record
         browser = await connect_browser(session_id=record["session_id"])

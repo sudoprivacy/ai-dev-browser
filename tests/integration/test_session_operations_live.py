@@ -3,16 +3,43 @@
 import asyncio
 import base64
 import json
+import sys
 
 import aiohttp
 from aiohttp import web
 import pytest
 
 from ai_dev_browser.core.connection import BrowserClient, get_active_tab
+from ai_dev_browser.core.browser import browser_start, browser_stop
 from ai_dev_browser.core.navigation import page_goto
 from ai_dev_browser.remote.control import ControlError
 from ai_dev_browser.remote.session import BrowserSession
 from tests.integration.test_remote_view import wait_for
+
+
+@pytest.fixture
+async def owned_operations_browser():
+    launched = await asyncio.to_thread(
+        browser_start,
+        headless=True,
+        temp=True,
+        stealth=False,
+        extra_args=["--no-sandbox"] if sys.platform == "linux" else [],
+    )
+    assert "error" not in launched, launched
+    browser = None
+    try:
+        from ai_dev_browser.core.connection import connect_browser
+
+        browser = await connect_browser(session_id=launched["session_id"])
+        yield browser
+    finally:
+        if browser:
+            await browser.close()
+        stopped = await asyncio.to_thread(
+            browser_stop, session_id=launched["session_id"]
+        )
+        assert stopped["stopped"], stopped
 
 
 async def session_operations_journey(browser, tmp_path):
@@ -209,9 +236,9 @@ window.releases=[];addEventListener('keyup',e=>releases.push({key:e.key,trusted:
 
 
 async def test_owned_session_input_cleanup_diagnostics_and_command_lifetime(
-    browser, tmp_path
+    owned_operations_browser, tmp_path
 ):
-    await session_operations_journey(browser, tmp_path)
+    await session_operations_journey(owned_operations_browser, tmp_path)
 
 
 async def test_extension_session_input_cleanup_diagnostics_and_command_lifetime(
