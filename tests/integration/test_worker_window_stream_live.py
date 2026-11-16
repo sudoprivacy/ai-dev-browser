@@ -401,12 +401,26 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
 
             # A real streamed canvas must move before the viewer releases its
             # pointer. This uses the same checked API, not RFB input or JS pan.
-            await host(
-                {
-                    "kind": "navigate",
-                    "url": remote_site[0] + "/native-drag",
-                    **epochs(held),
-                }
+            previous_target_epoch = held["targetEpoch"]
+            held = (
+                await host(
+                    {
+                        "kind": "navigate",
+                        "url": remote_site[0] + "/native-drag",
+                        **epochs(held),
+                    }
+                )
+            )["session"]
+            assert held["targetEpoch"] == previous_target_epoch + 1
+            # Navigation retires the old window context as well as page pixels.
+            # Reacquire through the existing host path before sending input.
+            await wait_for(
+                lambda: viewer.js("window.isConnected"), lambda value: value is False
+            )
+            stream = await get_stream()
+            await viewer.call("Page.reload")
+            await wait_for(
+                lambda: viewer.js("window.isConnected"), lambda value: value is True, 30
             )
             await wait_for(
                 lambda: page.js("Boolean(document.querySelector('#stage'))"), bool
@@ -418,10 +432,12 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
                 offsetY:screenY+outerHeight-innerHeight-(outerWidth-innerWidth)/2}})()""")
             await viewer.js(
                 """(async()=>{
-                surface.dispose();
+                window.surface?.dispose();
                 const {InputSurface}=await import('/input-surface.js');
                 const canvas=document.querySelector('canvas');
                 canvas.style.touchAction='none';
+                rfb.viewOnly=true;rfb.focusOnClick=false;
+                canvas.addEventListener('mousedown',e=>e.stopImmediatePropagation(),true);
                 window.liveDragPackets=[];
                 window.surface=new InputSurface(canvas,async input=>{
                     liveDragPackets.push(input);
