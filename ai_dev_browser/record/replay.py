@@ -25,7 +25,8 @@ from ..core._element import Element
 from ..core._ref import node_id_of
 from ..core.snapshot import _format_ax_node, _get_frame_nodes, _node_attr
 from ..remote.control import ControlError, check_effect_authorization
-from ..remote.cdp import send_command
+from ..remote.commands import _Commands
+from ..remote.frame_facts import page_frames
 from ..remote.page import PageDrag, PageView
 from .models import StepsDocument
 from .url_filter import is_transient_auth_or_risk_url
@@ -208,33 +209,6 @@ class _Step:
     data: dict[str, Any]
     value: str = ""
     url: str = ""
-
-
-class _Commands:
-    """Typed-protocol forwarding over the SAME already selected page socket."""
-
-    def __init__(self, page: Any, before_mutation: Assertion) -> None:
-        self.page = page
-        self.before_mutation = before_mutation
-
-    async def call(
-        self, method: str, params: dict[str, Any] | None = None, timeout: float = 20
-    ) -> Any:
-        params = params or {}
-        cleanup = (
-            method == "Runtime.releaseObject"
-            or (
-                method == "Input.dispatchMouseEvent"
-                and params.get("type") == "mouseReleased"
-            )
-            or (method == "Input.dispatchKeyEvent" and params.get("type") == "keyUp")
-        )
-        if not cleanup:
-            await self.before_mutation()
-        return await self.page.call(method, params, timeout=timeout)
-
-    async def send(self, command: Any) -> Any:
-        return await send_command(self.call, command)
 
 
 class CheckedReplay:
@@ -448,31 +422,7 @@ class CheckedReplay:
         return assertion
 
     async def _frame(self, page: Any, target: dict[str, Any]) -> dict[str, Any]:
-        tree = await page.call("Page.getFrameTree")
-        frames: list[dict[str, Any]] = []
-
-        def visit(node: dict[str, Any], lineage: list[str]) -> None:
-            frame = node["frame"]
-            origin = frame.get("securityOrigin")
-            if not isinstance(origin, str):
-                raise ControlError("browser_replay_frame_invalid")
-            current = {
-                "id": frame["id"],
-                "loaderId": frame.get("loaderId"),
-                "url": frame["url"],
-                "origin": origin,
-                "path": lineage,
-            }
-            frames.append(current)
-            if len(frames) > 128 or len(lineage) > 16:
-                raise ControlError("browser_replay_frame_invalid")
-            for child in node.get("childFrames", []):
-                child_origin = child["frame"].get("securityOrigin")
-                if not isinstance(child_origin, str):
-                    raise ControlError("browser_replay_frame_invalid")
-                visit(child, [*lineage, child_origin])
-
-        visit(tree["frameTree"], [])
+        frames = await page_frames(page)
         path = target.get("framePath", [])
         if not isinstance(path, list) or any(
             not isinstance(value, str) for value in path

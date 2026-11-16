@@ -17,6 +17,7 @@ from ai_dev_browser.core._transport import MAX_SIZE, ProtocolException
 
 from .authorized_page import navigation_cookie
 from .cdp import CDP, BrowserViewError
+from .commands import _Commands
 from .control import (
     BrowserControl,
     ControlError,
@@ -48,6 +49,7 @@ class BrowserSession:
         self._view = SharedViewer(self._create_view, self._close_view)
         self._recording = None
         self._downloads_ready = False
+        self._host_input = None
 
     async def _create_view(self):
         return PageView()
@@ -235,7 +237,16 @@ class BrowserSession:
         )
 
     async def stop_recording(
-        self, actor, epoch, target_epoch, *, before_effect, before_read, reconcile=None
+        self,
+        actor,
+        epoch,
+        target_epoch,
+        *,
+        before_effect,
+        before_read,
+        reconcile=None,
+        generate_steps=True,
+        skill_name=None,
     ):
         """Use to finish the original recording; confirms storage after the host ACK.
 
@@ -250,6 +261,8 @@ class BrowserSession:
             before_effect: Current assertion admitting this Stop.
             before_read: Current assertion permitting its outcome metadata.
             reconcile: Authorized reader proving the exact original write exists.
+            generate_steps: Whether the first Stop requests steps and a Skill draft.
+            skill_name: Optional draft name fixed by the first Stop.
 
         Failure:
             An uncertain write keeps its original identity. Reconcile that write
@@ -262,7 +275,11 @@ class BrowserSession:
 
         async def stop():
             return await self._recording.finish(
-                actor, before_read=before_read, reconcile=reconcile
+                actor,
+                before_read=before_read,
+                reconcile=reconcile,
+                generate_steps=generate_steps,
+                skill_name=skill_name,
             )
 
         return await self.control.run(
@@ -508,6 +525,37 @@ class BrowserSession:
             before_effect=before_effect,
         )
 
+    async def diagnostics(
+        self, epoch: int, target_epoch: int, *, before_read, authorize_frame
+    ):
+        """Use to inspect a failed page; returns host-private DOM, AX and full-page PNG.
+
+        Requires current original-browser read and every source-frame's full
+        projection/DLP permission. Existing input control and page socket are
+        reused in observation mode. A source change withholds the snapshot.
+
+        Args:
+            epoch: Original current control epoch.
+            target_epoch: Original selected-target epoch.
+            before_read: Current original-principal browser diagnostic read assertion.
+            authorize_frame: Factory for that principal's full read assertion on
+                every source frame, including child-frame pixels and DLP.
+
+        Failure:
+            Withhold diagnostics after source or authorization changes. Inspect
+            the original operation's status; a snapshot cannot confirm an
+            uncertain write and must not cause that write to be replayed.
+        """
+        from .diagnostics import capture_diagnostics
+
+        return await capture_diagnostics(
+            self,
+            epoch,
+            target_epoch,
+            before_read=before_read,
+            authorize_frame=authorize_frame,
+        )
+
     async def selection(
         self, controller: str, epoch: int, target_epoch: int, *, before_effect=None
     ):
@@ -630,8 +678,18 @@ class BrowserSession:
                 width, height = await self._dimensions(page)
                 await check_effect_authorization(before_effect)
                 self.control._authorize(actor, epoch, target_epoch, False)
+
+                async def input_current():
+                    await check_effect_authorization(before_effect)
+                    self.control._authorize(actor, epoch, target_epoch, False)
+                    if self._page is not page or page.disconnected:
+                        raise ControlError("browser_target_closed")
+
+                # Input contains awaited focus/position/press steps. Reuse the
+                # original replay guard at each command, on this exact socket.
+                # Pure key/button releases still drain after withdrawal.
                 if not await PageView().input(
-                    page,
+                    _Commands(page, input_current),
                     action["input"],
                     width=width,
                     height=height,
@@ -751,6 +809,70 @@ class BrowserSession:
             controller, epoch, target_epoch, perform, before_effect=before_effect
         )
 
+    async def page_operation(
+        self, viewer, controller, epoch, target_epoch, operation, *, before_effect
+    ):
+        """Use for admitted host input; runs its journal and commands under one barrier.
+
+        The callback receives guarded CDP call/send on the current original
+        page, not a browser or raw endpoint. Call outside another core.run.
+        It must not retain the command handle after this invocation.
+
+        Args:
+            viewer: Trusted host viewer identity owning the original input journal.
+            controller: Current authenticated human control owner.
+            epoch: Original current control epoch.
+            target_epoch: Original selected-target epoch.
+            operation: Async host callback receiving guarded call/send methods.
+                Its return value is returned unchanged after the callback ends.
+            before_effect: Mandatory current original input authorization assertion.
+
+        Failure:
+            An expired handle or changed input context refuses. Release held
+            original inputs with cleanup_input and original journal custody;
+            do not reconnect or resend an uncertain input packet.
+        """
+        if self._host_input is None:
+            from .host_input import HostInput
+
+            self._host_input = HostInput(self)
+        return await self._host_input.perform(
+            viewer,
+            controller,
+            epoch,
+            target_epoch,
+            operation,
+            before_effect=before_effect,
+        )
+
+    async def cleanup_input(self, viewer, controller, operation, *, before_cleanup):
+        """Use for held original inputs after withdrawal; releases them on their original socket.
+
+        A current user read grant is not required to release original input;
+        before_cleanup must prove its original journal/writer custody instead.
+        No frame read, reconnect, new press or cleanup replay is admitted.
+        Call outside another core.run, before viewer detach if input is held.
+
+        Args:
+            viewer: Original host viewer identity from page_operation.
+            controller: Original authenticated human control owner.
+            operation: Async host journal callback issuing original key/button
+                releases only; succeeds without returning page data.
+            before_cleanup: Mandatory current original journal/writer custody
+                assertion, distinct from a user read or input grant.
+
+        Failure:
+            An uncertain release closes its receipt and puts control in error.
+            Retain the original journal and reconcile through its owner; never
+            retry cleanup on a replacement page or claim the release succeeded.
+        """
+        if not callable(before_cleanup) or not callable(operation):
+            raise ControlError("browser_authorization_required")
+        if self._host_input is not None:
+            return await self._host_input.cleanup(
+                viewer, controller, operation, before_cleanup=before_cleanup
+            )
+
     async def agent_command(
         self,
         epoch: int,
@@ -860,6 +982,8 @@ class BrowserSession:
         )
 
     async def close(self):
+        if self._host_input is not None:
+            self._host_input.invalidate()
         if self._recording:
             await self._recording.interrupt()
         for viewer in list(self._viewers):

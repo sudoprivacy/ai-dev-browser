@@ -952,6 +952,58 @@ connection closure, reconnect and browser/profile/lease preservation. It runs
 in Linux viewer CI and the managed Chrome job. This SDK test does not establish
 a consumer's public authentication, graph performance or phone acceptance.
 
+## Admitted host input and cleanup
+
+`BrowserSession.page_operation(viewer, controller, epoch, target_epoch,
+operation, before_effect=...)` runs a trusted host's original input journal
+and translator inside the existing session input barrier. The async callback
+receives guarded `call`/`send` on the selected page and returns its result
+unchanged. Authorization is checked again after journal/focus/command waits.
+The command handle expires when that callback ends, including commands still
+waiting for authorization. Invoke this API outside another `control.run`.
+
+When the journal still owns a held key or button, call
+`cleanup_input(viewer, controller, operation, before_cleanup=...)` before viewer
+detach. Its assertion proves current custody of the original journal/writer;
+it is distinct from the user's read/input grant, which may already be revoked.
+The cleanup callback may issue only original key/button releases on the retained
+socket. A changed selected page never redirects these releases. An uncertain
+release is retained as an error and cannot be replayed. The host owns the
+journal and its durable exclusion; these SDK methods add no authority or wire
+endpoint.
+
+Recording Stop accepts `generate_steps=False` to save only captured events,
+or `skill_name="My workflow"` to name the generated draft. The existing Worker
+`record-stop` action uses `generateSteps` and `name` for these same choices.
+Defaults still produce a draft. The first Stop fixes the original payload;
+later Stop/reconciliation cannot regenerate it or issue a second persistence
+write with different options.
+
+## Host-private failure diagnostics
+
+For an existing admitted `BrowserSession`, call
+`diagnostics(control_epoch, target_epoch, before_read=..., authorize_frame=...)`
+outside another control operation. It returns DOM, accessibility data and a
+full-page PNG from that same page/socket under the original observation barrier.
+It does not change the control owner, create a browser, write files or retry a
+failed action. This is an embedding API, not a new untrusted Worker wire action.
+
+`before_read` must assert the original principal's current browser/diagnostic
+read. `authorize_frame(target_id, facts)` must return an async None-or-raise
+assertion for that SAME principal's full DOM/AX/pixels/source/projection/DLP
+permission. Facts use the original checked-replay frame identity, including
+loader and source origin; facts never grant access. Every child source also
+needs permission before DOM/pixels are read. Missing or malformed assertions
+refuse. Source/target/control changes during waits withhold the snapshot, and
+cancellation drains the original read without replaying it.
+
+The host keeps raw diagnostics in its original artifact store, under its actual
+current writer and filesystem exclusion. Keep replay's safe outcome metadata
+free of DOM, pixels, input values and credentials. A successful diagnostic read
+does not reconcile an uncertain browser write into success. DOM/AX JSON and PNG
+are bounded to 16 MiB each, with at most 16 Mi CSS pixels per full-page capture;
+an oversized or truncated image refuses rather than falling back to a viewport.
+
 ## Native Windows window presentation
 
 Selecting a tab with CDP or the extension does not establish Windows foreground

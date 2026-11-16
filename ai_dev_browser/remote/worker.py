@@ -24,6 +24,7 @@ from aiohttp import web
 from ai_dev_browser.core.browser import browser_connect, browser_start, browser_stop
 from ai_dev_browser.core.connection import connect_browser, connect_extension
 from ai_dev_browser.remote.cdp import BrowserViewError
+from ai_dev_browser.remote.agent import agent_epochs, command_parts, mcp_action
 from ai_dev_browser.remote.control import (
     BrowserControl,
     ControlError,
@@ -1017,10 +1018,7 @@ class Worker:
 
     @staticmethod
     def epochs(action):
-        values = action.get("controlEpoch"), action.get("targetEpoch")
-        if any(type(value) is not int or value < 0 for value in values):
-            raise ControlError("invalid_browser_epoch")
-        return values
+        return agent_epochs(action)
 
     async def prepare_native_window(self, controller, action, *, before_effect=None):
         """Describe only the selected, human-owned native window for the UI helper."""
@@ -1227,12 +1225,19 @@ class Worker:
                         privacy=action.get("privacy"),
                     )
                 else:
-                    if set(action) - {
-                        "kind",
-                        "recordingId",
-                        "controlEpoch",
-                        "targetEpoch",
-                    }:
+                    options = (
+                        {"generateSteps", "name"} if kind == "record-stop" else set()
+                    )
+                    if (
+                        set(action)
+                        - options
+                        - {
+                            "kind",
+                            "recordingId",
+                            "controlEpoch",
+                            "targetEpoch",
+                        }
+                    ):
                         raise ControlError("invalid_browser_request")
                     active = self.session._recording
                     if (
@@ -1248,6 +1253,8 @@ class Worker:
                             before_effect=before_effect,
                             before_read=hooks.get("read"),
                             reconcile=hooks.get("reconcile"),
+                            generate_steps=action.get("generateSteps", True),
+                            skill_name=action.get("name"),
                         )
                     else:
                         extra["recording"] = await self.session.recording_status(
@@ -1412,46 +1419,7 @@ class Worker:
                 raise ControlError("stale_browser_operation")
             return {"session": current, "observation": observation}
         if kind == "command":
-            method, params = action.get("method"), action.get("params", {})
-            frame = action.get("frame")
-            if frame is not None and (
-                not isinstance(frame, str) or not frame or len(frame) > 8192
-            ):
-                raise ControlError("invalid_browser_frame")
-            # Page commands stay on the selected target. Browser/Target/remote
-            # endpoint commands are owned by the session lifecycle instead.
-            if (
-                not isinstance(method, str)
-                or method
-                not in {
-                    "Page.getLayoutMetrics",
-                    "Page.captureScreenshot",
-                    "Page.reload",
-                    "Page.getNavigationHistory",
-                    "Page.navigateToHistoryEntry",
-                    "Runtime.evaluate",
-                    "Runtime.callFunctionOn",
-                    "Runtime.getProperties",
-                    "DOM.getDocument",
-                    "DOM.getFlattenedDocument",
-                    "DOM.describeNode",
-                    "DOM.querySelector",
-                    "DOM.querySelectorAll",
-                    "DOM.getBoxModel",
-                    "DOM.getContentQuads",
-                    "DOM.getAttributes",
-                    "DOM.getOuterHTML",
-                    "DOM.focus",
-                    "DOM.scrollIntoViewIfNeeded",
-                    "Input.dispatchMouseEvent",
-                    "Input.dispatchKeyEvent",
-                    "Input.insertText",
-                    "Accessibility.getFullAXTree",
-                    "Accessibility.getPartialAXTree",
-                }
-                or not isinstance(params, dict)
-            ):
-                raise ControlError("invalid_browser_command")
+            method, params, frame = command_parts(action)
             result = await self.session.agent_command(
                 epoch,
                 target_epoch,
@@ -1947,15 +1915,7 @@ def application(
                     "upload-files",
                     "command",
                 }:
-                    if arguments.get("kind") == "command":
-                        raw_params = arguments.get("paramsJson", "{}")
-                        if not isinstance(raw_params, str) or len(raw_params) > 262144:
-                            raise ControlError("invalid_browser_command")
-                        try:
-                            command_params = json.loads(raw_params)
-                        except ValueError:
-                            raise ControlError("invalid_browser_command") from None
-                        arguments = {**arguments, "params": command_params}
+                    arguments = mcp_action(arguments)
                     value = await authorized_agent(request, arguments)
                 else:
                     raise ControlError("invalid_agent_browser_action")
