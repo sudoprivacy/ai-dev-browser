@@ -224,7 +224,13 @@ async def worker_recording_journey(tmp_path, monkeypatch, *, extension=False):
                     ]
                 )
                 stopped = asyncio.create_task(
-                    invoke({"kind": "record-stop", "recordingId": "original-recording"})
+                    invoke(
+                        {
+                            "kind": "record-stop",
+                            "recordingId": "original-recording",
+                            "name": "Original chosen workflow",
+                        }
+                    )
                 )
                 await asyncio.wait_for(sink_entered.wait(), 10)
                 assert (
@@ -235,6 +241,7 @@ async def worker_recording_journey(tmp_path, monkeypatch, *, extension=False):
                 reply = await stopped
                 assert reply["recording"]["storageStatus"] == "saved"
                 saved = json.loads((private / "original-recording.json").read_bytes())
+                assert "name: original-chosen-workflow" in saved["draft"]["skillDraft"]
                 events = saved["snapshot"]["events"]
                 assert any(
                     e.get("value") == values[0] and e["targetId"] == first_target
@@ -257,7 +264,12 @@ async def worker_recording_journey(tmp_path, monkeypatch, *, extension=False):
                     "last values on both targets durably stored before Stop result"
                 )
                 await invoke(
-                    {"kind": "record-stop", "recordingId": "original-recording"}
+                    {
+                        "kind": "record-stop",
+                        "recordingId": "original-recording",
+                        "generateSteps": False,
+                        "name": "Must not replace original",
+                    }
                 )
                 assert (
                     calls == ["original-recording"]
@@ -274,8 +286,16 @@ async def worker_recording_journey(tmp_path, monkeypatch, *, extension=False):
                     {"kind": "record-start", "recordingId": "uncertain-recording"}
                 )
                 await input_value("uncertain final value")
+                observed_value = await worker.session._page.js(
+                    "document.querySelector('#query').value"
+                )
+                assert "uncertain final value" in observed_value
                 unknown = await invoke(
-                    {"kind": "record-stop", "recordingId": "uncertain-recording"},
+                    {
+                        "kind": "record-stop",
+                        "recordingId": "uncertain-recording",
+                        "generateSteps": False,
+                    },
                     status=409,
                 )
                 assert unknown["error"] == "browser_recording_write_unconfirmed"
@@ -284,6 +304,19 @@ async def worker_recording_journey(tmp_path, monkeypatch, *, extension=False):
                     {"kind": "record-stop", "recordingId": "uncertain-recording"}
                 )
                 assert recovered["recording"]["storageStatus"] == "saved"
+                assert recovered["recording"]["hasDraft"] is False
+                capture_only = json.loads(
+                    (private / "uncertain-recording.json").read_bytes()
+                )
+                assert capture_only["draft"] is None
+                assert (
+                    capture_only["draftError"]
+                    == "browser_recording_draft_not_requested"
+                )
+                assert any(
+                    event.get("value") == observed_value
+                    for event in capture_only["snapshot"]["events"]
+                )
                 assert calls == ["original-recording", "uncertain-recording"]
                 checks.append(
                     "actual committed-then-lost save reconciled by read/digest without second persistence"

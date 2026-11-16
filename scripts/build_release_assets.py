@@ -60,6 +60,11 @@ def build_assets(dist: Path, output: Path, expected_version: str | None = None) 
             "record/replay.py",
             "record/session.py",
             "record/MIT-LICENSE.txt",
+            "remote/agent.py",
+            "remote/commands.py",
+            "remote/diagnostics.py",
+            "remote/frame_facts.py",
+            "remote/host_input.py",
         ):
             if f"ai_dev_browser/{name}" not in archive.namelist():
                 raise ValueError(f"Wheel is missing {name}")

@@ -143,7 +143,9 @@ class SessionRecording:
                 raise ControlError("browser_recording_context_unavailable")
             await asyncio.sleep(0.01)
 
-    async def _commit(self) -> None:
+    async def _commit(
+        self, *, generate_steps: bool = True, skill_name: str | None = None
+    ) -> None:
         closed = await self.capture.close()
         self.current = None
         self.phase = "pending-save"
@@ -153,11 +155,15 @@ class SessionRecording:
         if closed["status"] != "failed":
             try:
                 snapshot = await self.capture.snapshot(before_read=self.before_read)
-                draft = build_recording_draft(
-                    self.capture.recording_id,
-                    snapshot["events"],
-                    privacy=self.capture.privacy,
-                )
+                if generate_steps:
+                    draft = build_recording_draft(
+                        self.capture.recording_id,
+                        snapshot["events"],
+                        privacy=self.capture.privacy,
+                        skill_name=skill_name,
+                    )
+                else:
+                    draft_error = "browser_recording_draft_not_requested"
             except ControlError as error:
                 closed = {**closed, "status": "failed", "error": error.code}
                 snapshot = None
@@ -214,13 +220,25 @@ class SessionRecording:
             raise ControlError("browser_recording_write_unconfirmed") from None
 
     async def finish(
-        self, actor: str, *, before_read: Assertion, reconcile: Reconcile | None = None
+        self,
+        actor: str,
+        *,
+        before_read: Assertion,
+        reconcile: Reconcile | None = None,
+        generate_steps: bool = True,
+        skill_name: str | None = None,
     ) -> dict[str, Any]:
         self.assert_owner(actor)
+        if type(generate_steps) is not bool or (
+            skill_name is not None and not isinstance(skill_name, str)
+        ):
+            raise ControlError("invalid_browser_recording_options")
         _require(before_read, "browser_authorization_required")
         await check_effect_authorization(before_read)
         if self._commit_task is None:
-            self._commit_task = asyncio.create_task(self._commit())
+            self._commit_task = asyncio.create_task(
+                self._commit(generate_steps=generate_steps, skill_name=skill_name)
+            )
             self._commit_task.add_done_callback(
                 lambda done: None if done.cancelled() else done.exception()
             )
