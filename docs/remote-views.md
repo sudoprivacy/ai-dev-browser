@@ -167,6 +167,24 @@ stopped; a failed or canceled return observation retains human control.
 Viewer disconnect never calls `give_back`. A different viewer does not replace
 the controller without an explicit authorized transfer.
 
+Same-tab `BrowserSession.action` navigation (`navigate`, `reload`, `back`,
+`forward`) also advances `targetEpoch` inside the original operation barrier.
+Queued input and cached frames carrying the old version refuse. The same native
+tab, page connection and human control lease are retained. Before changing a
+document, retire any original host input receipt with `cleanup_input` and its
+original journal custody; a receipt for the previous context grants no new input.
+
+Navigation returns `{navigationRequested: true, targetEpoch}`. Use the returned
+version and a fresh frame before sending input; a version is not proof that a
+remote write committed. Back/forward with no destination returns
+`{navigationRequested: false, targetEpoch}` without sending navigation or
+advancing the version. Invalid URLs and pre-effect permission refusals leave the
+version unchanged. A submitted error, lost acknowledgement or canceled caller
+can still advance it: inspect current state and the original operation rather
+than automatically resending. A `Page.navigate` response with `errorText`
+raises `browser_navigation_failed` instead of acknowledging success. Top-page
+agent navigation commands share this boundary and preserve their CDP result.
+
 Worker status remains available while a browser starts, stops or is rebound.
 During that transition it reports `pausing`, retains the human control lease,
 and disables page/window input until the operation finishes. Status never

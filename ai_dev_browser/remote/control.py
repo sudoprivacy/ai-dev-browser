@@ -187,10 +187,11 @@ class BrowserControl:
         return self.snapshot(), observation
 
     def change_target(self) -> None:
-        """Invalidate queued input/frames inside an authorized operation.
+        """Invalidate queued input/frames for a target or document transition.
 
         The host calls this only while `run` owns the operation lock, after
-        changing the authorized target. It also checks epochs on delivered
+        changing the authorized target or submitting navigation on that tab.
+        It also checks epochs on delivered
         frames so a previously captured image cannot replace the new target.
         """
         self.target_epoch += 1
