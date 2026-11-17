@@ -11,7 +11,7 @@ import json
 from typing import Any
 
 from ..remote.control import ControlError, check_effect_authorization
-from .capture import Assertion, EventRecording, FrameAssertions
+from .capture import Assertion, EventRecording, EventSink, FrameAssertions
 from .draft import build_recording_draft
 from .models import PrivacySettings
 
@@ -30,6 +30,9 @@ class SessionRecording:
     The host owns the store and its current writer/exclusion checks. Callbacks
     receive detached data, never confer access from recording IDs or digests,
     and must return None only after their actual durable work is confirmed.
+    Optional event_sink(recording_id, event) checkpoints accepted, redacted
+    events before Stop; persist remains the original terminal publication.
+    Its failed/unknown event write can never produce a successful draft.
     """
 
     def __init__(
@@ -43,18 +46,34 @@ class SessionRecording:
         persist: Persist,
         reconcile: Reconcile | None = None,
         privacy: PrivacySettings | None = None,
+        event_sink: EventSink | None = None,
     ) -> None:
         for callback in (before_capture, authorize_frame, before_read):
             _require(callback, "browser_authorization_required")
         _require(persist, "browser_recording_store_required")
         if reconcile is not None:
             _require(reconcile, "browser_recording_store_required")
-        self.capture = EventRecording(recording_id, privacy=privacy)
+        if event_sink is not None:
+            _require(event_sink, "browser_recording_store_required")
         self.owner = owner
         self.before_capture = before_capture
         self.authorize_frame = authorize_frame
         self.before_read = before_read
         self.persist, self.reconcile = persist, reconcile
+
+        async def write_event(identity: str, event: dict[str, Any]) -> object:
+            await check_effect_authorization(self.before_capture)
+            await check_effect_authorization(self.before_read)
+            result = await event_sink(identity, event)
+            await check_effect_authorization(self.before_capture)
+            await check_effect_authorization(self.before_read)
+            return result
+
+        self.capture = EventRecording(
+            recording_id,
+            privacy=privacy,
+            event_sink=write_event if event_sink is not None else None,
+        )
         self.created_at = datetime.now(timezone.utc).isoformat()
         self.phase = "recording"
         self.error: str | None = None
@@ -149,6 +168,13 @@ class SessionRecording:
         closed = await self.capture.close()
         self.current = None
         self.phase = "pending-save"
+        if self.capture.event_write_pending:
+            # Never publish over an event write whose outcome is still
+            # unknown. The host retains its original writer and journal;
+            # terminal reconciliation cannot invent a never-submitted save.
+            self.phase = "storage-unknown"
+            self.error = "browser_recording_event_write_unconfirmed"
+            raise ControlError(self.error)
         snapshot = None
         draft = None
         draft_error = None

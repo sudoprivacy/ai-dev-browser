@@ -690,13 +690,14 @@ SDK input. Real CDP and installed personal-extension fixtures cover the Worker
 path on both WebSocket implementations. Manual OS input during asynchronous
 admission, OOPIF and product profile/environment assembly require qualification.
 
-`application` accepts two server-only storage callbacks:
+`application` accepts server-only storage callbacks:
 
 ```python
 app = application(
     same_worker, host_authorization=resolve_current_original_host_assertion,
     recording_sink=persist_original_recording,
     recording_reconcile=assert_original_recording_already_committed,
+    recording_event_sink=append_original_accepted_event,  # Optional checkpoint.
 )
 ```
 
@@ -711,6 +712,36 @@ the SDK creates no recording directory, authority or parallel store. A failed
 recording supplies terminal metadata without a partial event stream. Cleanup
 can persist that metadata under the host's original operational writer even
 when human read permission has been withdrawn; it grants no new read access.
+
+For progress before Stop, pass optional `event_sink(recording_id, event)` to
+`EventRecording`, `SessionRecording` or `BrowserSession.start_recording`. The
+Worker equivalent is `recording_event_sink(request, original_binding,
+controller, recording_id, event)`. It is server composition, never an HTTP
+field or a new grant. Without this callback, existing callers retain their
+terminal-only persistence behavior.
+
+The SDK checks native frame admission/nonces, redacts the event, replaces
+page-supplied provenance with admitted target/frame facts, and assigns the
+original sequential `seq` before calling the sink. Each callback receives a
+detached event and the SAME original recording ID, in serial order. Return
+`None` only after that event's actual write is confirmed. The host checks its
+real current writer/exclusion and source/read capabilities inside the write;
+the SDK checks current frame authority around it, and the session also checks
+its original capture and recording-read assertions. A callback grants no access
+from the recording ID or event data. The SDK creates no store, journal or writer.
+
+A failed/lost acknowledgement, non-`None` return or original 20-second wait
+expiry fails capture with `browser_recording_event_write_unconfirmed`. Events
+are never resent. Snapshots and successful drafts are refused; a completed
+failed write permits only failed terminal metadata with no event stream/draft.
+`eventWritePending=true` means the original host write may still complete:
+bounded cleanup does not cancel it, publish over it or release its writer.
+The session retains an unknown storage outcome if that write remains pending,
+and terminal reconciliation cannot invent a save that was never submitted.
+The host retains its original reservation and recovers/checks its own journal
+using current authority and the original ID. A late acknowledgement cannot
+turn this failed stream into a successful recording. The callback's durability
+guarantee belongs to the host; an SDK acknowledgement is no power-loss guarantee.
 
 Stop reports saved only after this callback completes. A possible commit,
 malformed callback result, cancellation or post-return authorization refusal

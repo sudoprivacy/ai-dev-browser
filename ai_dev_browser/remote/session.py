@@ -172,12 +172,16 @@ class BrowserSession:
         persist,
         reconcile=None,
         privacy=None,
+        event_sink=None,
     ):
         """Use to capture actions on this session; returns recording metadata.
 
         Capture follows the selected target and uses the existing page connection.
         SDK input waits for current document admission. For a viewer GIF, choose
         page_record_start. This operation does not acquire input control.
+        Supply event_sink for incremental redacted event persistence; without
+        it, the host persist callback runs only at Stop. An unconfirmed event
+        write fails capture and is never retried or published as a draft.
 
         Args:
             actor: Original authenticated recording owner.
@@ -190,6 +194,9 @@ class BrowserSession:
             persist: Host writer that returns None after durable persistence.
             reconcile: Host reader proving that exact original write committed.
             privacy: mask-sensitive (default), mask-all, or none.
+            event_sink: Optional async (recording_id, redacted_event) writer;
+                checks current host writer/source/read access and returns None
+                only after the original event write is confirmed.
 
         Returns:
             Capture and storage metadata. Durable completion is confirmed by Stop.
@@ -213,6 +220,7 @@ class BrowserSession:
             persist=persist,
             reconcile=reconcile,
             privacy=PrivacySettings(input_policy=privacy or "mask-sensitive"),
+            event_sink=event_sink,
         )
 
         async def start():
@@ -253,6 +261,8 @@ class BrowserSession:
         Flushes admitted final input, compiles a reviewable draft and waits for
         the original host save. Returns metadata without events or parameter
         values. Repeated Stop never repeats that persistence call.
+        Failed event checkpoints have no successful snapshot/draft. Retain the
+        original host writer while eventWritePending is true.
 
         Args:
             actor: Original authenticated recording owner.
@@ -267,6 +277,9 @@ class BrowserSession:
         Failure:
             An uncertain write keeps its original identity. Reconcile that write
             through Stop before starting a new recording; do not resend its save.
+            This reconciles a submitted terminal save only. An uncertain event
+            checkpoint needs the host's original journal/reservation recovery;
+            never replay an event or invent a terminal save that was not sent.
         """
         if before_effect is None:
             raise ControlError("browser_authorization_required")

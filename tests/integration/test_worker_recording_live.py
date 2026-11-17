@@ -41,6 +41,7 @@ async def worker_recording_journey(tmp_path, monkeypatch, *, extension=False):
     source_entered, source_release = asyncio.Event(), asyncio.Event()
     sink_entered, sink_release = asyncio.Event(), asyncio.Event()
     calls = []
+    event_calls = {}
     frame_count = 0
     binding = {
         "orgId": "fixture-org",
@@ -128,12 +129,30 @@ async def worker_recording_journey(tmp_path, monkeypatch, *, extension=False):
             assert hashlib.sha256(data).hexdigest() == digest
             assert json.loads(data) == payload
 
+        async def checkpoint(request, original_binding, actor, identity, event):
+            assert original_binding == binding and actor == controller
+            assert identity in {"original-recording", "uncertain-recording"}
+            events = event_calls.setdefault(identity, [])
+            assert event["seq"] == len(events) + 1
+
+            def append():
+                with (private / (identity + ".events.jsonl")).open("ab") as output:
+                    output.write(
+                        (json.dumps(event, ensure_ascii=False) + "\n").encode()
+                    )
+                    output.flush()
+                    os.fsync(output.fileno())
+
+            await asyncio.to_thread(append)
+            events.append(event)
+
         sdk_runner, origin = await serve(
             application(
                 worker,
                 host_authorization=authority,
                 recording_sink=sink,
                 recording_reconcile=reconcile,
+                recording_event_sink=checkpoint,
             )
         )
         async with aiohttp.ClientSession(
@@ -237,12 +256,21 @@ async def worker_recording_journey(tmp_path, monkeypatch, *, extension=False):
                     not stopped.done()
                     and not (private / "original-recording.json").exists()
                 )
+                checkpointed = [
+                    json.loads(line)
+                    for line in (private / "original-recording.events.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                ]
+                assert checkpointed == event_calls["original-recording"]
+                assert any(event.get("value") == values[1] for event in checkpointed)
                 sink_release.set()
                 reply = await stopped
                 assert reply["recording"]["storageStatus"] == "saved"
                 saved = json.loads((private / "original-recording.json").read_bytes())
                 assert "name: original-chosen-workflow" in saved["draft"]["skillDraft"]
                 events = saved["snapshot"]["events"]
+                assert events == checkpointed
                 assert any(
                     e.get("value") == values[0] and e["targetId"] == first_target
                     for e in events
