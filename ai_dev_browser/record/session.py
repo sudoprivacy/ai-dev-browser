@@ -271,6 +271,44 @@ class SessionRecording:
             await self._wait_commit()
         elif not self._commit_task.done():
             await self._wait_commit()
+        return await self._confirm_saved(before_read=before_read, reconcile=reconcile)
+
+    async def confirm_saved(
+        self,
+        actor: str,
+        *,
+        before_read: Assertion,
+        reconcile: Reconcile | None = None,
+    ) -> dict[str, Any]:
+        """Read-confirm only an already submitted terminal save, within 20 seconds.
+
+        This never starts or waits for a write, stops capture or generates a
+        draft. A pending event checkpoint without a terminal save is refused.
+        The host reader must be read-only and honor cancellation.
+        """
+        self.assert_owner(actor)
+        _require(before_read, "browser_authorization_required")
+        if reconcile is not None:
+            _require(reconcile, "browser_recording_store_required")
+        if (
+            self._commit_task is None
+            or not self._commit_task.done()
+            or self._terminal is None
+            or self._digest is None
+            or self.phase not in {"storage-unknown", "saved"}
+        ):
+            raise ControlError("browser_recording_write_unconfirmed")
+        try:
+            return await asyncio.wait_for(
+                self._confirm_saved(before_read=before_read, reconcile=reconcile),
+                timeout=20,
+            )
+        except asyncio.TimeoutError:
+            raise ControlError("browser_recording_write_unconfirmed") from None
+
+    async def _confirm_saved(
+        self, *, before_read: Assertion, reconcile: Reconcile | None
+    ) -> dict[str, Any]:
         if self.phase == "storage-unknown":
             # Read reconciliation only. This callback must prove the exact
             # original terminal payload already exists durably. No second
@@ -291,6 +329,7 @@ class SessionRecording:
                         )
                         if result is not None:
                             raise ControlError("invalid_browser_recording_store")
+                        await check_effect_authorization(before_read)
                     except Exception:
                         raise ControlError(
                             "browser_recording_write_unconfirmed"

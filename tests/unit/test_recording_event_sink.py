@@ -239,6 +239,11 @@ async def test_original_twenty_second_bound_keeps_unknown_write_owned_without_pu
     with pytest.raises(ControlError, match="^browser_recording_write_unconfirmed$"):
         await record.finish("original-human", before_read=allowed)
     assert record.phase == "storage-unknown" and terminal == [] and len(writes) == 2
+    with pytest.raises(ControlError, match="^browser_recording_write_unconfirmed$"):
+        await record.confirm_saved(
+            "original-human", before_read=allowed, reconcile=allowed
+        )
+    assert terminal == [] and not finished.is_set()
     release.set()
     await finished.wait()
     await asyncio.sleep(0)

@@ -757,6 +757,23 @@ write, new recording or replay. Current binding checks also run after callbacks.
 Canceled Stop and cleanup callers drain the same original persistence task
 before propagating true cancellation. Concurrent Stop never starts another write.
 
+For a host already holding its original lifecycle/input barrier, use
+`await session.confirm_recording_save(original_actor, original_recording_id,
+before_read=current_original_reader)` before `await session.close()` when a
+terminal save reply was lost. This public read-only method does not reacquire
+that barrier; public Stop does. It returns the original saved status and uses
+the recording's installed reconciliation reader, or an explicit `reconcile=`
+reader with the same contract. Current authorization and exact recording
+identity are checked across the read. The 20-second bound includes admission
+and reconciliation; host readers must honor cancellation and perform no writes.
+No source payload is returned. Missing/withdrawn readers, mismatched identity,
+malformed confirmation, cancellation or timeout retain the original outcome.
+An active capture, pending write or event checkpoint without a submitted
+terminal save cannot be confirmed here. Restore the original current reader;
+never retry persistence, mint an ID or replace the session to clear uncertainty.
+Default Close continues to refuse an unknown save without reading storage or
+disconnecting its page/viewers. This adds no client/MCP grant or wire operation.
+
 Until this original completion is confirmed, a new recording cannot replace it
 and lifecycle cleanup does not claim joined completion. Existing host storage,
 same-operation reconciliation and production capability installation remain the
