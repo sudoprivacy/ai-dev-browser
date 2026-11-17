@@ -12,6 +12,8 @@ from test_worker_host_authorization import CurrentAccess, request, serving, with
         (False, {}, "browser_authorization_required"),
         (True, {}, "browser_recording_store_required"),
         (True, {"recording_sink": True}, "invalid_browser_request"),
+        (True, {"event_sink": "client-supplied"}, "invalid_browser_request"),
+        (True, {"recording_event_sink": "client-supplied"}, "invalid_browser_request"),
     ],
 )
 async def test_record_start_requires_actual_server_authority_and_writer(

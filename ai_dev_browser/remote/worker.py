@@ -1223,6 +1223,7 @@ class Worker:
                         persist=hooks.get("persist"),
                         reconcile=hooks.get("reconcile"),
                         privacy=action.get("privacy"),
+                        event_sink=hooks.get("event_sink"),
                     )
                 else:
                     options = (
@@ -1511,6 +1512,7 @@ def application(
     host_authorization=None,
     recording_sink=None,
     recording_reconcile=None,
+    recording_event_sink=None,
 ):
     """Use when embedding a Worker: supply trusted current AI and host assertions.
 
@@ -1533,7 +1535,15 @@ def application(
     after durable persistence. recording_reconcile receives the same facts
     plus the payload digest and must prove that exact original write already
     committed. It performs reads only. Neither port is an HTTP/body setting.
+
+    Optional recording_event_sink(request, original_binding, controller,
+    recording_id, event) checkpoints accepted redacted events before Stop.
+    It has the same current writer/source/read contract and returns None after
+    the original write is confirmed. Unknown writes fail capture without a
+    resend. Retain the original writer while eventWritePending is true.
     """
+    if recording_event_sink is not None and not callable(recording_event_sink):
+        raise ControlError("browser_recording_store_required")
     reaper_key = web.AppKey("viewer_reaper", asyncio.Task)
 
     @web.middleware
@@ -1716,11 +1726,26 @@ def application(
                     raise ControlError("browser_session_changed")
                 return result
 
+            async def event_sink(identity, event):
+                if worker.binding != captured_binding:
+                    raise ControlError("browser_session_changed")
+                result = await recording_event_sink(
+                    request,
+                    copy.deepcopy(captured_binding),
+                    controller,
+                    identity,
+                    copy.deepcopy(event),
+                )
+                if worker.binding != captured_binding:
+                    raise ControlError("browser_session_changed")
+                return result
+
             recording_hooks = {
                 "frame": frame,
                 "read": read,
                 "persist": persist if callable(recording_sink) else None,
                 "reconcile": reconcile if callable(recording_reconcile) else None,
+                "event_sink": event_sink if callable(recording_event_sink) else None,
             }
         return web.json_response(
             await worker.invoke(

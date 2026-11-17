@@ -24,6 +24,7 @@ from .privacy import redact_event
 Assertion = Callable[[], Awaitable[None]]
 FrameAssertions = Callable[[str, str, int, str, str], Awaitable[Assertion]]
 EventHandler = Callable[[str, dict[str, Any]], None]
+EventSink = Callable[[str, dict[str, Any]], Awaitable[object]]
 
 
 class PageConnection(Protocol):
@@ -87,6 +88,14 @@ class EventRecording:
     policy independently of these IDs/page facts. Each event rechecks it.
     The read assertion supplied to snapshot is a separate current assertion
     for the captured recording and ALL its sources; it needs no Agent/Ready.
+
+    Supply event_sink(recording_id, event) for incremental host persistence.
+    It receives detached, redacted accepted events in original seq order and
+    must return None only after its write is confirmed. The host checks its
+    actual current writer, source/read and exclusion capabilities inside that
+    callback. Omitting it retains memory-only capture until terminal save.
+    Failure or a lost acknowledgement stops capture without resending. Retain
+    the original writer while eventWritePending is true, even after close.
     """
 
     def __init__(
@@ -99,6 +108,7 @@ class EventRecording:
         max_sources: int = 128,
         max_contexts: int = 64,
         show_indicator: bool = True,
+        event_sink: EventSink | None = None,
     ) -> None:
         if (
             not isinstance(recording_id, str)
@@ -113,11 +123,15 @@ class EventRecording:
             raise ValueError("Explicit recording indicator mode required")
         if privacy is not None and not isinstance(privacy, PrivacySettings):
             raise ValueError("Invalid recording privacy policy")
+        if event_sink is not None and not callable(event_sink):
+            raise ControlError("browser_recording_store_required")
         self.recording_id = recording_id
         self.privacy = privacy.model_copy(deep=True) if privacy else PrivacySettings()
         self.max_events, self.max_bytes = max_events, max_bytes
         self.max_sources, self.max_contexts = max_sources, max_contexts
         self.show_indicator = show_indicator
+        self._event_sink = event_sink
+        self._event_write: asyncio.Task[None] | None = None
         self._events: list[dict[str, Any]] = []
         self._bytes = 0
         self._sources: dict[str, _Source] = {}
@@ -152,7 +166,17 @@ class EventRecording:
             "sources": len(self._visited),
             "error": self.error,
             "cleanupUncertain": self.cleanup_uncertain,
+            **(
+                {"eventWritePending": self.event_write_pending}
+                if self._event_sink is not None
+                else {}
+            ),
         }
+
+    @property
+    def event_write_pending(self) -> bool:
+        """An original host write still running; never cancel, replace or resend it."""
+        return self._event_write is not None and not self._event_write.done()
 
     def source_scopes(self) -> list[dict[str, Any]]:
         """Private host provenance for a fresh full recording-read assertion."""
@@ -518,7 +542,9 @@ class EventRecording:
         if not source.disposing:
             self._fail("browser_recording_disconnected")
 
-    def _append(self, source: _Source, frame: _Frame, event: dict[str, Any]) -> None:
+    async def _append(
+        self, source: _Source, frame: _Frame, event: dict[str, Any]
+    ) -> None:
         event = copy.deepcopy(event)
         event.update(targetId=source.target_id, frameId=frame.frame_id)
         page = dict(event.get("page") or {})
@@ -539,6 +565,46 @@ class EventRecording:
             or self._bytes + len(encoded) > self.max_bytes
         ):
             raise ControlError("browser_recording_limit")
+        if self._event_sink is not None:
+            await check_effect_authorization(frame.assertion)
+            if source.contexts.get(frame.context_id) != (
+                frame.frame_id,
+                frame.origin,
+                frame.unique_id,
+            ):
+                raise ControlError("browser_recording_sources_changed")
+
+            async def write() -> None:
+                result = await self._event_sink(self.recording_id, copy.deepcopy(event))
+                if result is not None:
+                    raise ControlError("invalid_browser_recording_store")
+
+            # One serial, bounded wait on the original write. asyncio.wait
+            # does not cancel a possibly committed host operation on timeout
+            # or when cleanup cancels this consumer. Its late outcome remains
+            # owned, but can never restart capture or publish a partial draft.
+            self._event_write = asyncio.create_task(write())
+            self._event_write.add_done_callback(
+                lambda done: None if done.cancelled() else done.exception()
+            )
+            try:
+                done, _ = await asyncio.wait({self._event_write}, timeout=20)
+                if not done:
+                    raise ControlError("browser_recording_event_write_unconfirmed")
+                self._event_write.result()
+                await check_effect_authorization(frame.assertion)
+                if self.error:
+                    raise ControlError(self.error)
+            except BaseException as error:
+                self._fail("browser_recording_event_write_unconfirmed")
+                if (
+                    isinstance(error, asyncio.CancelledError)
+                    and not self._event_write.cancelled()
+                ):
+                    raise
+                raise ControlError(
+                    "browser_recording_event_write_unconfirmed"
+                ) from None
         self._events.append(event)
         self._bytes += len(encoded)
 
@@ -626,7 +692,7 @@ class EventRecording:
         if event["kind"] == "recorder_installed":
             navigation = source.pending_navigation.pop(frame.frame_id, None)
             if navigation:
-                self._append(
+                await self._append(
                     source,
                     frame,
                     {
@@ -638,7 +704,7 @@ class EventRecording:
                 event = {**event, "kind": "frame_installed"}
             elif source.target_id not in self._visited:
                 if self._visited:
-                    self._append(
+                    await self._append(
                         source,
                         frame,
                         {
@@ -647,7 +713,7 @@ class EventRecording:
                         },
                     )
                 self._visited.add(source.target_id)
-        self._append(source, frame, event)
+        await self._append(source, frame, event)
         if (
             frame.is_top
             and event["kind"] == "recorder_installed"
@@ -671,7 +737,7 @@ class EventRecording:
         await check_effect_authorization(frame.assertion)
         if source.contexts.get(frame.context_id) != current:
             return
-        self._append(
+        await self._append(
             source,
             frame,
             {
@@ -756,13 +822,23 @@ class EventRecording:
         try:
             await asyncio.wait_for(self._queue.join(), 20)
         except asyncio.TimeoutError:
-            self._fail("browser_authorization_unavailable")
+            self._fail(
+                "browser_recording_event_write_unconfirmed"
+                if self.event_write_pending
+                else "browser_authorization_unavailable"
+            )
         if self.cleanup_uncertain:
             self._fail("browser_recording_cleanup_uncertain")
         return self.status()
 
     async def drain(self) -> None:
-        await asyncio.wait_for(self._queue.join(), 20)
+        try:
+            await asyncio.wait_for(self._queue.join(), 20)
+        except asyncio.TimeoutError:
+            if self.event_write_pending:
+                self._fail("browser_recording_event_write_unconfirmed")
+                raise ControlError(self.error) from None
+            raise
         if self.error:
             raise ControlError(self.error)
 
@@ -779,7 +855,8 @@ class EventRecording:
                 whether any Agent is running. The host owns access and retention.
 
         Returns:
-            recordingId and events; no files are written or Skills installed.
+            recordingId and detached events; no Skills are installed. Optional
+            event_sink writes are owned by the host and awaited by drain.
 
         Failure:
             Recheck the original caller's current recording/source access.
@@ -812,7 +889,11 @@ class EventRecording:
         try:
             await asyncio.wait_for(self._queue.join(), 20)
         except asyncio.TimeoutError:
-            self.error = self.error or "browser_authorization_unavailable"
+            self.error = self.error or (
+                "browser_recording_event_write_unconfirmed"
+                if self.event_write_pending
+                else "browser_authorization_unavailable"
+            )
         if self._consumer:
             self._consumer.cancel()
             await asyncio.gather(self._consumer, return_exceptions=True)
