@@ -94,8 +94,18 @@ async def with_page(worker):
         disconnected = False
 
         async def call(self, method, params=None):
+            if method == "Page.getFrameTree":
+                return {"frameTree": {"frame": {"loaderId": "original-document"}}}
             assert method == "Page.reload"
             effects.append(method)
+            return {}
+
+        async def wait_navigation(
+            self, response, *, previous_loader, history_entry, history_committed
+        ):
+            assert response == {} and previous_loader == "original-document"
+            assert history_entry is None
+            assert history_committed is None
 
         async def close(self):
             self.disconnected = True
@@ -207,7 +217,10 @@ async def test_factory_cannot_mutate_original_binding_or_dispatch_action(tmp_pat
             ),
         ) as response:
             assert response.status == 200
-            assert (await response.json())["session"]["state"] == "human"
+            body = await response.json()
+            assert body["session"]["state"] == "human"
+            assert body["session"]["targetEpoch"] == 1
+            assert body["result"] == {"navigationRequested": True, "targetEpoch": 1}
     assert effects == ["Page.reload"]
     assert worker.binding == BINDING
 
@@ -220,7 +233,8 @@ async def test_post_input_withdrawal_withholds_reply_without_replay(tmp_path):
 
     async def sent(method, params=None):
         result = await original(method, params)
-        access.allowed = False
+        if method == "Page.reload":
+            access.allowed = False
         return result
 
     page.call = sent

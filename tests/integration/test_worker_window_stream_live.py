@@ -176,6 +176,34 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
             )
             return worker.window_stream._view
 
+        async def install_input_surface(options=None):
+            # Each viewer document needs the same native event observers and
+            # checked transport, including documents loaded after navigation.
+            await viewer.js(
+                """(async()=>{
+                window.surface?.dispose();
+                const {InputSurface}=await import('/input-surface.js');
+                const canvas=document.querySelector('canvas');canvas.tabIndex=0;
+                canvas.style.touchAction='none';
+                rfb.viewOnly=true;rfb.focusOnClick=false;
+                // noVNC's legacy mousedown capture also runs in viewOnly mode.
+                canvas.addEventListener('mousedown',e=>e.stopImmediatePropagation(),true);
+                window.viewerPointerEvents=[];window.liveDragPackets=[];
+                for(const kind of ['pointerdown','pointermove','pointerup','pointercancel'])
+                    canvas.addEventListener(kind,e=>viewerPointerEvents.push({
+                        kind,id:e.pointerId,pointerType:e.pointerType,isPrimary:e.isPrimary,
+                        buttons:e.buttons,x:e.clientX,y:e.clientY}),true);
+                window.surface=new InputSurface(canvas,async input=>{
+                    liveDragPackets.push(input);
+                    const response=await fetch('/input',{method:'POST',
+                        headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});
+                    if(!response.ok)throw new Error('Checked input failed: '+response.status);
+                    return response.json();
+                },OPTIONS);
+                surface.resize(canvas.width,canvas.height);
+            })()""".replace("OPTIONS", json.dumps(options or {}))
+            )
+
         try:
             async with http.get(
                 origin + "/window-stream",
@@ -357,22 +385,7 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
             await wait_for(green_pixels, lambda value: value > 100_000, 30)
             # Both image and streamed-canvas viewers use the public gesture
             # mapper. Only its checked host callback can write to Chrome.
-            await viewer.js("""(async()=>{
-                const {InputSurface}=await import('/input-surface.js');
-                const canvas=document.querySelector('canvas');canvas.tabIndex=0;
-                rfb.viewOnly=true;rfb.focusOnClick=false;
-                // Match the shared consumer: noVNC's legacy mousedown capture
-                // also runs in viewOnly mode and can cover later pointer input.
-                canvas.addEventListener('mousedown',e=>e.stopImmediatePropagation(),true);
-                window.viewerPointerEvents=[];
-                for(const kind of ['pointerdown','pointermove','pointerup','pointercancel'])
-                    canvas.addEventListener(kind,e=>viewerPointerEvents.push({
-                        kind,id:e.pointerId,pointerType:e.pointerType,isPrimary:e.isPrimary,
-                        buttons:e.buttons,x:e.clientX,y:e.clientY}),true);
-                window.surface=new InputSurface(canvas,input=>fetch('/input',{
-                    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)}));
-                surface.resize(canvas.width,canvas.height);
-            })()""")
+            await install_input_surface()
             rect = await viewer.js("""(()=>{const c=document.querySelector('canvas'),r=c.getBoundingClientRect();
                 return {x:r.x,y:r.y,width:r.width,height:r.height,w:c.width,h:c.height}})()""")
             point = {
@@ -401,12 +414,26 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
 
             # A real streamed canvas must move before the viewer releases its
             # pointer. This uses the same checked API, not RFB input or JS pan.
-            await host(
-                {
-                    "kind": "navigate",
-                    "url": remote_site[0] + "/native-drag",
-                    **epochs(held),
-                }
+            previous_target_epoch = held["targetEpoch"]
+            held = (
+                await host(
+                    {
+                        "kind": "navigate",
+                        "url": remote_site[0] + "/native-drag",
+                        **epochs(held),
+                    }
+                )
+            )["session"]
+            assert held["targetEpoch"] == previous_target_epoch + 1
+            # Navigation retires the old window context as well as page pixels.
+            # Reacquire through the existing host path before sending input.
+            await wait_for(
+                lambda: viewer.js("window.isConnected"), lambda value: value is False
+            )
+            stream = await get_stream()
+            await viewer.call("Page.reload")
+            await wait_for(
+                lambda: viewer.js("window.isConnected"), lambda value: value is True, 30
             )
             await wait_for(
                 lambda: page.js("Boolean(document.querySelector('#stage'))"), bool
@@ -416,22 +443,13 @@ async def test_authenticated_window_stream_cannot_bypass_input_lease(
                 left:r.x,top:r.y,
                 offsetX:screenX+(outerWidth-innerWidth)/2,
                 offsetY:screenY+outerHeight-innerHeight-(outerWidth-innerWidth)/2}})()""")
-            await viewer.js(
-                """(async()=>{
-                surface.dispose();
-                const {InputSurface}=await import('/input-surface.js');
-                const canvas=document.querySelector('canvas');
-                canvas.style.touchAction='none';
-                window.liveDragPackets=[];
-                window.surface=new InputSurface(canvas,async input=>{
-                    liveDragPackets.push(input);
-                    const response=await fetch('/input',{method:'POST',
-                        headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});
-                    if(!response.ok)throw new Error('Checked input failed: '+response.status);
-                    return response.json();
-                },{drag:true,touchDrag:true,liveDrag:true,viewerId:VIEWER});
-                surface.resize(canvas.width,canvas.height);
-            })()""".replace("VIEWER", json.dumps(viewer_id))
+            await install_input_surface(
+                {
+                    "drag": True,
+                    "touchDrag": True,
+                    "liveDrag": True,
+                    "viewerId": viewer_id,
+                }
             )
             rect = await viewer.js("""(()=>{const c=document.querySelector('canvas'),r=c.getBoundingClientRect();
                 return {x:r.x,y:r.y,width:r.width,height:r.height,w:c.width,h:c.height}})()""")

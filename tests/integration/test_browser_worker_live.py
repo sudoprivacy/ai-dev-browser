@@ -159,21 +159,30 @@ async def test_host_authorized_page_keeps_cookie_private_and_preserves_control(
             page = await worker.session._connect_page()
             cookies = await page.call("Network.getCookies", {"urls": [failed_url]})
             assert not cookies["cookies"]
-            reloaded = await host(
-                {
-                    "kind": "reload",
-                    "controlEpoch": restored["controlEpoch"],
-                    "targetEpoch": restored["targetEpoch"],
-                }
+            reloading = asyncio.create_task(
+                host(
+                    {
+                        "kind": "reload",
+                        "controlEpoch": restored["controlEpoch"],
+                        "targetEpoch": restored["targetEpoch"],
+                    }
+                )
             )
+            # A CDP dispatch ACK cannot publish old pixels under a new epoch.
+            await asyncio.wait_for(reload_arrived.wait(), 15)
+            assert not reloading.done()
+            assert worker.control._operations.locked()
+            assert reads == [credential]
+            release_reload.set()
+            reloaded = await reloading
             assert (
                 reloaded["session"]["browserSessionId"] == current["browserSessionId"]
             )
-            # Reload acknowledges dispatch before its HTTP response arrives.
-            # Hold that response to expose the old no-loader wait deterministically.
-            await asyncio.wait_for(reload_arrived.wait(), 15)
-            assert reads == [credential]
-            release_reload.set()
+            assert reloaded["session"]["targetEpoch"] == restored["targetEpoch"] + 1
+            assert reloaded["result"] == {
+                "navigationRequested": True,
+                "targetEpoch": restored["targetEpoch"] + 1,
+            }
             observed = await wait_for(
                 lambda: page.js(
                     "({title:document.title,visit:"
@@ -249,8 +258,15 @@ async def test_native_worker_preserves_identity_handoff_and_cookie(
             )["session"]
             assert worker.display is None and not started["capabilities"]["windowView"]
             assert started["isHeadless"] is is_headless
-            await agent({"kind": "navigate", "url": remote_site[0], **epochs(started)})
-            observed = (await agent({"kind": "observe", **epochs(started)}))["session"]
+            navigated = (
+                await agent(
+                    {"kind": "navigate", "url": remote_site[0], **epochs(started)}
+                )
+            )["session"]
+            assert navigated["targetEpoch"] == started["targetEpoch"] + 1
+            observed = (await agent({"kind": "observe", **epochs(navigated)}))[
+                "session"
+            ]
             assert observed["browserSessionId"] == started["browserSessionId"]
             await host({"kind": "attach", "viewerId": "panel", "surface": "page"})
             await host({"kind": "attach", "viewerId": "tab", "surface": "page"})

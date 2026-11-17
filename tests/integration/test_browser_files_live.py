@@ -147,14 +147,20 @@ async def test_real_file_picker_and_download_keep_profile_and_control(
         async with aiohttp.ClientSession() as http:
             session = BrowserSession(client, http, files=files)
             initial_target = session.target_id
+            target_epoch = session.control.target_epoch
             assert initial_target == launched["automation_target_id"]
             # Cross-site navigations replace managed Chrome's debugger target.
             # Each navigation must finish on its new document before the very
             # first read, without replaying a navigation or a user operation.
             for destination in [url, url.replace("127.0.0.1", "localhost"), url] * 2:
-                await session.action(
-                    "ai", 0, 0, {"kind": "navigate", "url": destination}
+                navigated = await session.action(
+                    "ai", 0, target_epoch, {"kind": "navigate", "url": destination}
                 )
+                assert navigated == {
+                    "navigationRequested": True,
+                    "targetEpoch": target_epoch + 1,
+                }
+                target_epoch = navigated["targetEpoch"]
                 assert await session._page.js("!!document.querySelector('#upload')")
             original_event = session._page.on_event
 
@@ -165,16 +171,16 @@ async def test_real_file_picker_and_download_keep_profile_and_control(
 
             session._page.on_event = on_event
             await session.attach("files-view")
-            frame = await session.frame("files-view", 0, 0)
+            frame = await session.frame("files-view", 0, target_epoch)
             (tmp_path / "files-before-input.jpg").write_bytes(
                 base64.b64decode(frame["data"])
             )
-            held = await session.take("user", 0, 0)
+            held = await session.take("user", 0, target_epoch)
             epoch = held["controlEpoch"]
             await session.action(
                 "user",
                 epoch,
-                0,
+                target_epoch,
                 {"kind": "input", "input": {"kind": "click", "x": 100, "y": 45}},
             )
             chooser = await wait_for(
@@ -187,19 +193,25 @@ async def test_real_file_picker_and_download_keep_profile_and_control(
                 "fileIds": [upload["id"]],
             }
             with pytest.raises(ControlError, match="held_by_user"):
-                await session.action("ai", epoch, 0, selection)
+                await session.action("ai", epoch, target_epoch, selection)
             other = BrowserFiles(tmp_path / "other-owner")
             foreign = other.receive("user review 文件.txt", b"foreign")
             with pytest.raises(ControlError, match="not_found"):
                 await session.action(
-                    "user", epoch, 0, {**selection, "fileIds": [foreign["id"]]}
+                    "user",
+                    epoch,
+                    target_epoch,
+                    {**selection, "fileIds": [foreign["id"]]},
                 )
             with pytest.raises(ControlError, match="chooser_changed"):
                 await session.action(
-                    "user", epoch, 0, {**selection, "chooserId": uuid.uuid4().hex}
+                    "user",
+                    epoch,
+                    target_epoch,
+                    {**selection, "chooserId": uuid.uuid4().hex},
                 )
             assert not receipts
-            await session.action("user", epoch, 0, selection)
+            await session.action("user", epoch, target_epoch, selection)
             await wait_for(lambda: asyncio.sleep(0, result=receipts), bool)
             assert receipts == [
                 {
@@ -210,11 +222,11 @@ async def test_real_file_picker_and_download_keep_profile_and_control(
                 }
             ]
             with pytest.raises(ControlError, match="chooser_changed"):
-                await session.action("user", epoch, 0, selection)
+                await session.action("user", epoch, target_epoch, selection)
             await session.action(
                 "user",
                 epoch,
-                0,
+                target_epoch,
                 {"kind": "input", "input": {"kind": "click", "x": 100, "y": 115}},
             )
             completed = await wait_for(
@@ -227,7 +239,7 @@ async def test_real_file_picker_and_download_keep_profile_and_control(
             assert files.path(item["id"], kind="download").read_bytes() == payload
             assert downloads == ["present"]
             assert session.target_id == initial_target
-            resumed, observation = await session.give_back("user", epoch, 0)
+            resumed, observation = await session.give_back("user", epoch, target_epoch)
             assert (
                 resumed["state"] == "ai"
                 and observation["activeTargetId"] == initial_target

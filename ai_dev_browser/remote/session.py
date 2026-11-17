@@ -598,9 +598,35 @@ class BrowserSession:
         *,
         before_effect=None,
     ):
+        """Use for selected-page actions; navigation returns its new targetEpoch.
+
+        Submitted navigate/reload/history requests invalidate old frames and
+        queued input on this same tab. The result's navigationRequested is
+        false when back/forward has no destination; that leaves epochs alone.
+        Refresh current frames before sending new input with the new version.
+        A submitted failure can still change versions and must not be replayed.
+
+        Args:
+            actor: Original authenticated human controller or admitted AI actor.
+            epoch: Current control epoch from the original session.
+            target_epoch: Current target/document epoch from its last frame.
+            action: Existing typed action and its arguments on the selected tab.
+            before_effect: Current original host authorization assertion.
+
+        Failure:
+            Inspect current state and the original operation after a submitted
+            failure. Obtain a fresh frame before new input; never automatically
+            resend navigation or input after an uncertain acknowledgement.
+        """
+
         async def perform():
-            self._frame = None
             kind = action["kind"]
+            if kind == "navigate" and (
+                not isinstance(action.get("url"), str)
+                or not action["url"].startswith(("http://", "https://"))
+            ):
+                raise ControlError("invalid_browser_url")
+            self._frame = None
             if kind in ("new-tab", "select-tab", "close-tab"):
                 browser = await self._connect_browser()
                 tabs = await self._refresh()
@@ -697,30 +723,111 @@ class BrowserSession:
                 ):
                     raise ControlError("invalid_browser_input")
             elif kind == "navigate":
-                if not isinstance(action.get("url"), str) or not action[
-                    "url"
-                ].startswith(("http://", "https://")):
-                    raise ControlError("invalid_browser_url")
-                navigation = await page.call("Page.navigate", {"url": action["url"]})
-                await page.wait_navigation(navigation)
+                await self._navigate(
+                    page,
+                    actor,
+                    epoch,
+                    target_epoch,
+                    "Page.navigate",
+                    {"url": action["url"]},
+                    before_effect=before_effect,
+                )
             elif kind == "reload":
-                await page.call("Page.reload")
+                await self._navigate(
+                    page,
+                    actor,
+                    epoch,
+                    target_epoch,
+                    "Page.reload",
+                    {},
+                    before_effect=before_effect,
+                )
             elif kind in ("back", "forward"):
                 history = await page.call("Page.getNavigationHistory")
                 index = history["currentIndex"] + (-1 if kind == "back" else 1)
                 if 0 <= index < len(history["entries"]):
-                    await check_effect_authorization(before_effect)
-                    self.control._authorize(actor, epoch, target_epoch, False)
-                    await page.call(
+                    await self._navigate(
+                        page,
+                        actor,
+                        epoch,
+                        target_epoch,
                         "Page.navigateToHistoryEntry",
                         {"entryId": history["entries"][index]["id"]},
+                        before_effect=before_effect,
                     )
+                else:
+                    await check_effect_authorization(before_effect)
+                    self.control._authorize(actor, epoch, target_epoch, False)
+                    return {"navigationRequested": False, "targetEpoch": target_epoch}
             else:
                 raise ControlError("invalid_browser_action")
+            if kind in ("navigate", "reload", "back", "forward"):
+                return {
+                    "navigationRequested": True,
+                    "targetEpoch": self.control.target_epoch,
+                }
 
         return await self.control.run(
             actor, epoch, target_epoch, perform, before_effect=before_effect
         )
+
+    async def _navigate(
+        self, page, actor, epoch, target_epoch, method, params, *, before_effect
+    ):
+        # Called only by an operation already owning the original input lock.
+        # An authorization wait or invalid action must not advance the version.
+        await check_effect_authorization(before_effect)
+        self.control._authorize(actor, epoch, target_epoch, False)
+        previous_loader = None
+        committed = None
+        if method in ("Page.reload", "Page.navigateToHistoryEntry"):
+            frame = (await page.call("Page.getFrameTree"))["frameTree"]["frame"]
+            previous_loader = frame["loaderId"]
+        if method == "Page.navigateToHistoryEntry":
+            committed = asyncio.Event()
+
+            def on_commit(method, params):
+                if method == "Page.frameNavigated":
+                    changed = params.get("frame", {})
+                    if (
+                        changed.get("loaderId")
+                        and changed.get("id") == frame["id"]
+                        and (changed.get("loaderId") != previous_loader)
+                    ):
+                        committed.set()
+                elif method == "Page.navigatedWithinDocument" and (
+                    params.get("frameId") == frame["id"]
+                ):
+                    committed.set()
+
+        await check_effect_authorization(before_effect)
+        self.control._authorize(actor, epoch, target_epoch, False)
+        if committed is not None:
+            page.add_event_handler(on_commit)
+        try:
+            response = await page.call(method, params)
+            if method == "Page.navigate":
+                if response.get("errorText"):
+                    raise ControlError("browser_navigation_failed")
+                await page.wait_navigation(response)
+            else:
+                await page.wait_navigation(
+                    response,
+                    previous_loader=previous_loader,
+                    history_entry=params.get("entryId"),
+                    history_committed=committed,
+                )
+        finally:
+            if committed is not None:
+                page.remove_event_handler(on_commit)
+            # A lost/failed acknowledgement can follow an actual navigation.
+            # Invalidate the old context before unlocking, without resending.
+            self.invalidate_frame()
+            self._file_chooser = None
+            self.control.change_target()
+        await check_effect_authorization(before_effect)
+        self.control._authorize(actor, epoch, target_epoch + 1, False)
+        return response
 
     async def open_authorized_page(
         self, controller, epoch, target_epoch, url, cookie, *, before_effect=None
@@ -898,6 +1005,20 @@ class BrowserSession:
                 await check_effect_authorization(before_effect)
                 self.control._authorize("ai", epoch, target_epoch, False)
             if frame is None:
+                if method in (
+                    "Page.navigate",
+                    "Page.reload",
+                    "Page.navigateToHistoryEntry",
+                ):
+                    return await self._navigate(
+                        page,
+                        "ai",
+                        epoch,
+                        target_epoch,
+                        method,
+                        params,
+                        before_effect=before_effect,
+                    )
                 return await page.call(method, params)
             tab = next(
                 (

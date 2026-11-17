@@ -142,24 +142,50 @@ class CDP:
             raise self.error_factory("evaluation_failed")
         return value.get("result", {}).get("value")
 
-    async def wait_navigation(self, navigation, timeout=15):
+    async def wait_navigation(
+        self,
+        navigation,
+        timeout=15,
+        *,
+        previous_loader=None,
+        history_entry=None,
+        history_committed=None,
+    ):
         """Wait for the issued navigation's document, without replaying it.
 
         Managed Chrome can replace its debugger during a process swap. Only
         these fixed read probes tolerate that temporary attachment/context gap.
         Arbitrary evaluation and input continue to fail without being retried.
+        Reload waits for a different loader; history waits for the requested
+        entry, including same-document and back/forward-cache transitions.
         """
         loader = navigation.get("loaderId")
-        if not loader:
+        if history_entry is not None and history_committed is None:
+            raise ValueError("History navigation needs its original commit observer")
+        if not loader and previous_loader is None and history_entry is None:
             return
         deadline = asyncio.get_running_loop().time() + timeout
         while True:
             try:
                 tree = await self.call("Page.getFrameTree")
                 frame = tree.get("frameTree", {}).get("frame", {})
-                if frame.get("loaderId") == loader and await self.js(
-                    "document.readyState !== 'loading'"
-                ):
+                if loader:
+                    arrived = frame.get("loaderId") == loader
+                elif history_entry is not None:
+                    # Chromium's currentIndex can already point at a pending
+                    # entry. Its ACK/index alone cannot confirm a new document.
+                    arrived = history_committed.is_set()
+                    if arrived:
+                        history = await self.call("Page.getNavigationHistory")
+                        index = history["currentIndex"]
+                        arrived = 0 <= index < len(history["entries"]) and (
+                            history["entries"][index]["id"] == history_entry
+                        )
+                else:
+                    arrived = bool(frame.get("loaderId")) and (
+                        frame["loaderId"] != previous_loader
+                    )
+                if arrived and await self.js("document.readyState !== 'loading'"):
                     return
             except BrowserViewError as error:
                 message = (error.details or {}).get("message", "")

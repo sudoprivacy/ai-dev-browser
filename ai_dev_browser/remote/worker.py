@@ -1342,9 +1342,11 @@ class Worker:
                     controller, epoch, target_epoch, action["input"], **authorization
                 )
             else:
-                await self.session.action(
+                result = await self.session.action(
                     controller, epoch, target_epoch, action, **authorization
                 )
+                if result is not None:
+                    extra["result"] = result
             self.save()
         reply = {"session": await self.state(controller, **authorization), **extra}
         await check_effect_authorization(before_effect)
@@ -1480,6 +1482,11 @@ class Worker:
 
 
 RECOVERY_HINTS = {
+    "browser_navigation_failed": (
+        "navigation was submitted; call browser_observe for the current page "
+        "and epochs, and inspect the original operation status; do not "
+        "automatically resend navigation or following input"
+    ),
     "stale_browser_operation": (
         "call browser_observe to read the current page and fresh epochs, "
         "then retry with the returned epochs"
