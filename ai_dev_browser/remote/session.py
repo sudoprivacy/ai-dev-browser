@@ -263,6 +263,8 @@ class BrowserSession:
         values. Repeated Stop never repeats that persistence call.
         Failed event checkpoints have no successful snapshot/draft. Retain the
         original host writer while eventWritePending is true.
+        Hosts already holding the lifecycle/input barrier use the read-only
+        confirm_recording_save() for an uncertain terminal save before close().
 
         Args:
             actor: Original authenticated recording owner.
@@ -1115,7 +1117,62 @@ class BrowserSession:
             controller, epoch, target_epoch, select, before_effect=before_effect
         )
 
+    async def confirm_recording_save(
+        self, actor: str, recording_id: str, *, before_read, reconcile=None
+    ):
+        """Use after a lost terminal save reply, including inside owned close.
+
+        Returns the original recording's saved status after a current authorized
+        read confirms its exact terminal payload and digest. This read-only
+        method does not acquire the input barrier, so a host already serializing
+        close can call it before close(). Stop recording with stop_recording();
+        this method cannot stop capture or submit, retry or wait for a write.
+
+        Args:
+            actor: Original recording owner, authenticated by the host.
+            recording_id: Exact original recording ID; identity grants no access.
+            before_read: Mandatory current reader assertion for that original
+                source/store. Checked before and after read; no default grant.
+            reconcile: Optional host read-only None-or-raise confirmation of the
+                original terminal payload and SHA256; defaults to its original
+                installed reader. Must honor cancellation, including the
+                20-second confirmation bound. Must never write or replay.
+
+        Failure:
+            Retain the original session, recording and writer on refusal or
+            cancellation. Restore its current reader and read-confirm the same
+            save. A missing/pending terminal save or uncertain event checkpoint
+            cannot be confirmed here; do not repeat persistence or replace IDs.
+        """
+        recording = self._recording
+        if recording is None:
+            raise ControlError("browser_recording_not_started")
+        recording.assert_owner(actor)
+        if recording_id != recording.capture.recording_id:
+            raise ControlError("browser_recording_not_owned")
+        if not callable(before_read):
+            raise ControlError("browser_authorization_required")
+
+        async def current():
+            if self._recording is not recording:
+                raise ControlError("browser_recording_context_changed")
+            result = await before_read()
+            if self._recording is not recording:
+                raise ControlError("browser_recording_context_changed")
+            return result
+
+        return await recording.confirm_saved(
+            actor, before_read=current, reconcile=reconcile
+        )
+
     async def close(self):
+        """Disconnect after original recording cleanup; an unknown save refuses.
+
+        Hosts serialize lifecycle operations with their original input barrier.
+        If a terminal save reply was lost, explicitly call
+        confirm_recording_save() with its current reader before retrying close.
+        No reconciliation or new reader is enabled by default.
+        """
         if self._host_input is not None:
             self._host_input.invalidate()
         if self._recording:
