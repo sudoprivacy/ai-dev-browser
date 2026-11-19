@@ -152,8 +152,8 @@ class BrowserClient:
     tab lifecycle, and cookies.
     """
 
-    # Connection cache: reuse existing BrowserClient for same host:port
-    _instances: dict[tuple[str, int], "BrowserClient"] = {}
+    # WebSocket operations and cleanup belong to the event loop that opened them.
+    _instances: dict[tuple[asyncio.AbstractEventLoop, str, int], BrowserClient] = {}
 
     def __init__(self, host: str, port: int):
         self.host = host
@@ -174,7 +174,7 @@ class BrowserClient:
     ) -> BrowserClient:
         """Connect to an existing Chrome instance via CDP.
 
-        Reuses existing connection if one is alive for the same host:port.
+        Reuses a live connection for the same host and port in this event loop.
 
         `ws_url` overrides the browser-level WebSocket URL and skips the
         `http://host:port/json/version` discovery — the extension bridge speaks
@@ -182,7 +182,7 @@ class BrowserClient:
         directly. Everything downstream (per-tab connections, Target discovery)
         is identical to a real CDP Chrome.
         """
-        key = (host, port)
+        key = (asyncio.get_running_loop(), host, port)
 
         # Reuse existing connection if alive
         existing = cls._instances.get(key)
@@ -238,7 +238,7 @@ class BrowserClient:
             await self.connection.disconnect()
 
         # Remove from cache
-        key = (self.host, self.port)
+        key = (asyncio.get_running_loop(), self.host, self.port)
         if BrowserClient._instances.get(key) is self:
             del BrowserClient._instances[key]
 
@@ -841,8 +841,8 @@ async def graceful_close_browser(
             if not conn.closed:
                 await conn.disconnect()
 
-        # Remove cached BrowserClient for this port
-        key = (host, port)
+        # Release this loop's cached client. Other loops own their sockets.
+        key = (asyncio.get_running_loop(), host, port)
         existing = BrowserClient._instances.pop(key, None)
         if existing:
             existing.connection = None  # Already closed

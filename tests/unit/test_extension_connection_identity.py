@@ -1,10 +1,47 @@
 """The handshake snapshot and actual driver lifetime must describe one identity."""
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 
 from ai_dev_browser.core import _session, browser, connection, ext_bridge
+
+
+async def test_browser_connection_cache_keeps_event_loops_separate(monkeypatch):
+    class LoopBoundSocket:
+        def __init__(self, url):
+            self.owner = asyncio.get_running_loop()
+            self.closed = False
+
+        async def connect(self):
+            assert asyncio.get_running_loop() is self.owner
+
+        async def send(self, *args, **kwargs):
+            assert asyncio.get_running_loop() is self.owner
+
+        async def disconnect(self):
+            assert asyncio.get_running_loop() is self.owner
+            self.closed = True
+
+    async def refresh(client):
+        assert asyncio.get_running_loop() is client.connection.owner
+
+    monkeypatch.setattr(connection, "CDPConnection", LoopBoundSocket)
+    monkeypatch.setattr(connection.BrowserClient, "update_targets", refresh)
+    address = ("127.0.0.1", 9522, "ws://127.0.0.1:9522/devtools/browser?session=one")
+
+    async with await connection.BrowserClient.connect(*address) as viewer:
+        assert await connection.BrowserClient.connect(*address) is viewer
+
+        async def run_worker():
+            async with await connection.BrowserClient.connect(*address) as worker:
+                assert worker is not viewer
+                assert await connection.BrowserClient.connect(*address) is worker
+
+        await asyncio.to_thread(lambda: asyncio.run(run_worker()))
+        assert not viewer.connection.closed
+        assert await connection.BrowserClient.connect(*address) is viewer
 
 
 @pytest.mark.parametrize("bound", [False, True])
